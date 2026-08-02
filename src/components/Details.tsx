@@ -157,7 +157,7 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
     >
       <div className="details-scrim" />
       <button className="back-button" type="button" onClick={onBack} aria-label="Back to home">
-        <MaterialIcon name="arrow_back" /> Back
+        <MaterialIcon name="arrow_left_alt" /> Back
       </button>
       <section className="details-content">
         <div className="details-copy">
@@ -204,7 +204,7 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
               <span className="details-action-tile__box"><MaterialIcon name={isFavorite ? 'bookmark_added' : 'bookmark'} /></span>
               <span className="details-action-tile__label">{isFavorite ? 'Watchlisted' : 'Add to Watchlist'}</span>
             </button>
-            <button className="details-action-tile" type="button" onClick={() => void togglePlayed()} disabled={busyAction === 'played'}>
+            <button className="details-action-tile details-action-tile--played" type="button" onClick={() => void togglePlayed()} disabled={busyAction === 'played'}>
               <span className="details-action-tile__box"><MaterialIcon name="check_circle" filled={isPlayed} /></span>
               <span className="details-action-tile__label">{isPlayed ? 'Played' : 'Mark as Played'}</span>
             </button>

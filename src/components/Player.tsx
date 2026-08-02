@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type Hls from 'hls.js';
 import MaterialIcon from './MaterialIcon';
+import type { AppSettings, AudioLanguage, PlaybackQuality } from '../lib/settings';
 import {
   getPlaybackPlan,
   reportPlayback,
@@ -13,17 +14,22 @@ import {
 type PlayerProps = {
   item: JellyfinItem;
   session: JellyfinSession;
+  settings: AppSettings;
   onBack: () => void;
   onFinished?: (item: JellyfinItem) => void;
 };
-
-type PlaybackQuality = 'auto' | 'original' | '1080p' | '720p';
 
 const qualityBitrates: Record<PlaybackQuality, number | undefined> = {
   auto: undefined,
   original: 120_000_000,
   '1080p': 8_000_000,
   '720p': 4_000_000,
+};
+
+const audioLanguageAliases: Record<Exclude<AudioLanguage, 'default'>, string[]> = {
+  eng: ['eng', 'en', 'english'],
+  spa: ['spa', 'es', 'spanish'],
+  jpn: ['jpn', 'ja', 'japanese'],
 };
 
 function formatTime(seconds: number) {
@@ -37,7 +43,7 @@ function formatTime(seconds: number) {
     : `${minutes}:${remainder.toString().padStart(2, '0')}`;
 }
 
-export default function Player({ item, session, onBack, onFinished }: PlayerProps) {
+export default function Player({ item, session, settings, onBack, onFinished }: PlayerProps) {
   const playerRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const playSessionId = useRef<string>(crypto.randomUUID());
@@ -61,9 +67,11 @@ export default function Player({ item, session, onBack, onFinished }: PlayerProp
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [quality, setQuality] = useState<PlaybackQuality>('auto');
+  const [quality, setQuality] = useState<PlaybackQuality>(settings.playbackQuality);
   const [audioStreamIndex, setAudioStreamIndex] = useState<number | undefined>(undefined);
-  const [subtitleStreamIndex, setSubtitleStreamIndex] = useState<number | undefined>(undefined);
+  const [subtitleStreamIndex, setSubtitleStreamIndex] = useState<number | undefined>(
+    settings.subtitleMode === 'off' ? -1 : undefined,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -79,6 +87,21 @@ export default function Player({ item, session, onBack, onFinished }: PlayerProp
       subtitleStreamIndex,
       startTimeTicks: restartTimeTicks.current,
     }, controller.signal)
+      .then(async (initialPlan) => {
+        if (audioStreamIndex !== undefined || settings.audioLanguage === 'default') return initialPlan;
+        const aliases = audioLanguageAliases[settings.audioLanguage];
+        const preferredStream = initialPlan.mediaStreams.find((stream) => {
+          if (stream.Type !== 'Audio' || !stream.Language) return false;
+          return aliases.includes(stream.Language.toLowerCase());
+        });
+        if (!preferredStream || preferredStream.Index === initialPlan.audioStreamIndex) return initialPlan;
+        return getPlaybackPlan(session, item, {
+          maxStreamingBitrate: qualityBitrates[quality],
+          audioStreamIndex: preferredStream.Index,
+          subtitleStreamIndex,
+          startTimeTicks: restartTimeTicks.current,
+        }, controller.signal);
+      })
       .then((nextPlan) => {
         if (controller.signal.aborted) return;
         playSessionId.current = nextPlan.playSessionId;
@@ -93,7 +116,7 @@ export default function Player({ item, session, onBack, onFinished }: PlayerProp
       });
 
     return () => controller.abort();
-  }, [attempt, audioStreamIndex, item, quality, session, subtitleStreamIndex]);
+  }, [attempt, audioStreamIndex, item, quality, session, settings.audioLanguage, subtitleStreamIndex]);
 
   function report(event: 'start' | 'progress' | 'stopped') {
     const video = videoRef.current;
@@ -466,7 +489,7 @@ export default function Player({ item, session, onBack, onFinished }: PlayerProp
             <div className="player-stream-controls">
               {audioStreams.length > 1 ? (
                 <label title="Audio track">
-                  <MaterialIcon name="audio_track" />
+              <MaterialIcon name="audio_file" />
                   <select
                     value={selectedAudio}
                     aria-label="Audio track"

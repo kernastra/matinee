@@ -26,6 +26,7 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 - **Jellyfin playback** — Negotiate direct playback or HLS transcoding with the server and resume titles from their saved position.
 - **Custom player controls** — Play, pause, seek, change volume, select audio or subtitles, choose playback quality, and enter fullscreen from a cinema-styled control surface.
 - **Library actions** — Add titles to the Jellyfin favorites-based watchlist and mark them played or unplayed.
+- **Personal settings** — Persist playback quality, preferred audio, subtitle behavior, autoplay, hero rotation, and reduced-motion defaults on the device.
 - **Native desktop shell** — Run in a frameless, resizable Tauri window with custom traffic lights and locally bundled typefaces and icons.
 
 ## Tech Stack

@@ -81,7 +81,7 @@ export default function SeriesDetails({ item, session, onBack, onPlay }: SeriesD
       <div className="series-backdrop" style={{ backgroundImage: `url("${backdrop}")` }} />
       <div className="details-scrim" />
       <button className="back-button" type="button" onClick={onBack}>
-        <MaterialIcon name="arrow_back" /> Back
+        <MaterialIcon name="arrow_left_alt" /> Back
       </button>
       <div className="series-scroll">
         <section className="series-overview">

@@ -8,11 +8,13 @@ import {
   getNextUpEpisode,
   getSeasonEpisodes,
   getSeriesSeasons,
+  getServerInfo,
   imageUrl,
   loadSession,
   normalizeServerUrl,
   searchLibrary,
   saveSession,
+  userImageUrl,
   videoStreamUrl,
   type JellyfinItem,
   type JellyfinSession,
@@ -54,6 +56,30 @@ it('builds an encoded Jellyfin image URL', () => {
   expect(imageUrl(session, item, 'Primary', 360)).toBe(
     'http://192.168.1.249:8096/Items/movie-1/Images/Primary?maxWidth=360&quality=90&api_key=token%20with%20spaces',
   );
+});
+
+it('builds an authenticated Jellyfin user image URL', () => {
+  const avatarSession: JellyfinSession = {
+    ...session,
+    user: { ...session.user, PrimaryImageTag: 'avatar tag' },
+  };
+  const url = new URL(userImageUrl(avatarSession, 96));
+  expect(url.pathname).toBe('/Users/user-1/Images/Primary');
+  expect(url.searchParams.get('maxWidth')).toBe('96');
+  expect(url.searchParams.get('tag')).toBe('avatar tag');
+  expect(url.searchParams.get('api_key')).toBe('token with spaces');
+});
+
+it('loads public Jellyfin server information through the active session', async () => {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ ServerName: 'Andromeda', Version: '10.10.7' }),
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  await expect(getServerInfo(session)).resolves.toEqual({ ServerName: 'Andromeda', Version: '10.10.7' });
+  expect(fetchMock.mock.calls[0][0]).toBe('http://192.168.1.249:8096/System/Info/Public');
+  expect(fetchMock.mock.calls[0][1].headers.Authorization).toContain('Token="token with spaces"');
 });
 
 it('builds an authenticated direct-play URL', () => {
