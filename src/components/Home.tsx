@@ -9,6 +9,7 @@ import {
 import MediaRow from './MediaRow';
 import MaterialIcon from './MaterialIcon';
 import AppNav, { type AppView } from './AppNav';
+import type { AppSettings } from '../lib/settings';
 import {
   CollectionSpotlight,
   FeaturedShowcase,
@@ -21,6 +22,7 @@ const HERO_ROTATION_MS = 7_000;
 
 type HomeProps = {
   session: JellyfinSession;
+  settings: AppSettings;
   onSignOut: () => void;
   onNavigate: (view: AppView) => void;
   onSearch: () => void;
@@ -55,7 +57,7 @@ function mergeUnique(...groups: JellyfinItem[][]) {
   });
 }
 
-export default function Home({ session, onSignOut, onNavigate, onSearch, onSelect, onPlay }: HomeProps) {
+export default function Home({ session, settings, onSignOut, onNavigate, onSearch, onSelect, onPlay }: HomeProps) {
   const [feed, setFeed] = useState<HomeFeed | null>(null);
   const [error, setError] = useState('');
   const [heroIndex, setHeroIndex] = useState(0);
@@ -76,14 +78,15 @@ export default function Home({ session, onSignOut, onNavigate, onSearch, onSelec
 
   const heroes = useMemo(() => (feed ? heroItems(feed) : []), [feed]);
   const hero = heroes[heroIndex % heroes.length];
+  const rotatesHero = settings.heroRotation && !settings.reducedMotion && heroes.length > 1;
 
   useEffect(() => {
-    if (heroes.length < 2) return;
+    if (!rotatesHero) return;
     const rotation = window.setInterval(() => {
       setHeroIndex((current) => (current + 1) % heroes.length);
     }, HERO_ROTATION_MS);
     return () => window.clearInterval(rotation);
-  }, [heroes.length]);
+  }, [heroes.length, rotatesHero]);
 
   if (error) {
     return (
@@ -133,13 +136,13 @@ export default function Home({ session, onSignOut, onNavigate, onSearch, onSelec
         id="home-top"
       >
         <div
-          className={`hero-backdrop${heroes.length > 1 ? ' hero-backdrop--rotating' : ''}`}
+          className={`hero-backdrop${rotatesHero ? ' hero-backdrop--rotating' : ''}`}
           key={hero.Id}
           style={{ backgroundImage: `url("${backdropUrl(session, hero, 1800)}")` }}
         />
         <div className="hero-scrim" />
         <div
-          className={`hero-content${heroes.length > 1 ? ' hero-content--rotating' : ''}`}
+          className={`hero-content${rotatesHero ? ' hero-content--rotating' : ''}`}
           key={`${hero.Id}-content`}
         >
           <p className="eyebrow">{hero.UserData?.PlayedPercentage ? 'Continue watching' : 'Tonight’s feature'}</p>

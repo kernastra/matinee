@@ -1,6 +1,7 @@
 export type MaterialIconName =
   | 'arrow_back'
-  | 'audio_track'
+  | 'arrow_left_alt'
+  | 'audio_file'
   | 'bookmark'
   | 'bookmark_add'
   | 'bookmark_added'

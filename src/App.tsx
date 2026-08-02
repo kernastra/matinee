@@ -7,6 +7,7 @@ import WindowChrome from './components/WindowChrome';
 import Library from './components/Library';
 import SearchOverlay from './components/SearchOverlay';
 import SeriesDetails from './components/SeriesDetails';
+import Settings from './components/Settings';
 import type { AppView } from './components/AppNav';
 import {
   clearSession,
@@ -17,6 +18,7 @@ import {
   type JellyfinItem,
   type JellyfinSession,
 } from './lib/jellyfin';
+import { loadSettings, saveSettings, type AppSettings } from './lib/settings';
 
 export default function App() {
   const [session, setSession] = useState<JellyfinSession | null>(() => loadSession());
@@ -24,6 +26,7 @@ export default function App() {
   const [playingItem, setPlayingItem] = useState<JellyfinItem | null>(null);
   const [view, setView] = useState<AppView>('home');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const isNavigationScreen = Boolean(session && !selectedItem && !playingItem);
 
   function authenticated(nextSession: JellyfinSession) {
@@ -45,6 +48,11 @@ export default function App() {
     setView(nextView);
   }
 
+  function changeSettings(nextSettings: AppSettings) {
+    saveSettings(nextSettings);
+    setSettings(nextSettings);
+  }
+
   async function play(item: JellyfinItem) {
     if (item.Type !== 'Series' || !session) {
       setPlayingItem(item);
@@ -63,7 +71,7 @@ export default function App() {
   }
 
   async function playFollowing(item: JellyfinItem) {
-    if (!session || item.Type !== 'Episode') return;
+    if (!settings.autoplayNextEpisode || !session || item.Type !== 'Episode') return;
     try {
       const nextEpisode = await getFollowingEpisode(session, item);
       if (nextEpisode) setPlayingItem(nextEpisode);
@@ -80,6 +88,7 @@ export default function App() {
       <Player
         item={playingItem}
         session={session}
+        settings={settings}
         onBack={() => setPlayingItem(null)}
         onFinished={playFollowing}
       />
@@ -100,6 +109,17 @@ export default function App() {
         onPlay={play}
       />
     );
+  } else if (view === 'settings') {
+    content = (
+      <Settings
+        session={session}
+        settings={settings}
+        onChange={changeSettings}
+        onNavigate={navigate}
+        onSearch={() => setSearchOpen(true)}
+        onSignOut={signOut}
+      />
+    );
   } else if (view === 'movies' || view === 'series') {
     content = (
       <Library
@@ -115,6 +135,7 @@ export default function App() {
     content = (
       <Home
         session={session}
+        settings={settings}
         onSignOut={signOut}
         onNavigate={navigate}
         onSearch={() => setSearchOpen(true)}
@@ -125,7 +146,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-surface${session ? ' app-surface--authenticated' : ''}`}>
+    <div className={`app-surface${session ? ' app-surface--authenticated' : ''}${settings.reducedMotion ? ' app-surface--reduced-motion' : ''}`}>
       {playingItem ? null : <WindowChrome integratedNavigation={isNavigationScreen} />}
       {content}
       {session && searchOpen ? (

@@ -1,5 +1,5 @@
 const CLIENT_NAME = 'Matinee';
-const CLIENT_VERSION = '0.1.0';
+export const APP_VERSION = '0.2.0';
 const DEVICE_NAME = 'Desktop';
 const DEVICE_ID = 'matinee-desktop';
 const SESSION_KEY = 'matinee.session.v1';
@@ -60,6 +60,14 @@ type AuthenticationResult = {
   User: JellyfinUser;
 };
 
+export type JellyfinServerInfo = {
+  ServerName?: string;
+  Version?: string;
+  OperatingSystem?: string;
+  ProductName?: string;
+  Id?: string;
+};
+
 type ItemsResult = { Items: JellyfinItem[] };
 
 export function normalizeServerUrl(value: string) {
@@ -92,7 +100,7 @@ function authorizationHeader(token?: string) {
     `Client="${CLIENT_NAME}"`,
     `Device="${DEVICE_NAME}"`,
     `DeviceId="${DEVICE_ID}"`,
-    `Version="${CLIENT_VERSION}"`,
+    `Version="${APP_VERSION}"`,
   ];
   if (token) fields.push(`Token="${token}"`);
   return `MediaBrowser ${fields.join(', ')}`;
@@ -144,6 +152,10 @@ async function get<T>(session: JellyfinSession, path: string): Promise<T> {
   });
   if (!response.ok) throw new Error(await readError(response));
   return response.json() as Promise<T>;
+}
+
+export function getServerInfo(session: JellyfinSession) {
+  return get<JellyfinServerInfo>(session, '/System/Info/Public');
 }
 
 async function send(session: JellyfinSession, path: string, method: 'POST' | 'DELETE') {
@@ -368,6 +380,16 @@ export function imageUrl(
   width: number,
 ) {
   return `${session.serverUrl}/Items/${item.Id}/Images/${type}?maxWidth=${width}&quality=90&api_key=${encodeURIComponent(session.accessToken)}`;
+}
+
+export function userImageUrl(session: JellyfinSession, width: number) {
+  const query = new URLSearchParams({
+    maxWidth: String(width),
+    quality: '90',
+    api_key: session.accessToken,
+  });
+  if (session.user.PrimaryImageTag) query.set('tag', session.user.PrimaryImageTag);
+  return `${session.serverUrl}/Users/${session.user.Id}/Images/Primary?${query.toString()}`;
 }
 
 export function backdropUrl(session: JellyfinSession, item: JellyfinItem, width: number) {
