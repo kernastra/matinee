@@ -26,6 +26,8 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 - **Jellyfin playback** — Negotiate direct playback or HLS transcoding with the server and resume titles from their saved position.
 - **Custom player controls** — Play, pause, seek, change volume, select audio or subtitles, choose playback quality, and enter fullscreen from a cinema-styled control surface.
 - **Library actions** — Add titles to the Jellyfin favorites-based watchlist and mark them played or unplayed.
+- **Expanded movie details** — Browse cast, related titles, collection context, chapters, and detailed video, audio, subtitle, and file information.
+- **Native tray support** — Hide Matinee to the system tray, restore the window, or quit from a branded native menu.
 - **Personal settings** — Persist playback quality, preferred audio, subtitle behavior, autoplay, hero rotation, and reduced-motion defaults on the device.
 - **Native desktop shell** — Run in a frameless, resizable Tauri window with custom traffic lights and locally bundled typefaces and icons.
 
@@ -66,6 +68,10 @@ sudo dnf group install "c-development"
 ```
 
 ### Installation
+
+Download the AppImage, Debian package, or RPM for the latest version from
+[GitHub Releases](https://github.com/kernastra/matinee/releases). To run Matinee
+from source instead:
 
 ```bash
 git clone https://github.com/kernastra/matinee.git
@@ -125,9 +131,10 @@ docs/
 ## Known Limitations
 
 - Login state is stored for the current app session, so a full restart requires signing in again.
-- Trailer and More actions appear on title pages but are intentionally disabled until their flows are implemented.
+- Trailer playback remains unavailable until Jellyfin provides a supported trailer source. The More menu is available for playback, media, watchlist, played-state, progress, and title-copy actions.
+- Chapter navigation works whenever Jellyfin returns chapters; preview artwork requires chapter-image extraction to be enabled and completed on the Jellyfin server.
 - Playback compatibility ultimately depends on the source media, server-side FFmpeg setup, enabled Jellyfin transcoding, and codecs supported by the system WebView.
-- Packaged releases and automated CI artifacts are not available yet; build the app from source.
+- Linux packages are produced for x86_64 systems. Windows and macOS releases have not yet been validated.
 
 ## Troubleshooting
 

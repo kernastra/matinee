@@ -1,13 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   backdropUrl,
+  clearItemProgress,
+  getItemCollectionContext,
   getItemDetails,
+  getSimilarItems,
   imageUrl,
   setItemFavorite,
   setItemPlayed,
+  type JellyfinCollectionContext,
   type JellyfinItem,
   type JellyfinSession,
 } from '../lib/jellyfin';
+import DetailsModal, { type DetailsModalMode } from './DetailsModal';
+import DetailsSupplemental from './DetailsSupplemental';
 import MaterialIcon from './MaterialIcon';
 
 type DetailsProps = {
@@ -15,6 +21,7 @@ type DetailsProps = {
   session: JellyfinSession;
   onBack: () => void;
   onPlay: (item: JellyfinItem) => void;
+  onSelect: (item: JellyfinItem) => void;
 };
 
 function runtime(ticks?: number) {
@@ -65,14 +72,24 @@ function personImageUrl(session: JellyfinSession, personId?: string) {
   return `${session.serverUrl}/Items/${personId}/Images/Primary?maxWidth=260&quality=88&api_key=${encodeURIComponent(session.accessToken)}`;
 }
 
-export default function Details({ item, session, onBack, onPlay }: DetailsProps) {
+export default function Details({ item, session, onBack, onPlay, onSelect }: DetailsProps) {
   const [details, setDetails] = useState(item);
+  const [similarItems, setSimilarItems] = useState<JellyfinItem[]>([]);
+  const [collections, setCollections] = useState<JellyfinCollectionContext[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [busyAction, setBusyAction] = useState<'favorite' | 'played' | null>(null);
+  const [busyAction, setBusyAction] = useState<'favorite' | 'played' | 'progress' | null>(null);
+  const [modal, setModal] = useState<DetailsModalMode | null>(null);
+  const [actionStatus, setActionStatus] = useState('');
+  const shellRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     setDetails(item);
+    setSimilarItems([]);
+    setCollections([]);
+    setModal(null);
+    setActionStatus('');
+    shellRef.current?.scrollTo({ top: 0 });
     setLoadingDetails(true);
     getItemDetails(session, item.Id)
       .then((fullItem) => {
@@ -84,10 +101,31 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
       .finally(() => {
         if (!cancelled) setLoadingDetails(false);
       });
+
+    getSimilarItems(session, item.Id)
+      .then((relatedItems) => {
+        if (!cancelled) setSimilarItems(relatedItems.filter((relatedItem) => relatedItem.Id !== item.Id));
+      })
+      .catch(() => {});
+
+    getItemCollectionContext(session, item.Id)
+      .then((collectionItems) => {
+        if (!cancelled) setCollections(collectionItems);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [item, session]);
+
+  useEffect(() => {
+    if (!modal) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setModal(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [modal]);
 
   const directors = useMemo(() => peopleByType(details, 'Director').map((person) => person.Name), [details]);
   const writers = useMemo(() => peopleByType(details, 'Writer').map((person) => person.Name), [details]);
@@ -111,6 +149,7 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
     }));
     try {
       await setItemFavorite(session, details.Id, nextFavorite);
+      setActionStatus(nextFavorite ? 'Added to your watchlist.' : 'Removed from your watchlist.');
     } catch {
       setDetails((current) => ({
         ...current,
@@ -135,6 +174,7 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
     }));
     try {
       await setItemPlayed(session, details.Id, nextPlayed);
+      setActionStatus(nextPlayed ? 'Marked as played.' : 'Marked as unplayed.');
     } catch {
       setDetails((current) => ({
         ...current,
@@ -150,9 +190,48 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
     }
   }
 
+  async function clearProgress() {
+    setBusyAction('progress');
+    setActionStatus('');
+    try {
+      await clearItemProgress(session, details.Id);
+      setDetails((current) => ({
+        ...current,
+        UserData: {
+          ...current.UserData,
+          PlaybackPositionTicks: 0,
+          PlayedPercentage: 0,
+        },
+      }));
+      setActionStatus('Removed from Continue Watching.');
+    } catch {
+      setActionStatus('Matinee could not clear the saved progress.');
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  function playFromBeginning() {
+    setModal(null);
+    onPlay({
+      ...details,
+      UserData: { ...details.UserData, PlaybackPositionTicks: 0 },
+    });
+  }
+
+  async function copyTitle() {
+    try {
+      await navigator.clipboard.writeText(details.Name);
+      setActionStatus('Title copied.');
+    } catch {
+      setActionStatus('Matinee could not copy the title.');
+    }
+  }
+
   return (
     <main
       className="details-shell"
+      ref={shellRef}
       style={{ backgroundImage: `url("${backdropUrl(session, details, 1800)}")` }}
     >
       <div className="details-scrim" />
@@ -208,7 +287,7 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
               <span className="details-action-tile__box"><MaterialIcon name="check_circle" filled={isPlayed} /></span>
               <span className="details-action-tile__label">{isPlayed ? 'Played' : 'Mark as Played'}</span>
             </button>
-            <button className="details-action-tile" type="button" disabled title="More actions are not available yet">
+            <button className="details-action-tile" type="button" onClick={() => { setActionStatus(''); setModal('more'); }}>
               <span className="details-action-tile__box"><MaterialIcon name="more_horiz" /></span>
               <span className="details-action-tile__label">More</span>
             </button>
@@ -224,31 +303,61 @@ export default function Details({ item, session, onBack, onPlay }: DetailsProps)
             {isFavorite ? <span className="details-favorite">In Watchlist</span> : null}
             {technicalTags.length ? (
               <div className="details-genres" aria-label="Media details">
-                {technicalTags.map(([label, value]) => <span key={label}>{label}: {value}</span>)}
+                {technicalTags.map(([label, value]) => (
+                  <button type="button" key={label} onClick={() => setModal('media')}>
+                    {label}: {value}
+                  </button>
+                ))}
               </div>
             ) : null}
           </div>
           {loadingDetails ? <p className="details-loading">Loading Jellyfin details</p> : null}
         </aside>
       </section>
-      {cast.length ? (
-        <section className="details-cast" aria-label="Cast">
-          <h2>Cast</h2>
-          <div className="details-cast-row">
-            {cast.map((person) => {
-              const portrait = personImageUrl(session, person.Id);
-              return (
-                <div className="details-cast-card" key={`${person.Id ?? person.Name}-${person.Role ?? ''}`}>
-                  <span className="details-cast-photo">
-                    {portrait ? <img src={portrait} alt="" loading="lazy" /> : <span>{person.Name.slice(0, 1)}</span>}
-                  </span>
-                  <strong>{person.Name}</strong>
-                  {person.Role ? <small>{person.Role}</small> : null}
-                </div>
-              );
-            })}
-          </div>
-        </section>
+      <div className="details-lower">
+        {cast.length ? (
+          <section className="details-cast" aria-label="Cast">
+            <h2>Cast</h2>
+            <div className="details-cast-row">
+              {cast.map((person) => {
+                const portrait = personImageUrl(session, person.Id);
+                return (
+                  <div className="details-cast-card" key={`${person.Id ?? person.Name}-${person.Role ?? ''}`}>
+                    <span className="details-cast-photo">
+                      {portrait ? <img src={portrait} alt="" loading="lazy" /> : <span>{person.Name.slice(0, 1)}</span>}
+                    </span>
+                    <strong>{person.Name}</strong>
+                    {person.Role ? <small>{person.Role}</small> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+        <DetailsSupplemental
+          chapters={details.Chapters ?? []}
+          collections={collections}
+          item={details}
+          session={session}
+          similarItems={similarItems}
+          onPlay={onPlay}
+          onSelect={onSelect}
+        />
+      </div>
+      {modal ? (
+        <DetailsModal
+          item={details}
+          mode={modal}
+          actionStatus={actionStatus}
+          busy={busyAction !== null}
+          onClearProgress={() => void clearProgress()}
+          onClose={() => setModal(null)}
+          onCopyTitle={() => void copyTitle()}
+          onMediaInfo={() => { setActionStatus(''); setModal('media'); }}
+          onPlayFromBeginning={playFromBeginning}
+          onToggleFavorite={() => void toggleFavorite()}
+          onTogglePlayed={() => void togglePlayed()}
+        />
       ) : null}
     </main>
   );

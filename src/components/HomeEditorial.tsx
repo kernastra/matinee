@@ -284,18 +284,36 @@ export function CollectionSpotlight({ feature, movies, series, session, onSelect
 export function HomeFooter({ onNavigate }: LibraryShortcutsProps) {
   return (
     <footer className="home-footer">
-      <div>
-        <span className="home-footer__mark">M</span>
-        <h2>Your library.<br />Beautifully yours.</h2>
-        <p>Matinee is a private window into the stories living on your Jellyfin server.</p>
+      <div className="home-footer__glow" aria-hidden="true" />
+      <div className="home-footer__intro">
+        <div className="home-footer__brand">
+          <span className="home-footer__mark">M</span>
+          <span>
+            <strong>Matinee</strong>
+            <small>Movie night starts here.</small>
+          </span>
+        </div>
+        <h2>Good stories. Better together.</h2>
       </div>
       <nav aria-label="Footer navigation">
-        <button type="button" onClick={() => scrollToSection('home-top')}>Home</button>
-        <button type="button" onClick={() => onNavigate('movies')}>Movies</button>
-        <button type="button" onClick={() => onNavigate('series')}>Series</button>
-        <button type="button" onClick={() => scrollToSection('continue')}>Continue watching</button>
+        <div>
+          <p>Browse</p>
+          <button type="button" onClick={() => scrollToSection('home-top')}>Home</button>
+          <button type="button" onClick={() => onNavigate('movies')}>Movies</button>
+          <button type="button" onClick={() => onNavigate('series')}>Series</button>
+        </div>
+        <div>
+          <p>Your library</p>
+          <button type="button" onClick={() => scrollToSection('continue')}>Continue watching</button>
+          <button type="button" onClick={() => scrollToSection('recent')}>Recently added</button>
+          <button type="button" onClick={() => scrollToSection('favorites')}>Favorites</button>
+        </div>
+        <div>
+          <p>Matinee</p>
+          <button type="button" onClick={() => onNavigate('settings')}>Settings</button>
+          <button type="button" onClick={() => scrollToSection('home-top')}>Back to top</button>
+        </div>
       </nav>
-      <small>Powered by your Jellyfin library</small>
     </footer>
   );
 }

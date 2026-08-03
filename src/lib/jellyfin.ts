@@ -1,5 +1,5 @@
 const CLIENT_NAME = 'Matinee';
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';
 const DEVICE_NAME = 'Desktop';
 const DEVICE_ID = 'matinee-desktop';
 const SESSION_KEY = 'matinee.session.v1';
@@ -45,6 +45,8 @@ export type JellyfinItem = {
   ProductionLocations?: string[];
   ProviderIds?: Record<string, string>;
   CriticRating?: number;
+  Chapters?: ChapterInfo[];
+  MediaSources?: MediaSourceInfo[];
   MediaStreams?: MediaStream[];
   UserData?: {
     PlaybackPositionTicks?: number;
@@ -53,6 +55,12 @@ export type JellyfinItem = {
     Played?: boolean;
     PlayCount?: number;
   };
+};
+
+export type ChapterInfo = {
+  Name?: string;
+  StartPositionTicks?: number;
+  ImageTag?: string;
 };
 
 type AuthenticationResult = {
@@ -176,6 +184,8 @@ const fields = [
   'OfficialRating',
   'PrimaryImageAspectRatio',
   'MediaStreams',
+  'MediaSources',
+  'Chapters',
   'ParentId',
   'DateCreated',
   'PremiereDate',
@@ -267,6 +277,73 @@ export async function getItemDetails(
   return get<JellyfinItem>(session, `/Users/${session.user.Id}/Items/${itemId}?${query}`);
 }
 
+export async function getSimilarItems(
+  session: JellyfinSession,
+  itemId: string,
+  limit = 12,
+): Promise<JellyfinItem[]> {
+  const query = itemQuery({
+    userId: session.user.Id,
+    limit,
+    fields,
+  });
+  return get<ItemsResult>(session, `/Items/${itemId}/Similar?${query}`)
+    .then((result) => result.Items);
+}
+
+export type JellyfinCollectionContext = {
+  collection: JellyfinItem;
+  items: JellyfinItem[];
+};
+
+export async function getItemCollectionContext(
+  session: JellyfinSession,
+  itemId: string,
+): Promise<JellyfinCollectionContext[]> {
+  const collectionsQuery = itemQuery({
+    userId: session.user.Id,
+    limit: 2,
+    fields,
+  });
+  const collections = await get<ItemsResult>(
+    session,
+    `/Items/${itemId}/Collections?${collectionsQuery}`,
+  ).then((result) => result.Items);
+
+  return Promise.all(collections.map(async (collection) => {
+    const itemsQuery = itemQuery({
+      ParentId: collection.Id,
+      Recursive: true,
+      IncludeItemTypes: 'Movie,Series',
+      SortBy: 'ProductionYear,SortName',
+      SortOrder: 'Ascending',
+      Fields: fields,
+      EnableUserData: true,
+    });
+    const items = await get<ItemsResult>(
+      session,
+      `/Users/${session.user.Id}/Items?${itemsQuery}`,
+    ).then((result) => result.Items);
+    return { collection, items };
+  }));
+}
+
+export function chapterImageUrl(
+  session: JellyfinSession,
+  itemId: string,
+  chapterIndex: number,
+  width = 420,
+  tag?: string,
+) {
+  const query = new URLSearchParams({
+    maxWidth: String(width),
+    quality: '88',
+    api_key: session.accessToken,
+  });
+  if (tag) query.set('tag', tag);
+  return `${session.serverUrl}/Items/${itemId}/Images/Chapter/${chapterIndex}?${query.toString()}`;
+}
+
 export async function setItemFavorite(
   session: JellyfinSession,
   itemId: string,
@@ -281,6 +358,26 @@ export async function setItemPlayed(
   played: boolean,
 ) {
   await send(session, `/Users/${session.user.Id}/PlayedItems/${itemId}`, played ? 'POST' : 'DELETE');
+}
+
+export async function clearItemProgress(session: JellyfinSession, itemId: string) {
+  const userData = await get<NonNullable<JellyfinItem['UserData']>>(
+    session,
+    `/UserItems/${itemId}/UserData`,
+  );
+  const response = await fetch(`${session.serverUrl}/UserItems/${itemId}/UserData`, {
+    method: 'POST',
+    headers: {
+      Authorization: authorizationHeader(session.accessToken),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      ...userData,
+      PlaybackPositionTicks: 0,
+      PlayedPercentage: 0,
+    }),
+  });
+  if (!response.ok) throw new Error(await readError(response));
 }
 
 export async function searchLibrary(
@@ -405,11 +502,17 @@ export function videoStreamUrl(session: JellyfinSession, item: JellyfinItem) {
   return `${session.serverUrl}/Videos/${item.Id}/stream?${query.toString()}`;
 }
 
-type MediaSourceInfo = {
+export type MediaSourceInfo = {
   Id?: string;
-  SupportsDirectPlay: boolean;
-  SupportsDirectStream: boolean;
-  SupportsTranscoding: boolean;
+  Name?: string;
+  Path?: string;
+  Container?: string;
+  Size?: number;
+  Bitrate?: number;
+  RunTimeTicks?: number;
+  SupportsDirectPlay?: boolean;
+  SupportsDirectStream?: boolean;
+  SupportsTranscoding?: boolean;
   TranscodingUrl?: string;
   MediaStreams?: MediaStream[];
   DefaultAudioStreamIndex?: number;
@@ -427,6 +530,17 @@ export type MediaStream = {
   Title?: string;
   DisplayTitle?: string;
   Channels?: number;
+  ChannelLayout?: string;
+  BitRate?: number;
+  BitDepth?: number;
+  SampleRate?: number;
+  Profile?: string;
+  Level?: number;
+  PixelFormat?: string;
+  AverageFrameRate?: number;
+  RealFrameRate?: number;
+  VideoRangeType?: string;
+  ColorSpace?: string;
   IsDefault?: boolean;
   IsForced?: boolean;
   IsExternal?: boolean;
