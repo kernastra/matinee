@@ -1,6 +1,6 @@
 [package]
 name = "matinee"
-version = "0.2.0"
+version = "0.3.0"
 description = "A cinematic desktop client for Jellyfin"
 edition = "2021"
 rust-version = "1.77.2"
@@ -14,7 +14,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.5", features = ["devtools", "macos-private-api"] }
+tauri = { version = "2.11.5", features = ["devtools", "macos-private-api", "tray-icon"] }
 
 [dev-dependencies]
 tauri = { version = "2.11.5", features = ["test"] }

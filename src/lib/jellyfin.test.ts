@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearSession,
+  clearItemProgress,
+  chapterImageUrl,
   getHomeFeed,
+  getItemCollectionContext,
   getPlaybackPlan,
   getLibraryItems,
   getFollowingEpisode,
@@ -9,6 +12,7 @@ import {
   getSeasonEpisodes,
   getSeriesSeasons,
   getServerInfo,
+  getSimilarItems,
   imageUrl,
   loadSession,
   normalizeServerUrl,
@@ -87,6 +91,14 @@ it('builds an authenticated direct-play URL', () => {
   const url = new URL(videoStreamUrl(session, item));
   expect(url.pathname).toBe('/Videos/movie-1/stream');
   expect(url.searchParams.get('Static')).toBe('true');
+  expect(url.searchParams.get('api_key')).toBe('token with spaces');
+});
+
+it('builds an authenticated tagged chapter image URL', () => {
+  const url = new URL(chapterImageUrl(session, 'movie-1', 3, 480, 'chapter-tag'));
+  expect(url.pathname).toBe('/Items/movie-1/Images/Chapter/3');
+  expect(url.searchParams.get('maxWidth')).toBe('480');
+  expect(url.searchParams.get('tag')).toBe('chapter-tag');
   expect(url.searchParams.get('api_key')).toBe('token with spaces');
 });
 
@@ -201,6 +213,54 @@ describe('library navigation queries', () => {
     expect(url.pathname).toBe('/Users/user-1/Items');
     expect(url.searchParams.get('IncludeItemTypes')).toBe('Movie');
     expect(url.searchParams.get('SortOrder')).toBe('Descending');
+  });
+
+  it('loads similar titles from the current Jellyfin library', async () => {
+    const fetchMock = mockItems([{ Id: 'movie-2', Name: 'Sequel', Type: 'Movie' }]);
+    await expect(getSimilarItems(session, 'movie-1', 8)).resolves.toHaveLength(1);
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.pathname).toBe('/Items/movie-1/Similar');
+    expect(url.searchParams.get('userId')).toBe('user-1');
+    expect(url.searchParams.get('limit')).toBe('8');
+  });
+
+  it('loads collection membership and the collection titles', async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const items = url.pathname.endsWith('/Collections')
+        ? [{ Id: 'box-1', Name: 'The Trilogy', Type: 'BoxSet' }]
+        : [{ Id: 'movie-1', Name: 'Movie', Type: 'Movie' }];
+      return Promise.resolve({ ok: true, json: async () => ({ Items: items }) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getItemCollectionContext(session, 'movie-1')).resolves.toEqual([{
+      collection: { Id: 'box-1', Name: 'The Trilogy', Type: 'BoxSet' },
+      items: [{ Id: 'movie-1', Name: 'Movie', Type: 'Movie' }],
+    }]);
+    const urls = fetchMock.mock.calls.map((call) => new URL(String(call[0])));
+    expect(urls[0].pathname).toBe('/Items/movie-1/Collections');
+    expect(urls[1].searchParams.get('ParentId')).toBe('box-1');
+  });
+
+  it('clears resume progress without discarding the rest of user data', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ IsFavorite: true, PlaybackPositionTicks: 42, PlayedPercentage: 12 }),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await clearItemProgress(session, 'movie-1');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://192.168.1.249:8096/UserItems/movie-1/UserData');
+    const update = fetchMock.mock.calls[1];
+    expect(update[1].method).toBe('POST');
+    expect(JSON.parse(update[1].body)).toEqual(expect.objectContaining({
+      IsFavorite: true,
+      PlaybackPositionTicks: 0,
+      PlayedPercentage: 0,
+    }));
   });
 
   it('searches movies, series, and episodes', async () => {

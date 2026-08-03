@@ -18,14 +18,18 @@ media rows are product requirements rather than decorative exceptions.
 
 ## Explicit overrides
 
-- The primary content surface is Midnight Navy `#111820` rather than Catppuccin's
-  `#1e1e2e`, supported by Projection Room `#1b232b` and Theater Brown `#29231f`.
+- The primary authenticated content surface uses the brand guide's painted
+  Midnight Navy swatch, `#080e15`, rather than the printed `#111820` label or
+  Catppuccin's `#1e1e2e`. Login photography retains `#111820` as its blending
+  surface, supported by Projection Room `#1b232b` and Theater Brown `#29231f`.
 - Ticket Cream `#f6eedd` is the primary foreground and Marquee Amber `#e6a452`
   communicates playback, focus, selection, and warm theater-light accents.
 - Curtain Burgundy `#963f47` is reserved for errors or rare emphasis; Faded Teal
   `#658184` is supporting color rather than a competing action color.
-- Fraunces is reserved for editorial display headings, Manrope for interface and body
-  copy, and IBM Plex Mono for metadata and compact application chrome.
+- Fraunces SemiBold is reserved for editorial display headings, Manrope for
+  interface and body copy, and IBM Plex Mono for metadata and compact application
+  chrome. The reference scale is 64/40/26/17/16/13/11px for hero, page, section,
+  poster title, body, metadata, and caption text respectively.
 - Cinematic gradients are allowed only to preserve text legibility over live
   Jellyfin artwork and to join hero imagery to the content surface.
 

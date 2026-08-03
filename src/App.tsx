@@ -107,6 +107,7 @@ export default function App() {
         session={session}
         onBack={() => setSelectedItem(null)}
         onPlay={play}
+        onSelect={setSelectedItem}
       />
     );
   } else if (view === 'settings') {

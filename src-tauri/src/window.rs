@@ -2,7 +2,7 @@ use tauri::Window;
 
 #[tauri::command]
 pub fn close_window(window: Window) -> Result<(), String> {
-    window.close().map_err(|error| error.to_string())
+    window.hide().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
