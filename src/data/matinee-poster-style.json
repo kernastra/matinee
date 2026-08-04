@@ -1,0 +1,359 @@
+{
+  "manifestVersion": 1,
+  "styleId": "matinee.poster-card",
+  "styleVersion": "1.0.0",
+  "updatedAt": "2026-08-04",
+  "brand": {
+    "name": "Matinee",
+    "purpose": "A reusable house-style manifest for AI-generated custom movie and series poster cards.",
+    "creativeIntent": "Premium collector artwork for a cozy neighborhood cinema: cinematic, warm, nostalgic, handcrafted, familiar, and restrained.",
+    "keywords": [
+      "warm",
+      "cinematic",
+      "cozy",
+      "nostalgic",
+      "familiar",
+      "premium"
+    ]
+  },
+  "theme": {
+    "mode": "dark",
+    "colorStrategy": "Use Midnight Navy and Ticket Cream as the dominant pair. Marquee Amber behaves like practical theater light, not a full-frame color wash. Supporting colors remain sparse and subordinate to the selected movie's identity.",
+    "palette": {
+      "midnightNavy": {
+        "hex": "#111820",
+        "appSurfaceCalibration": "#080E15",
+        "role": "Primary dark field, deep shadow, and negative space",
+        "usage": "dominant"
+      },
+      "projectionRoom": {
+        "hex": "#1B232B",
+        "role": "Lifted navy-black midtone and secondary shadow",
+        "usage": "supporting"
+      },
+      "theaterBrown": {
+        "hex": "#29231F",
+        "role": "Warm neutral shadow and tactile print depth",
+        "usage": "supporting"
+      },
+      "ticketCream": {
+        "hex": "#F6EEDD",
+        "role": "Primary typography, paper stock, and warm highlight",
+        "usage": "dominant"
+      },
+      "marqueeAmber": {
+        "hex": "#E6A452",
+        "role": "Practical light, small title accent, focus, and illuminated detail",
+        "usage": "accent-only"
+      },
+      "curtainBurgundy": {
+        "hex": "#963F47",
+        "role": "Rare dramatic emphasis and deep warm counterpoint",
+        "usage": "sparingly"
+      },
+      "fadedTeal": {
+        "hex": "#658184",
+        "role": "Cool supporting note and atmospheric separation",
+        "usage": "sparingly"
+      }
+    },
+    "moviePalettePolicy": {
+      "rule": "Preserve recognizable colors from the selected movie while translating them into Matinee's muted print palette.",
+      "minimumHouseColors": [
+        "midnightNavy",
+        "ticketCream"
+      ],
+      "maximumAccentFamilies": 2,
+      "avoid": [
+        "full-frame orange grading",
+        "uncontrolled neon",
+        "pure digital black",
+        "harsh pure white",
+        "rainbow palettes without a story reason"
+      ]
+    }
+  },
+  "artDirection": {
+    "medium": "Flat 2D digital illustration with the tactile character of a museum-quality screen print.",
+    "finish": [
+      "painterly brush texture",
+      "subtle paper grain",
+      "distressed ink",
+      "soft controlled gradients",
+      "restrained detail",
+      "cinematic practical lighting",
+      "slight registration imperfection"
+    ],
+    "composition": {
+      "dominantIdeaCount": 1,
+      "primaryRule": "Build the poster around one title-specific visual metaphor, subject, scene, or environment.",
+      "hierarchy": [
+        "dominant story image",
+        "movie title when enabled",
+        "optional official or supplied tagline",
+        "small atmospheric or symbolic detail"
+      ],
+      "negativeSpace": "generous and intentional",
+      "thumbnailReadability": "The primary silhouette and title must remain understandable at approximately 170 px wide.",
+      "preferredPatterns": [
+        "monument and witness",
+        "solitary figure",
+        "symbolic geometry",
+        "split-field composition",
+        "cropped illustrated character study",
+        "landscape threshold"
+      ]
+    },
+    "lighting": {
+      "default": "Soft practical amber light held against deep navy shadow.",
+      "allowed": [
+        "marquee glow",
+        "projector beam",
+        "window light",
+        "lamplight",
+        "sunset edge light",
+        "story-specific motivated light"
+      ],
+      "rule": "Light should guide the eye and reveal atmosphere; it should not flatten the image into a uniform warm wash."
+    },
+    "characterPolicy": {
+      "treatment": "Illustrated, interpretive, and integrated into the composition.",
+      "avoid": [
+        "exact celebrity likeness",
+        "photorealistic publicity still",
+        "floating-head ensemble collage",
+        "over-rendered facial detail"
+      ]
+    },
+    "restrictions": [
+      "Do not recreate official key art or copy an existing poster composition.",
+      "Do not use studio logos, franchise logos, actor names, director names, or fake billing blocks.",
+      "Do not invent story elements when title-specific metadata or reference artwork is available.",
+      "Do not default to cosmic imagery, portals, planets, or astronauts unless they belong to the selected title.",
+      "Avoid glossy photorealism, generic Hollywood layouts, generic AI fantasy imagery, excessive visual effects, and tiny illegible detail.",
+      "Avoid malformed anatomy, duplicated objects, accidental lettering, watermarks, signatures, and AI artifacts."
+    ]
+  },
+  "typography": {
+    "principle": "Typography should feel editorial and collectible, with a clear hierarchy and enough breathing room to survive poster-card scaling.",
+    "families": {
+      "display": {
+        "name": "Fraunces",
+        "weight": 600,
+        "fallback": "Georgia, serif",
+        "use": [
+          "movie title",
+          "collection title",
+          "short display phrase"
+        ]
+      },
+      "interface": {
+        "name": "Manrope",
+        "weightRange": [
+          400,
+          600
+        ],
+        "fallback": "sans-serif",
+        "use": [
+          "tagline",
+          "short supporting copy"
+        ]
+      },
+      "metadata": {
+        "name": "IBM Plex Mono",
+        "weightRange": [
+          400,
+          600
+        ],
+        "fallback": "monospace",
+        "use": [
+          "year",
+          "rating",
+          "runtime",
+          "genre",
+          "small edition label"
+        ]
+      }
+    },
+    "posterHierarchy": {
+      "title": {
+        "family": "display",
+        "weight": 600,
+        "case": "title-case-or-source-accurate",
+        "sizePercentOfCanvasHeight": [
+          4.2,
+          7.5
+        ],
+        "lineHeight": 1.05,
+        "letterSpacingEm": [
+          0,
+          0.04
+        ],
+        "maximumLines": 3,
+        "colorPreference": [
+          "ticketCream",
+          "marqueeAmber"
+        ]
+      },
+      "tagline": {
+        "family": "interface",
+        "weight": 500,
+        "case": "sentence-case",
+        "sizePercentOfCanvasHeight": [
+          1.25,
+          2.1
+        ],
+        "lineHeight": 1.35,
+        "maximumLines": 3,
+        "colorPreference": [
+          "ticketCream"
+        ]
+      },
+      "metadata": {
+        "family": "metadata",
+        "weight": 400,
+        "case": "source-accurate",
+        "sizePercentOfCanvasHeight": [
+          0.85,
+          1.35
+        ],
+        "lineHeight": 1.35,
+        "letterSpacingEm": [
+          0.04,
+          0.08
+        ],
+        "separator": " • ",
+        "colorPreference": [
+          "ticketCream"
+        ]
+      }
+    },
+    "layoutRules": [
+      "Use only the exact supplied movie or series title.",
+      "Use only an official, supplied, or user-written tagline; never invent one unless explicitly requested.",
+      "Prefer lower-third title placement, but move it when the composition requires a clearer hierarchy.",
+      "Keep title and tagline inside the safe area and away from faces or essential story symbols.",
+      "Use no more than two type families in generated poster artwork unless metadata is explicitly enabled.",
+      "Do not use all caps for long titles or taglines.",
+      "Do not stretch, warp, bevel, glow, or extrude lettering.",
+      "Do not generate fake credits, legal copy, review quotes, laurels, or logos.",
+      "If reliable text rendering is unavailable, generate artwork without text and apply typography as a deterministic post-process."
+    ],
+    "textTreatments": {
+      "Title": {
+        "titleEnabled": true,
+        "taglineMode": "hidden",
+        "metadataEnabled": false
+      },
+      "Title + Tagline": {
+        "titleEnabled": true,
+        "taglineMode": "official-or-supplied",
+        "metadataEnabled": false
+      },
+      "No Text": {
+        "titleEnabled": false,
+        "taglineMode": "hidden",
+        "metadataEnabled": false
+      }
+    }
+  },
+  "posterCard": {
+    "assetType": "Poster",
+    "orientation": "portrait",
+    "aspectRatio": "2:3",
+    "generationSize": {
+      "width": 1024,
+      "height": 1536
+    },
+    "safeAreaPercent": {
+      "top": 6,
+      "right": 7,
+      "bottom": 7,
+      "left": 7
+    },
+    "titleZonePreference": "lower-third",
+    "edgePolicy": "Artwork extends to every canvas edge. Do not bake rounded corners, borders, shadows, gradients, badges, ratings, or UI chrome into the image; Matinee applies those at render time.",
+    "cropPolicy": "Keep the dominant subject and all enabled typography inside the safe area so center-crop and responsive card layouts remain usable.",
+    "export": {
+      "format": "JPEG",
+      "colorSpace": "sRGB",
+      "fileName": "poster.jpg"
+    }
+  },
+  "movieManifestMapping": {
+    "compatibleManifest": "movie.mf.json manifestVersion 1",
+    "fieldPriority": {
+      "identity": [
+        "official.title",
+        "media.title",
+        "media.year",
+        "official.genres",
+        "official.tagline"
+      ],
+      "characterFocus": [
+        "creativeContext.characters",
+        "official.cast"
+      ],
+      "signatureElementFocus": [
+        "creativeContext.signatureObjects",
+        "creativeContext.artifacts",
+        "creativeContext.vehicles"
+      ],
+      "sceneFocus": [
+        "creativeContext.iconicScenes"
+      ],
+      "environmentFocus": [
+        "creativeContext.locations",
+        "creativeContext.visualMotifs"
+      ],
+      "palette": [
+        "artworkBrief.paletteHints",
+        "creativeContext.visualMotifs"
+      ],
+      "composition": [
+        "artworkBrief.compositionHints",
+        "artworkBrief.primarySymbols"
+      ],
+      "avoid": [
+        "artworkBrief.avoidSpoilers",
+        "artworkBrief.negativePrompts"
+      ]
+    },
+    "mergeOrder": [
+      "matinee locked theme and typography",
+      "asset-type rules",
+      "movie identity and official metadata",
+      "movie creative context",
+      "selected focus and subject",
+      "selected text treatment",
+      "movie-specific exclusions",
+      "Matinee global restrictions"
+    ],
+    "conflictRule": "Movie facts control what is depicted. This manifest controls how it is depicted. Safety and global restrictions always win."
+  },
+  "qualityChecks": [
+    "The selected title is recognizable through title-specific imagery rather than generic genre shorthand.",
+    "One visual idea clearly dominates the frame.",
+    "The palette feels like both the selected title and Matinee.",
+    "Enabled typography is exact, readable, and hierarchically subordinate to the artwork.",
+    "The poster reads at card size and still rewards full-size viewing.",
+    "No prohibited branding, fake text, copied key art, or unintended UI treatment appears in the exported image."
+  ],
+  "sources": [
+    {
+      "provider": "matinee",
+      "sourceType": "design-specification",
+      "path": "docs/design-spec.md"
+    },
+    {
+      "provider": "matinee",
+      "sourceType": "prompt-engine",
+      "path": "src/lib/posterPrompts.ts"
+    },
+    {
+      "provider": "matinee",
+      "sourceType": "application-theme",
+      "path": "src/styles.css"
+    }
+  ]
+}

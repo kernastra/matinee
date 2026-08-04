@@ -1,3 +1,4 @@
+mod image_generation;
 mod window;
 
 use tauri::{
@@ -39,6 +40,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            image_generation::assign_generated_poster,
+            image_generation::export_generated_image,
+            image_generation::export_poster_to_media_folder,
+            image_generation::generate_poster_image,
+            image_generation::list_custom_posters,
+            image_generation::load_movie_manifest,
+            image_generation::provider_key_status,
+            image_generation::remove_provider_key,
+            image_generation::save_provider_key,
+            image_generation::scan_local_image_provider,
             window::close_window,
             window::minimize_window,
             window::toggle_maximize_window,

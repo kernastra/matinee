@@ -6,7 +6,7 @@
 
 ## Overview
 
-Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.org/) libraries. It pairs Jellyfin's media server and playback APIs with a warm, cinema-inspired interface designed for the couch: rich artwork, editorial home sections, focused title pages, and custom playback controls. Matinee connects to your existing server and library; it does not replace or bundle Jellyfin itself.
+Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.org/) libraries. It pairs Jellyfin's media server and playback APIs with a warm, cinema-inspired interface designed for the couch: rich artwork, editorial home sections, focused title pages, custom playback controls, and a built-in studio for creating collector-style library artwork. Matinee connects to your existing server and library; it does not replace or bundle Jellyfin itself.
 
 ## Demo
 
@@ -27,8 +27,13 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 - **Custom player controls** — Play, pause, seek, change volume, select audio or subtitles, choose playback quality, and enter fullscreen from a cinema-styled control surface.
 - **Library actions** — Add titles to the Jellyfin favorites-based watchlist and mark them played or unplayed.
 - **Expanded movie details** — Browse cast, related titles, collection context, chapters, and detailed video, audio, subtitle, and file information.
+- **Poster Studio** — Select a real title, choose four concise creative directions, and generate coordinated posters, backdrops, banners, or thumbnails without writing prompts.
+- **Movie-specific art direction** — Load optional `movie.mf.json` manifests beside local movie files to turn curated characters, signature objects, scenes, environments, palette hints, and visual motifs into selectable creative options.
+- **Matinee house style** — Combine each title's Movie DNA with a versioned palette, typography, screen-print texture, composition, and quality system for a cohesive library.
+- **Multiple image providers** — Generate through an authenticated local Codex CLI or a fal.ai API key stored in the operating-system credential vault. Higgsfield configuration is present for future endpoint support.
+- **Persistent custom artwork** — Assign generated posters throughout Matinee, export copies to Pictures, or save approved movie artwork beside local media as `poster.jpg`.
 - **Native tray support** — Hide Matinee to the system tray, restore the window, or quit from a branded native menu.
-- **Personal settings** — Persist playback quality, preferred audio, subtitle behavior, autoplay, hero rotation, and reduced-motion defaults on the device.
+- **Personal settings** — Persist playback quality, preferred audio, subtitle behavior, autoplay, hero rotation, reduced motion, image provider, and poster-metadata visibility on the device.
 - **Native desktop shell** — Run in a frameless, resizable Tauri window with custom traffic lights and locally bundled typefaces and icons.
 
 ## Tech Stack
@@ -39,6 +44,8 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 | Interface | React 19, TypeScript |
 | Build tooling | Vite 7, pnpm |
 | Playback | HTML5 video, hls.js, Jellyfin REST API |
+| Image generation | Local Codex CLI, fal.ai FLUX/FLUX 2 Edit |
+| Native services | Rust, OS credential vault, local artwork persistence |
 | Styling | Hand-authored CSS |
 | Tests | Vitest, jsdom |
 
@@ -51,6 +58,7 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 - pnpm 10 or newer
 - The stable Rust toolchain
 - The platform dependencies listed in the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+- Optional: an authenticated local [Codex CLI](https://developers.openai.com/codex/cli/) or a fal.ai API key for Poster Studio generation
 
 On Fedora, install the current Tauri Linux dependencies with:
 
@@ -80,7 +88,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-No environment file is required. On first launch, enter the root URL of your Jellyfin server—such as `http://jellyfin.local:8096`—followed by your Jellyfin username and password.
+No environment file is required. On first launch, enter the root URL of your Jellyfin server—such as `http://jellyfin.local:8096`—followed by your Jellyfin username and password. Image-provider credentials are configured inside Settings; Matinee never stores provider keys in the repository or browser storage.
 
 ## Usage
 
@@ -89,6 +97,18 @@ No environment file is required. On first launch, enter the root URL of your Jel
 3. Browse the home screen or use Movies, Series, and Search to find a title.
 4. Open a title for its details, then select Play or Resume. For a series, choose a season and episode first.
 5. Move the pointer over the player to reveal its controls. They fade away after five seconds of inactivity.
+
+### Create a custom poster
+
+1. Open the profile menu and select **Poster Studio**.
+2. Choose a movie or series from the connected Jellyfin library.
+3. Select an asset type, focus, title-specific subject, and text treatment. Matinee assembles the full creative brief behind the scenes.
+4. Select **Generate poster**. A completed poster is assigned to that title inside Matinee automatically.
+5. Export a normal copy to Pictures, or—for movies whose Jellyfin file resolves to a local folder—save it as `poster.jpg` beside the media.
+
+Poster Studio works from normal Jellyfin metadata when no creative manifest is available. For richer options, place a version-1 `movie.mf.json` in the movie folder. Matinee reads only the selected title's manifest; it does not independently scan or index the media library.
+
+The **Advanced** panel exposes the assembled prompt, permits an editable copy or complete custom brief, and imports `.txt`, `.md`, and prompt-bearing `.json` files. Matinee styling can be kept or disabled for a custom prompt.
 
 <!-- ===== Repo-Specific Sections ===== -->
 
@@ -103,23 +123,25 @@ No environment file is required. On first launch, enter the root URL of your Jel
 | `pnpm build` | Type-check and create the production frontend bundle |
 | `pnpm tauri:build` | Build installable desktop bundles for the current platform |
 
-The visual direction, component rules, interaction patterns, and Matinee color tokens live in [docs/design-spec.md](docs/design-spec.md).
+The visual direction, component rules, interaction patterns, and Matinee color tokens live in [docs/design-spec.md](docs/design-spec.md). Poster generation uses the machine-readable house style in [`src/data/matinee-poster-style.json`](src/data/matinee-poster-style.json) and the prompt architecture documented in [docs/poster-prompt-templates.md](docs/poster-prompt-templates.md).
 
 ## Project Structure
 
 ```text
 src/
 ├── assets/              Branded artwork, fonts, and Material Symbols
-├── components/          Navigation, library, details, editorial, and player UI
-├── lib/jellyfin.ts      Jellyfin API, session, library, and playback helpers
+├── components/          Navigation, library, playback, settings, and Poster Studio UI
+├── data/                Versioned Matinee poster-style manifest
+├── lib/                 Jellyfin, settings, generation, manifest, and prompt helpers
 ├── App.tsx              Application routing and session orchestration
 └── styles.css           Shared Matinee design system and component styles
 src-tauri/
-├── src/                 Native Tauri application entry point
+├── src/                 Native shell, image providers, keyring, and local-file commands
 └── tauri.conf.json      Window, security, and bundle configuration
 docs/
 ├── assets/              README and documentation artwork
-└── design-spec.md       Product-specific visual and interaction specification
+├── design-spec.md       Product-specific visual and interaction specification
+└── poster-prompt-templates.md  Poster prompt architecture and genre recipes
 ```
 
 ## Platform Notes
@@ -134,6 +156,10 @@ docs/
 - Trailer playback remains unavailable until Jellyfin provides a supported trailer source. The More menu is available for playback, media, watchlist, played-state, progress, and title-copy actions.
 - Chapter navigation works whenever Jellyfin returns chapters; preview artwork requires chapter-image extraction to be enabled and completed on the Jellyfin server.
 - Playback compatibility ultimately depends on the source media, server-side FFmpeg setup, enabled Jellyfin transcoding, and codecs supported by the system WebView.
+- Image generation requires a separately authenticated provider and remains subject to that provider's availability, billing, safety systems, and acceptable-use policy. A rejected generation is not retried automatically.
+- Higgsfield can be selected and configured, but generation remains disabled until Matinee adopts a stable documented developer endpoint.
+- `movie.mf.json` discovery and direct `poster.jpg` export currently apply to movies whose Jellyfin media path can be resolved on the same computer. Series and remote-only libraries fall back to Jellyfin metadata and normal image export.
+- AI-rendered title text may be misspelled. Use **No Text** or the Advanced workflow when deterministic typography is required.
 - Linux packages are produced for x86_64 systems. Windows and macOS releases have not yet been validated.
 
 ## Troubleshooting
@@ -159,6 +185,18 @@ pnpm tauri:dev
 ### The Linux window is blank or transparent
 
 Launch with `pnpm tauri:dev` rather than invoking `tauri dev` directly. The project script sets the WebKit renderer compatibility flag used by Matinee.
+
+### Poster generation is unavailable
+
+Open Settings → Poster generation. For ChatGPT/Codex, install and authenticate the local Codex CLI, then run Matinee's provider scan. For fal.ai, add a valid API key; it is saved to the operating-system credential vault.
+
+### A poster is rejected by the image provider
+
+Provider safety and content-policy checks can reject either a prompt, a reference image, or the generated output. Try a more symbolic **Auto**, **Signature Element**, **Scene**, or **Environment** focus, correct overly broad Movie DNA, or select another configured provider. Matinee deliberately makes one attempt and does not bypass provider safeguards.
+
+### Matinee cannot save `poster.jpg`
+
+The selected Jellyfin movie must expose a media-file path that resolves on the same computer. If Jellyfin runs in Docker, make sure its `/media`, `/movies`, `/tv`, or `/shows` mount corresponds to a local media folder Matinee can access. Export to Pictures remains available when direct media-folder export is not.
 
 ## License
 

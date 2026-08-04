@@ -17,6 +17,8 @@ describe('application settings', () => {
       autoplayNextEpisode: false,
       heroRotation: false,
       reducedMotion: true,
+      imageProvider: 'fal' as const,
+      posterMetadata: 'never' as const,
     };
     saveSettings(settings);
     expect(loadSettings()).toEqual(settings);
@@ -26,6 +28,8 @@ describe('application settings', () => {
     localStorage.setItem('matinee.settings.v1', JSON.stringify({
       playbackQuality: '4k',
       heroRotation: false,
+      imageProvider: 'unknown',
+      posterMetadata: 'somewhere',
     }));
     expect(loadSettings()).toEqual({ ...defaultSettings, heroRotation: false });
   });

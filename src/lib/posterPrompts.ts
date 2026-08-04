@@ -1,3 +1,6 @@
+import matineePosterStyle from '../data/matinee-poster-style.json';
+import { getMovieManifestFocusOptions, type MovieManifest } from './movieManifest';
+
 export type PosterGenre =
   | 'Action'
   | 'Adventure'
@@ -31,21 +34,180 @@ export type PosterRecipe = {
 
 export type PosterPromptInput = {
   title: string;
+  year?: number;
   genres?: string[];
+  storyContext?: string;
+  tagline?: string;
+  hasVisualReferences?: boolean;
+  assetType?: ArtworkAssetType;
+  focus?: PosterFocus;
+  subject?: string;
+  textTreatment?: PosterTextTreatment;
+  includeMatineeStyle?: boolean;
+  visualTreatment?: PosterVisualTreatment;
+  compositionStyle?: PosterComposition;
   focalSubject?: string;
   setting?: string;
   mood?: string;
   colorHint?: string;
   titleTreatment?: string;
+  movieManifest?: MovieManifest | null;
 };
 
+export type PosterSourceMetadata = {
+  Name: string;
+  Overview?: string;
+  Taglines?: string[];
+  ProductionLocations?: string[];
+  People?: Array<{ Name: string; Type?: string; Role?: string }>;
+};
+
+export type TitlePosterOptions = {
+  specificFocalSubjects: string[];
+  specificSettings: string[];
+  focalSubjects: string[];
+  settings: string[];
+  byFocus: Record<Exclude<PosterFocus, 'Auto'>, string[]>;
+};
+
+export type ArtworkAssetType = 'Poster' | 'Backdrop' | 'Banner' | 'Thumbnail';
+export type PosterFocus = 'Auto' | 'Character' | 'Signature Element' | 'Scene' | 'Environment';
+export type PosterTextTreatment = 'Title' | 'Title + Tagline' | 'No Text';
+
+export const artworkAssetTypes: Record<ArtworkAssetType, { description: string; direction: string; aspectRatio: string }> = {
+  Poster: {
+    description: 'Vertical collector artwork for library cards and details pages.',
+    direction: 'Portrait orientation at a 2:3 aspect ratio. Reserve calm negative space near the lower third for optional typography.',
+    aspectRatio: '2 / 3',
+  },
+  Backdrop: {
+    description: 'Wide cinematic artwork for heroes and wallpaper.',
+    direction: 'Wide landscape orientation at a 16:9 aspect ratio. Build environmental depth and keep important imagery away from the outer crop edges.',
+    aspectRatio: '16 / 9',
+  },
+  Banner: {
+    description: 'A restrained panoramic title treatment.',
+    direction: 'Ultra-wide banner orientation at a 12:5 aspect ratio. Use one horizontal visual gesture, generous breathing room, and strong readability at a shallow height.',
+    aspectRatio: '12 / 5',
+  },
+  Thumbnail: {
+    description: 'Compact landscape artwork with strong small-size readability.',
+    direction: 'Landscape orientation at a 16:9 aspect ratio. Keep the dominant subject large, simple, and readable at thumbnail size.',
+    aspectRatio: '16 / 9',
+  },
+};
+
+export const posterFocusOptions: Record<PosterFocus, string> = {
+  Auto: 'Let Matinee choose the strongest symbolic idea.',
+  Character: 'Center an illustrated, non-photorealistic character interpretation.',
+  'Signature Element': 'Build around one iconic object or story symbol.',
+  Scene: 'Reinterpret one memorable sequence as an original composition.',
+  Environment: 'Let the story world and atmosphere carry the artwork.',
+};
+
+export const posterTextTreatments: Record<PosterTextTreatment, string> = {
+  Title: 'Include only the exact movie title, set with elegant widely spaced display lettering.',
+  'Title + Tagline': 'Include the exact movie title and one short supplied tagline; do not invent additional copy.',
+  'No Text': 'Do not include any lettering, title, tagline, credits, logos, or typographic marks in the artwork.',
+};
+
+export type PosterVisualTreatment =
+  | 'Matinee House Style'
+  | 'Monumental Editorial'
+  | 'Archival Ticket Print'
+  | 'Graphic Geometry'
+  | 'Expressive Ink Portrait'
+  | 'Painterly Spectacle';
+
+export type PosterComposition =
+  | 'Genre Led'
+  | 'Monument and Witness'
+  | 'Solitary Figure'
+  | 'Symbolic Geometry'
+  | 'Split-Field Composition'
+  | 'Cropped Character Study'
+  | 'Landscape Threshold';
+
+type PromptPreset = { description: string; direction: string };
+
+export const defaultVisualTreatment: PosterVisualTreatment = 'Monumental Editorial';
+export const defaultPosterComposition: PosterComposition = 'Monument and Witness';
+
+export const posterVisualTreatments: Record<PosterVisualTreatment, PromptPreset> = {
+  'Matinee House Style': {
+    description: 'Warm, painterly, nostalgic neighborhood-cinema artwork.',
+    direction: 'Use a premium painterly cinematic illustration with soft practical light, tactile film grain, handcrafted warmth, and restrained storybook elegance.',
+  },
+  'Monumental Editorial': {
+    description: 'Extreme scale, negative space, and tactile editorial printmaking.',
+    direction: 'Use a monumental editorial poster treatment inspired by premium mid-century print design: bold negative space, simplified geometry, dramatic vertical movement, lithographic ink, dry-brush texture, subtle paper grain, imperfect edges, and restrained screen-print color separation.',
+  },
+  'Archival Ticket Print': {
+    description: 'Cream paper, dark ink, and a collectible theater-program finish.',
+    direction: 'Render the artwork like a rare archival theater print on warm ticket-cream stock, using dark ink, worn letterpress texture, limited color registration, small amber accents, and elegant collectible-program restraint.',
+  },
+  'Graphic Geometry': {
+    description: 'Iconic circles, portals, divided fields, and controlled symmetry.',
+    direction: 'Reduce the story to bold graphic geometry, divided tonal fields, circles, portals, paths, or architectural shapes. Keep the imagery iconic and emotionally legible with precise negative space and tactile printed imperfections.',
+  },
+  'Expressive Ink Portrait': {
+    description: 'An anonymous character study formed from ink and negative space.',
+    direction: 'Use an expressive illustrated character study with a dramatically cropped profile or silhouette, broken ink edges, dry-brush shadows, paper showing through, and abundant negative space. Translate any referenced character into graphic illustration rather than photorealism.',
+  },
+  'Painterly Spectacle': {
+    description: 'A sweeping environment with handcrafted scale and atmosphere.',
+    direction: 'Create a sweeping painterly environment with one restrained human-scale anchor, layered atmospheric depth, visible brush texture, cinematic light, and a handcrafted illustrated finish rather than glossy concept art.',
+  },
+};
+
+export const posterCompositions: Record<PosterComposition, PromptPreset> = {
+  'Genre Led': {
+    description: 'Use the composition supplied by the selected genre recipe.',
+    direction: '',
+  },
+  'Monument and Witness': {
+    description: 'One enormous story symbol with a tiny human-scale observer.',
+    direction: 'Let one enormous symbolic subject or environment occupy roughly 55–75% of the frame. Place one small anonymous human silhouette as a witness to communicate scale, leaving deliberate negative space for typography.',
+  },
+  'Solitary Figure': {
+    description: 'A lone silhouette surrounded by purposeful breathing room.',
+    direction: 'Center or slightly offset one anonymous full-body silhouette, surrounded by a large field of atmospheric negative space. Let posture, light, and environment carry the emotion without a recognizable face.',
+  },
+  'Symbolic Geometry': {
+    description: 'A single emblem organized around strong geometric structure.',
+    direction: 'Organize the poster around one large symbolic geometric form with restrained symmetry, a clear visual axis, and small story details used only for scale and meaning.',
+  },
+  'Split-Field Composition': {
+    description: 'Two contrasting visual fields connected by one story element.',
+    direction: 'Divide the poster into two contrasting tonal or textural fields, joined by one central story symbol. Keep the division graphic, simple, and readable from thumbnail size.',
+  },
+  'Cropped Character Study': {
+    description: 'An illustrated profile balanced against open negative space.',
+    direction: 'Use a dramatically cropped illustrated profile or silhouette on one side of the frame, balanced by open negative space and one small symbolic counterpoint. Keep the treatment expressive and non-photorealistic.',
+  },
+  'Landscape Threshold': {
+    description: 'A figure approaching an environment, boundary, or impossible event.',
+    direction: 'Build the composition around a horizon, doorway, portal, shoreline, road, or architectural threshold, with a small figure approaching it and the environment carrying most of the narrative weight.',
+  },
+};
+
+const matineePalette = Object.entries(matineePosterStyle.theme.palette)
+  .map(([name, color]) => `${name}: ${color.hex} — ${color.role} (${color.usage})`);
+
 const globalMatineeStyle = [
-  'Create a vertical 2:3 movie poster card for the Matinee streaming interface.',
-  'Use a warm, nostalgic, cozy, premium cinematic illustration style with subtle film grain.',
-  'Favor soft amber practical light, midnight navy shadows, ticket cream typography, restrained burgundy, and faded teal accents.',
-  'Use one clear focal subject, readable silhouette, elegant title placement, minimal supporting text, and generous negative space.',
-  'Do not recreate official poster artwork, celebrity likenesses, studio logos, franchise branding, busy floating-head collages, photorealistic stills, neon cyberpunk palettes, or tiny illegible text.',
+  matineePosterStyle.brand.creativeIntent,
+  matineePosterStyle.artDirection.medium,
+  `Print finish: ${matineePosterStyle.artDirection.finish.join(', ')}.`,
+  matineePosterStyle.theme.colorStrategy,
+  `House palette: ${matineePalette.join('; ')}.`,
+  matineePosterStyle.theme.moviePalettePolicy.rule,
+  matineePosterStyle.artDirection.composition.primaryRule,
+  `Use ${matineePosterStyle.artDirection.composition.negativeSpace} negative space. ${matineePosterStyle.artDirection.composition.thumbnailReadability}`,
+  matineePosterStyle.artDirection.lighting.default,
+  matineePosterStyle.artDirection.lighting.rule,
 ];
+
+const globalRestrictions = matineePosterStyle.artDirection.restrictions;
 
 export const posterRecipes: Record<PosterGenre, PosterRecipe> = {
   Action: {
@@ -252,6 +414,123 @@ function normalizeGenre(value: string) {
   return value.toLowerCase().replace(/[^a-z]/g, '');
 }
 
+function unique(values: string[]) {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function concise(value: string, maximum = 84) {
+  const normalized = value.replace(/\s+/g, ' ').trim().replace(/[.;,:]+$/, '');
+  return normalized.length <= maximum ? normalized : `${normalized.slice(0, maximum).replace(/\s+\S*$/, '')}…`;
+}
+
+function exactText(value: string, maximum = 160) {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length <= maximum ? normalized : `${normalized.slice(0, maximum).replace(/\s+\S*$/, '')}…`;
+}
+
+function namedStoryElements(overview = '') {
+  return unique(Array.from(overview.matchAll(/\b[A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+){1,3}\b/g), (match) => match[0]))
+    .filter((value) => !/^(United States|New York Times|World War)$/i.test(value))
+    .slice(0, 3);
+}
+
+function storySettings(overview = '') {
+  const environments: string[] = [];
+  const periods: string[] = [];
+
+  const pattern = /\b(?:in|inside|within|across|through|at|near|beneath|aboard|around|along)\s+((?:(?:the|an?|his|her|their)\s+)?[A-Za-z0-9'’-]+(?:\s+[A-Za-z0-9'’-]+){0,6})/gi;
+  for (const match of overview.matchAll(pattern)) {
+    const phrase = concise(match[1]
+      .split(/\s+(?:who|where|when|while|after|before|because|but|and|with|must|has|have|is|are|was|were)\b/i)[0], 64);
+    if (/^(?:18|19|20)\d{2}$/.test(phrase)) {
+      periods.push(`a period-authentic ${phrase} story-world environment`);
+    } else if (phrase.split(/\s+/).length > 1) {
+      environments.push(phrase);
+    }
+    if (environments.length + periods.length >= 5) break;
+  }
+  const years = overview.match(/\b(?:18|19|20)\d{2}\b/g) || [];
+  periods.push(...years.slice(0, 2).map((year) => `a period-authentic ${year} story-world environment`));
+  return unique([...environments, ...periods]);
+}
+
+export function getTitlePosterOptions(
+  item: PosterSourceMetadata,
+  genre: PosterGenre = getPosterRecipe([]).genre,
+  movieManifest?: MovieManifest | null,
+): TitlePosterOptions {
+  const recipe = posterRecipes[genre];
+  const manifestOptions = getMovieManifestFocusOptions(movieManifest);
+  const roles = unique((item.People || [])
+    .filter((person) => person.Role && (!person.Type || person.Type.toLowerCase() === 'actor'))
+    .map((person) => person.Role!.trim())
+    .filter((role) => !/^(self|himself|herself|themselves|narrator)$/i.test(role)))
+    .slice(0, 4);
+  const storyElements = namedStoryElements(item.Overview);
+  const tagline = item.Taglines?.map((value) => concise(value)).find(Boolean);
+
+  const specificFocalSubjects = unique([
+    ...roles.map((role) => `a stylized illustrated portrait, silhouette, or keepsake associated with ${role}`),
+    ...storyElements.map((element) => `a single emblematic object associated with ${element}`),
+    ...(tagline ? [`a visual metaphor for “${tagline}”`] : []),
+    `a unique central symbol drawn from the story of ${item.Name}`,
+  ]).slice(0, 7);
+  const specificSettings = unique([
+    ...storySettings(item.Overview),
+    ...(item.ProductionLocations || []).slice(0, 3).map((location) => `a cinematic story-world landscape inspired by ${location}`),
+    `an atmospheric location drawn specifically from the story of ${item.Name}`,
+  ]).slice(0, 7);
+  const fallbackCharacters = roles.length ? roles : [`A central character from ${item.Name}`];
+  const fallbackSignatureElements = unique([
+    ...storyElements,
+    ...(tagline ? [`A visual metaphor for “${tagline}”`] : []),
+    ...recipe.focalSubjects,
+  ]).slice(0, 8);
+  const fallbackScenes = unique([
+    ...storySettings(item.Overview),
+    `A defining story moment from ${item.Name}`,
+    ...recipe.settings.map((value) => `A story moment set in ${value}`),
+  ]).slice(0, 8);
+  const fallbackEnvironments = unique([...specificSettings, ...recipe.settings]).slice(0, 8);
+  const hasManifest = Boolean(movieManifest);
+  const characters = manifestOptions.Character.length ? manifestOptions.Character : fallbackCharacters;
+  const signatureElements = manifestOptions['Signature Element'].length
+    ? manifestOptions['Signature Element']
+    : fallbackSignatureElements;
+  const scenes = manifestOptions.Scene.length ? manifestOptions.Scene : fallbackScenes;
+  const environments = manifestOptions.Environment.length
+    ? manifestOptions.Environment
+    : fallbackEnvironments;
+  const manifestSubjects = unique([
+    ...characters,
+    ...signatureElements,
+    ...(movieManifest?.artworkBrief?.primarySymbols || []),
+  ]);
+  const manifestSettings = unique([
+    ...scenes,
+    ...environments,
+  ]);
+
+  return {
+    specificFocalSubjects: hasManifest ? manifestSubjects : specificFocalSubjects,
+    specificSettings: hasManifest ? manifestSettings : specificSettings,
+    focalSubjects: hasManifest ? manifestSubjects : unique([...specificFocalSubjects, ...recipe.focalSubjects]),
+    settings: hasManifest ? manifestSettings : unique([...specificSettings, ...recipe.settings]),
+    byFocus: {
+      Character: characters,
+      'Signature Element': signatureElements,
+      Scene: scenes,
+      Environment: environments,
+    },
+  };
+}
+
 export function getPosterRecipe(genres: string[] = []) {
   for (const genre of genres) {
     const normalized = normalizeGenre(genre);
@@ -263,28 +542,218 @@ export function getPosterRecipe(genres: string[] = []) {
   return posterRecipes.Drama;
 }
 
+function automaticTreatment(focus: PosterFocus): PosterVisualTreatment {
+  if (focus === 'Character') return 'Expressive Ink Portrait';
+  if (focus === 'Signature Element') return 'Graphic Geometry';
+  if (focus === 'Scene' || focus === 'Environment') return 'Painterly Spectacle';
+  return defaultVisualTreatment;
+}
+
+function automaticComposition(focus: PosterFocus): PosterComposition {
+  if (focus === 'Character') return 'Cropped Character Study';
+  if (focus === 'Signature Element') return 'Symbolic Geometry';
+  if (focus === 'Scene' || focus === 'Environment') return 'Landscape Threshold';
+  return defaultPosterComposition;
+}
+
+function focusDirection(focus: PosterFocus, subject: string | undefined, title: string) {
+  if (focus === 'Character') {
+    return `Character focus: create a stylized illustrated interpretation associated with ${subject || `a central character from ${title}`}. Use silhouette, posture, costume color rhythm, or a symbolic keepsake; do not reproduce an actor's face or exact branded costume.`;
+  }
+  if (focus === 'Signature Element') {
+    return `Signature-element focus: make ${subject || `one unmistakable symbol from ${title}`} the single dominant visual metaphor. Simplify it into original graphic geometry rather than reproducing branded iconography.`;
+  }
+  if (focus === 'Scene') {
+    return `Scene focus: reinterpret ${subject || `a defining moment from ${title}`} as a new illustrated composition. Preserve its emotional idea without recreating a frame or official poster.`;
+  }
+  if (focus === 'Environment') {
+    return `Environment focus: let ${subject || `the distinctive story world of ${title}`} carry the image, using a small anonymous human-scale anchor only when useful.`;
+  }
+  return `Automatic focus: choose the single clearest symbolic idea from ${title}${subject ? `, using ${subject} as the lead candidate` : ''}. Prefer an object, environment, silhouette, or visual metaphor over a recognizable face or multi-character collage.`;
+}
+
+function outputInstructions(assetType: ArtworkAssetType) {
+  return [
+    `Create one finished ${assetType.toLowerCase()} asset for the Matinee streaming interface.`,
+    artworkAssetTypes[assetType].direction,
+    'Deliver flat artwork only—not a framed print, physical mockup, interface, grid, or mood board.',
+    'Produce one final image. Do not create alternates, contact sheets, or multiple panels.',
+  ];
+}
+
+function matineeStyleSection() {
+  return [
+    `MATINEE HOUSE LANGUAGE · ${matineePosterStyle.styleVersion}`,
+    ...globalMatineeStyle.map((line) => `- ${line}`),
+  ];
+}
+
+function promptList(label: string, values: string[] = [], maximum = 10) {
+  const entries = unique(values).slice(0, maximum).map((value) => concise(value, 220));
+  return entries.length ? [`- ${label}: ${entries.join(' | ')}.`] : [];
+}
+
+function movieManifestSection(manifest?: MovieManifest | null) {
+  if (!manifest) return [];
+  const official = manifest.official;
+  const context = manifest.creativeContext;
+  const brief = manifest.artworkBrief;
+  return [
+    '',
+    `MOVIE-SPECIFIC CREATIVE MANIFEST · v${manifest.manifestVersion}`,
+    '- Treat this local movie manifest as the source of truth for what belongs to the selected title.',
+    ...promptList('Official genres', official?.genres),
+    ...promptList('Themes', context?.themes),
+    ...promptList('Production context', context?.productionContext),
+    ...promptList('Characters', context?.characters),
+    ...promptList('Locations', context?.locations),
+    ...promptList('Signature objects', context?.signatureObjects),
+    ...promptList('Artifacts', context?.artifacts),
+    ...promptList('Vehicles', context?.vehicles),
+    ...promptList('Organizations', context?.organizations),
+    ...promptList('Iconic scenes', context?.iconicScenes),
+    ...promptList('Visual motifs', context?.visualMotifs),
+    ...promptList('Primary symbols', brief?.primarySymbols),
+    ...promptList('Movie palette hints', brief?.paletteHints),
+    ...promptList('Movie composition hints', brief?.compositionHints),
+    ...promptList('Avoid spoilers', brief?.avoidSpoilers),
+    ...promptList('Movie-specific exclusions', brief?.negativePrompts),
+    ...(official?.tagline ? [`- Official tagline: “${exactText(official.tagline)}”`] : []),
+    '- Movie facts control what is depicted. The locked Matinee house manifest controls how it is depicted.',
+  ];
+}
+
+function matineeTypographySection(textTreatment: PosterTextTreatment) {
+  const families = matineePosterStyle.typography.families;
+  const hierarchy = matineePosterStyle.typography.posterHierarchy;
+  return [
+    posterTextTreatments[textTreatment],
+    `Title system: ${families.display.name} ${families.display.weight}; ${hierarchy.title.case}; no more than ${hierarchy.title.maximumLines} lines.`,
+    `Tagline system: ${families.interface.name} ${hierarchy.tagline.weight}; ${hierarchy.tagline.case}; no more than ${hierarchy.tagline.maximumLines} lines.`,
+    `Metadata system, only when explicitly enabled: ${families.metadata.name} ${hierarchy.metadata.weight}.`,
+    ...matineePosterStyle.typography.layoutRules.map((rule) => `- ${rule}`),
+  ];
+}
+
+function technicalEnding(assetType: ArtworkAssetType) {
+  return [
+    'OUTPUT REQUIREMENTS',
+    `- ${artworkAssetTypes[assetType].direction}`,
+    '- Produce premium collector artwork that feels timeless, cinematic, elegant, and collectible.',
+    '- Communicate the selected title through symbolic visual storytelling rather than literal scene recreation.',
+    '- Make exactly one image-generation attempt. If generation is rejected or fails, stop and return the error; do not retry and do not construct a local fallback image.',
+  ];
+}
+
+export function buildCustomArtworkPrompt(input: {
+  customPrompt: string;
+  assetType?: ArtworkAssetType;
+  includeMatineeStyle?: boolean;
+}) {
+  const assetType = input.assetType ?? 'Poster';
+  return [
+    'CUSTOM CREATIVE BRIEF',
+    input.customPrompt.trim(),
+    ...(input.includeMatineeStyle === false ? [] : ['', ...matineeStyleSection()]),
+    '',
+    ...technicalEnding(assetType),
+  ].join('\n');
+}
+
 export function buildPosterPrompt(input: PosterPromptInput) {
   const recipe = getPosterRecipe(input.genres);
-  const focalSubject = input.focalSubject ?? recipe.focalSubjects[0];
-  const setting = input.setting ?? recipe.settings[0];
-  const mood = input.mood ?? recipe.mood;
-  const palette = input.colorHint ?? recipe.palette;
+  const manifestOptions = getMovieManifestFocusOptions(input.movieManifest);
+  const assetType = input.assetType ?? 'Poster';
+  const focus = input.focus ?? 'Auto';
+  const textTreatment = input.textTreatment ?? 'Title';
+  const visualTreatment = input.visualTreatment ?? automaticTreatment(focus);
+  const compositionStyle = input.compositionStyle ?? automaticComposition(focus);
+  const focalSubject = input.subject
+    ?? input.focalSubject
+    ?? input.movieManifest?.artworkBrief?.primarySymbols?.[0]
+    ?? manifestOptions['Signature Element'][0]
+    ?? recipe.focalSubjects[0];
+  const setting = input.setting
+    ?? input.movieManifest?.creativeContext?.locations?.[0]
+    ?? manifestOptions.Environment[0]
+    ?? recipe.settings[0];
+  const mood = input.mood
+    ?? input.movieManifest?.creativeContext?.themes?.slice(0, 4).join(', ')
+    ?? recipe.mood;
+  const palette = input.colorHint
+    ?? input.movieManifest?.artworkBrief?.paletteHints?.join('; ')
+    ?? recipe.palette;
   const titleTreatment = input.titleTreatment ?? recipe.titleTreatment;
+  const compositionLines = compositionStyle === 'Genre Led'
+    ? [`Genre-led composition: ${recipe.composition}.`]
+    : [
+      `Selected composition — ${compositionStyle}: ${posterCompositions[compositionStyle].direction}`,
+      `Supporting genre rhythm, only where compatible: ${recipe.composition}.`,
+    ];
+  const referenceLines = input.hasVisualReferences
+    ? [
+      '',
+      'VISUAL REFERENCES',
+      '- Jellyfin backdrop stills from this exact title are attached as source material.',
+      '- Use the stills to understand story-specific colors, silhouettes, props, architecture, environments, and production design.',
+      `- Transform those details through the selected Matinee print treatment and create a new composition for the ${assetType.toLowerCase()} format; do not simply crop, trace, filter, or reproduce a source frame.`,
+      '- Do not reproduce recognizable actor faces, official poster layouts, exact franchise logos, or branded costume details.',
+    ]
+    : [];
 
   return [
-    ...globalMatineeStyle,
+    'OUTPUT',
+    ...outputInstructions(assetType).map((line) => `- ${line}`),
+    '',
+    ...(input.includeMatineeStyle === false ? [] : matineeStyleSection()),
+    '',
+    'STORY',
     `Title: "${input.title}".`,
+    ...(input.year ? [`Year: ${input.year}.`] : []),
     `Genre recipe: ${recipe.genre}.`,
-    `Show ${focalSubject} in ${setting} with a ${mood} mood.`,
+    ...(input.storyContext ? [`Story context from the user's Jellyfin library: ${concise(input.storyContext, 520)}`] : []),
+    ...(input.storyContext ? [input.hasVisualReferences
+      ? 'Story interpretation: Use the attached stills for title accuracy, then reinterpret the story through an original illustrated composition.'
+      : 'Story interpretation: Treat this context symbolically; do not invent a celebrity likeness or reproduce an existing scene composition.'] : []),
+    ...movieManifestSection(input.movieManifest),
+    focusDirection(focus, focalSubject, input.title),
+    `Supporting environment: ${setting}.`,
+    `Emotional direction: ${mood}.`,
+    ...referenceLines,
+    '',
+    'VISUAL TREATMENT',
+    `Selected treatment — ${visualTreatment}: ${posterVisualTreatments[visualTreatment].direction}`,
     `Lighting: ${recipe.lighting}.`,
-    `Palette: ${palette}.`,
-    `Composition: ${recipe.composition}.`,
-    `Typography: ${titleTreatment}; include only the movie title and minimal supporting text if needed.`,
-    `Genre-specific avoid list: ${recipe.avoid.join(', ')}.`,
+    `Story palette: ${palette}. Interpret it within the Matinee house-color hierarchy above.`,
+    '',
+    'COMPOSITION',
+    ...compositionLines,
+    '',
+    'TYPOGRAPHY',
+    ...matineeTypographySection(textTreatment),
+    ...(textTreatment === 'Title + Tagline' && (input.movieManifest?.official?.tagline || input.tagline)
+      ? [`Use this exact tagline: “${exactText(input.movieManifest?.official?.tagline || input.tagline || '', 120)}”`]
+      : []),
+    ...(textTreatment !== 'No Text' ? [`Use ${titleTreatment}.`] : []),
+    'Do not include credits, a billing block, actor names, director attribution, studio marks, or imitation franchise typography.',
+    '',
+    'RESTRICTIONS',
+    ...globalRestrictions.map((line) => `- ${line}`),
+    ...(!input.hasVisualReferences ? ['- Do not invent or reproduce celebrity likenesses or recognizable actor faces without a supplied title reference image.'] : []),
+    `- Genre-specific avoid list: ${recipe.avoid.join(', ')}.`,
+    '',
+    ...technicalEnding(assetType),
   ].join('\n');
 }
 
 export const posterPromptGuide = {
+  styleManifest: matineePosterStyle,
   globalMatineeStyle,
+  restrictions: globalRestrictions,
+  visualTreatments: posterVisualTreatments,
+  compositions: posterCompositions,
+  assetTypes: artworkAssetTypes,
+  focuses: posterFocusOptions,
+  textTreatments: posterTextTreatments,
   recipes: posterRecipes,
 };

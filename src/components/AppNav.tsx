@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { userImageUrl, type JellyfinSession } from '../lib/jellyfin';
 import MaterialIcon from './MaterialIcon';
 
-export type AppView = 'home' | 'movies' | 'series' | 'settings';
+export type AppView = 'home' | 'movies' | 'series' | 'studio' | 'settings';
 
 type AppNavProps = {
   session: JellyfinSession;
@@ -77,6 +77,9 @@ export default function AppNav({ session, activeView, onNavigate, onSearch, onSi
                   <small>Jellyfin account</small>
                 </span>
               </div>
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onNavigate('studio'); }}>
+                <MaterialIcon name="movie" /> Poster Studio
+              </button>
               <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onNavigate('settings'); }}>
                 <MaterialIcon name="tune" /> Settings
               </button>

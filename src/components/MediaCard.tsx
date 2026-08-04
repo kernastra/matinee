@@ -1,5 +1,6 @@
 import { type JellyfinItem, type JellyfinSession } from '../lib/jellyfin';
 import Artwork from './Artwork';
+import { useCustomPosters } from './CustomPosterProvider';
 import MaterialIcon from './MaterialIcon';
 
 type MediaCardProps = {
@@ -10,12 +11,14 @@ type MediaCardProps = {
 };
 
 export default function MediaCard({ item, session, landscape = false, onSelect }: MediaCardProps) {
+  const { posters } = useCustomPosters();
+  const hasCustomPoster = Boolean(posters[item.Id]);
   const progress = item.UserData?.PlayedPercentage ?? 0;
   const rating = item.CommunityRating ? item.CommunityRating.toFixed(1) : null;
   const genre = item.Genres?.[0];
   return (
     <button
-      className={`media-card ${landscape ? 'media-card--landscape' : ''}`}
+      className={`media-card${landscape ? ' media-card--landscape' : ''}${hasCustomPoster ? ' media-card--custom-poster' : ''}`}
       type="button"
       aria-label={item.Name}
       onClick={() => onSelect(item)}

@@ -1,5 +1,5 @@
 const CLIENT_NAME = 'Matinee';
-export const APP_VERSION = '0.3.0';
+export const APP_VERSION = '0.4.0';
 const DEVICE_NAME = 'Desktop';
 const DEVICE_ID = 'matinee-desktop';
 const SESSION_KEY = 'matinee.session.v1';
@@ -491,6 +491,22 @@ export function userImageUrl(session: JellyfinSession, width: number) {
 
 export function backdropUrl(session: JellyfinSession, item: JellyfinItem, width: number) {
   return imageUrl(session, item, item.BackdropImageTags?.length ? 'Backdrop' : 'Primary', width);
+}
+
+export function backdropImageUrl(
+  session: JellyfinSession,
+  item: JellyfinItem,
+  index: number,
+  width: number,
+) {
+  const query = new URLSearchParams({
+    maxWidth: String(width),
+    quality: '90',
+    api_key: session.accessToken,
+  });
+  const tag = item.BackdropImageTags?.[index];
+  if (tag) query.set('tag', tag);
+  return `${session.serverUrl}/Items/${item.Id}/Images/Backdrop/${index}?${query.toString()}`;
 }
 
 export function videoStreamUrl(session: JellyfinSession, item: JellyfinItem) {
