@@ -4,6 +4,7 @@
   <img src="docs/assets/hero.png" alt="Matinee — Your Jellyfin library, dressed for movie night" width="100%" />
 </p>
 
+[![CI](https://github.com/kernastra/matinee/actions/workflows/ci.yml/badge.svg)](https://github.com/kernastra/matinee/actions/workflows/ci.yml)
 [![Security audit](https://github.com/kernastra/matinee/actions/workflows/security.yml/badge.svg)](https://github.com/kernastra/matinee/actions/workflows/security.yml)
 [![Latest release](https://img.shields.io/github/v/release/kernastra/matinee)](https://github.com/kernastra/matinee/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -151,6 +152,8 @@ Poster Studio makes one provider request per deliberate generation attempt and n
 | `pnpm audit:web` | Check shipped web dependencies for known advisories |
 | `pnpm audit:rust` | Check the native dependency graph after installing `cargo-audit` |
 | `pnpm tauri:build` | Build installable desktop bundles for the current platform |
+
+Every pull request runs the interface type-check, tests, production build, Rust formatting check, and native test suite. Tags matching the package version—such as `v0.6.0`—build AppImage, Debian, and RPM bundles and publish them in a GitHub release.
 
 The visual direction, component rules, interaction patterns, and Matinee color tokens live in [docs/design-spec.md](docs/design-spec.md). Poster generation uses the machine-readable house style in [`src/data/matinee-poster-style.json`](src/data/matinee-poster-style.json) and the prompt architecture documented in [docs/poster-prompt-templates.md](docs/poster-prompt-templates.md).
 
