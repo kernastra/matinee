@@ -14,7 +14,7 @@
 
 Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.org/) libraries. It pairs Jellyfin's media server and playback APIs with a warm, cinema-inspired interface designed for the couch: rich artwork, editorial home sections, focused title pages, custom playback controls, and a built-in studio for creating collector-style library artwork. Matinee connects to your existing server and library; it does not replace or bundle Jellyfin itself.
 
-> **Status:** `v0.5.5` early release. Matinee is actively developed and packaged for x86_64 Linux; Windows and macOS builds have not yet been validated.
+> **Status:** `v0.5.6` early release. Matinee is actively developed and packaged for x86_64 Linux; Windows and macOS builds have not yet been validated.
 
 ## Demo
 
