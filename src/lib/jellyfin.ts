@@ -1,7 +1,7 @@
 import { debugError, debugInfo, debugWarn } from './logger';
 
 const CLIENT_NAME = 'Matinee';
-export const APP_VERSION = '0.5.5';
+export const APP_VERSION = '0.5.6';
 const DEVICE_NAME = 'Desktop';
 const DEVICE_ID = 'matinee-desktop';
 const SESSION_KEY = 'matinee.session.v1';
