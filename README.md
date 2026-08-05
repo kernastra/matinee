@@ -38,6 +38,7 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 - 🖼️ **Persistent custom artwork** — Assign generated posters throughout Matinee, export them to Pictures, or save approved movie artwork beside local media as `poster.jpg`
 - 🔌 **Choice of image providers** — Use an authenticated local Codex CLI or a fal.ai API key stored in the operating-system credential vault
 - ⚙️ **Personalized movie night** — Save playback preferences, autoplay, hero timing, reduced motion, artwork labels, integrations, and image-provider settings locally
+- 🔐 **Remembered Jellyfin accounts** — Re-enter Matinee with one click while access tokens remain protected by the operating-system credential vault
 - 🖥️ **Desktop-first experience** — Run in a frameless Tauri window with custom chrome, a branded system tray, bundled typography, and Material Symbols
 
 ## Tech Stack
@@ -136,7 +137,7 @@ The **Advanced** panel exposes the assembled prompt, permits an editable copy or
 
 ## Local-First Scope
 
-Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. Jellyfin credentials remain session-scoped, while Radarr, Sonarr, and fal.ai keys are stored through the operating system's credential vault.
+Matinee connects directly to services you configure and keeps its preferences, remembered account labels, custom artwork assignments, generated images, and retained diagnostics on your computer. Jellyfin access tokens, Radarr and Sonarr keys, and fal.ai keys are stored through the operating system's credential vault; passwords are never retained.
 
 Poster Studio makes one provider request per deliberate generation attempt and never silently retries a rejected image. Codex jobs run in a restricted temporary workspace, successful job files are cleaned up automatically, and failed diagnostics are retained locally for seven days to support troubleshooting.
 
@@ -184,7 +185,7 @@ docs/
 
 ## Known Limitations
 
-- Login state is stored for the current app session, so a full restart may require signing in again.
+- Remembered Jellyfin sessions can expire or be revoked by the server. Matinee then asks for the account password once to reconnect and replace the stored token.
 - Calendar dates depend on the metadata available in Radarr and Sonarr. A monitored title with no future release or air date will not appear until its upstream metadata is updated.
 - Trailer playback remains unavailable until Jellyfin provides a supported trailer source. The More menu is available for playback, media, watchlist, played-state, progress, and title-copy actions.
 - Chapter navigation works whenever Jellyfin returns chapters; preview artwork requires chapter-image extraction to be enabled and completed on the Jellyfin server.

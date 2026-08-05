@@ -172,6 +172,11 @@ export function getServerInfo(session: JellyfinSession) {
   return get<JellyfinServerInfo>(session, '/System/Info/Public');
 }
 
+export async function refreshSession(session: JellyfinSession): Promise<JellyfinSession> {
+  const user = await get<JellyfinUser>(session, `/Users/${encodeURIComponent(session.user.Id)}`);
+  return { ...session, user };
+}
+
 async function send(session: JellyfinSession, path: string, method: 'POST' | 'DELETE') {
   const response = await fetch(`${session.serverUrl}${path}`, {
     method,

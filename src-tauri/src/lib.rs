@@ -1,4 +1,5 @@
 mod image_generation;
+mod jellyfin_profiles;
 mod media_calendar;
 mod media_paths;
 mod window;
@@ -52,6 +53,10 @@ pub fn run() {
             image_generation::remove_provider_key,
             image_generation::save_provider_key,
             image_generation::scan_local_image_provider,
+            jellyfin_profiles::forget_jellyfin_profile,
+            jellyfin_profiles::list_jellyfin_profiles,
+            jellyfin_profiles::remember_jellyfin_profile,
+            jellyfin_profiles::restore_jellyfin_profile,
             media_paths::get_media_path_settings,
             media_paths::save_media_path_settings,
             media_calendar::fetch_integration_calendar,
