@@ -41,6 +41,12 @@ media rows are product requirements rather than decorative exceptions.
 - Public-service concepts that Jellyfin cannot support honestly—global popularity,
   provider availability, and fake editorial rankings—are not fabricated.
 - Motion is restrained, brief, and disabled by reduced-motion preferences.
+- Calendar and Coming Soon surfaces expose only user-monitored Radarr and Sonarr
+  titles. Integration health remains compact and partial provider failures do not
+  replace usable results from the other service.
+- Movie availability language distinguishes theatrical, digital, and physical
+  milestones. Home prefers a known home-release milestone so a theatrical date is
+  not presented as immediate home availability.
 
 ## Network boundary
 

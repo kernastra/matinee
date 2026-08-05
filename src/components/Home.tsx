@@ -11,12 +11,20 @@ import MaterialIcon from './MaterialIcon';
 import AppNav, { type AppView } from './AppNav';
 import type { AppSettings } from '../lib/settings';
 import {
+  fetchUpcomingReleases,
+  homeUpcoming,
+  integrationEnabled,
+  upcomingWindow,
+  type UpcomingRelease,
+} from '../lib/integrations';
+import {
   CollectionSpotlight,
   FeaturedShowcase,
   HomeFooter,
   LibraryShortcuts,
   RankedShelf,
 } from './HomeEditorial';
+import ComingSoonShelf from './ComingSoonShelf';
 
 const HERO_ROTATION_MS = 7_000;
 
@@ -61,6 +69,8 @@ export default function Home({ session, settings, onSignOut, onNavigate, onSearc
   const [feed, setFeed] = useState<HomeFeed | null>(null);
   const [error, setError] = useState('');
   const [heroIndex, setHeroIndex] = useState(0);
+  const [upcoming, setUpcoming] = useState<UpcomingRelease[]>([]);
+  const calendarEnabled = integrationEnabled(settings);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +85,24 @@ export default function Home({ session, settings, onSignOut, onNavigate, onSearc
       cancelled = true;
     };
   }, [session]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!calendarEnabled) {
+      setUpcoming([]);
+      return () => { cancelled = true; };
+    }
+    const window = upcomingWindow();
+    fetchUpcomingReleases(settings, window.start, window.end)
+      .then((result) => {
+        if (!cancelled) setUpcoming(homeUpcoming(result.events));
+      })
+      .catch((reason) => {
+        console.warn('[calendar] could not load the home shelf', reason);
+        if (!cancelled) setUpcoming([]);
+      });
+    return () => { cancelled = true; };
+  }, [calendarEnabled, settings.radarrUrl, settings.sonarrUrl]);
 
   const heroes = useMemo(() => (feed ? heroItems(feed) : []), [feed]);
   const hero = heroes[heroIndex % heroes.length];
@@ -129,7 +157,7 @@ export default function Home({ session, settings, onSignOut, onNavigate, onSearc
 
   return (
     <main className="home-shell">
-      <AppNav session={session} activeView="home" onNavigate={onNavigate} onSearch={onSearch} onSignOut={onSignOut} />
+      <AppNav session={session} activeView="home" calendarEnabled={calendarEnabled} onNavigate={onNavigate} onSearch={onSearch} onSignOut={onSignOut} />
 
       <section
         className="hero"
@@ -168,6 +196,7 @@ export default function Home({ session, settings, onSignOut, onNavigate, onSearc
         <LibraryShortcuts onNavigate={onNavigate} />
         <MediaRow title="Continue watching" items={feed.resume} session={session} onSelect={onSelect} sectionId="continue" />
         <MediaRow title="Recently added" items={feed.latest} session={session} onSelect={onSelect} sectionId="recent" />
+        <ComingSoonShelf events={upcoming} onViewCalendar={() => onNavigate('calendar')} />
         <RankedShelf items={feed.topRated} session={session} onSelect={onSelect} />
         <FeaturedShowcase
           items={featuredItems}
@@ -175,8 +204,24 @@ export default function Home({ session, settings, onSignOut, onNavigate, onSearc
           onSelect={onSelect}
           onPlay={onPlay}
         />
-        <MediaRow title="Movies" items={feed.movies} session={session} onSelect={onSelect} sectionId="movies" />
-        <MediaRow title="Series" items={feed.series} session={session} onSelect={onSelect} sectionId="series" />
+        <MediaRow
+          title="Movies"
+          items={feed.movies}
+          session={session}
+          onSelect={onSelect}
+          sectionId="movies"
+          browseAllLabel="View all movies"
+          onBrowseAll={() => onNavigate('movies')}
+        />
+        <MediaRow
+          title="Series"
+          items={feed.series}
+          session={session}
+          onSelect={onSelect}
+          sectionId="series"
+          browseAllLabel="View all series"
+          onBrowseAll={() => onNavigate('series')}
+        />
         <MediaRow title="My favorites" items={feed.favorites} session={session} onSelect={onSelect} sectionId="favorites" />
         <CollectionSpotlight
           feature={spotlight}

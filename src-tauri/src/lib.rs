@@ -1,4 +1,5 @@
 mod image_generation;
+mod media_calendar;
 mod window;
 
 use tauri::{
@@ -50,6 +51,10 @@ pub fn run() {
             image_generation::remove_provider_key,
             image_generation::save_provider_key,
             image_generation::scan_local_image_provider,
+            media_calendar::fetch_integration_calendar,
+            media_calendar::integration_key_status,
+            media_calendar::remove_integration_key,
+            media_calendar::test_and_save_integration,
             window::close_window,
             window::minimize_window,
             window::toggle_maximize_window,

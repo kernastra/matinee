@@ -37,6 +37,7 @@ type Props = {
   onNavigate: (view: AppView) => void;
   onSearch: () => void;
   onSignOut: () => void;
+  calendarEnabled: boolean;
 };
 
 type HistoryItem = GeneratedImage & {
@@ -60,7 +61,7 @@ function initialGenre(item?: JellyfinItem) {
   return getPosterRecipe(item?.Genres).genre;
 }
 
-export default function PosterStudio({ session, provider, onNavigate, onSearch, onSignOut }: Props) {
+export default function PosterStudio({ session, provider, onNavigate, onSearch, onSignOut, calendarEnabled }: Props) {
   const { posters, assignPoster } = useCustomPosters();
   const promptFileRef = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<JellyfinItem[]>([]);
@@ -325,7 +326,7 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
 
   return (
     <main className="studio-shell">
-      <AppNav session={session} activeView="studio" onNavigate={onNavigate} onSearch={onSearch} onSignOut={onSignOut} />
+      <AppNav session={session} activeView="studio" calendarEnabled={calendarEnabled} onNavigate={onNavigate} onSearch={onSearch} onSignOut={onSignOut} />
       <header className="studio-header">
         <div>
           <p className="eyebrow">Backstage tools · Poster workshop</p>

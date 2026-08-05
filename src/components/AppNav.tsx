@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { userImageUrl, type JellyfinSession } from '../lib/jellyfin';
 import MaterialIcon from './MaterialIcon';
 
-export type AppView = 'home' | 'movies' | 'series' | 'studio' | 'settings';
+export type AppView = 'home' | 'movies' | 'series' | 'calendar' | 'studio' | 'settings';
 
 type AppNavProps = {
   session: JellyfinSession;
@@ -10,9 +10,10 @@ type AppNavProps = {
   onNavigate: (view: AppView) => void;
   onSearch: () => void;
   onSignOut: () => void;
+  calendarEnabled?: boolean;
 };
 
-export default function AppNav({ session, activeView, onNavigate, onSearch, onSignOut }: AppNavProps) {
+export default function AppNav({ session, activeView, onNavigate, onSearch, onSignOut, calendarEnabled = false }: AppNavProps) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -47,6 +48,7 @@ export default function AppNav({ session, activeView, onNavigate, onSearch, onSi
         <button className={activeView === 'home' ? 'active' : ''} type="button" onClick={() => onNavigate('home')}>Home</button>
         <button className={activeView === 'movies' ? 'active' : ''} type="button" onClick={() => onNavigate('movies')}>Movies</button>
         <button className={activeView === 'series' ? 'active' : ''} type="button" onClick={() => onNavigate('series')}>Series</button>
+        {calendarEnabled ? <button className={activeView === 'calendar' ? 'active' : ''} type="button" onClick={() => onNavigate('calendar')}>Calendar</button> : null}
       </div>
       <div className="nav-actions">
         <button className="nav-icon-button" type="button" onClick={onSearch} aria-label="Search library">

@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import { authenticate, type JellyfinSession } from '../lib/jellyfin';
+import { authenticate, DEFAULT_JELLYFIN_URL, type JellyfinSession } from '../lib/jellyfin';
 
 type LoginProps = { onAuthenticated: (session: JellyfinSession) => void };
 
 export default function Login({ onAuthenticated }: LoginProps) {
-  const [serverUrl, setServerUrl] = useState('http://192.168.1.249:8096');
+  const [serverUrl, setServerUrl] = useState(DEFAULT_JELLYFIN_URL);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');

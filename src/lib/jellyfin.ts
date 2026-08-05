@@ -1,9 +1,11 @@
 const CLIENT_NAME = 'Matinee';
-export const APP_VERSION = '0.4.0';
+export const APP_VERSION = '0.5.0';
 const DEVICE_NAME = 'Desktop';
 const DEVICE_ID = 'matinee-desktop';
 const SESSION_KEY = 'matinee.session.v1';
 const LEGACY_SESSION_KEY = 'saintstream.session.v1';
+const PREVIOUS_JELLYFIN_HOST = '192.168.1.249';
+export const DEFAULT_JELLYFIN_URL = 'http://192.168.1.158:8096';
 
 export type JellyfinUser = {
   Id: string;
@@ -87,7 +89,7 @@ export function normalizeServerUrl(value: string) {
   try {
     url = new URL(withScheme);
   } catch {
-    throw new Error('Enter a valid Jellyfin address, such as 192.168.1.249:8096.');
+    throw new Error('Enter a valid Jellyfin address, such as 192.168.1.158:8096.');
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -213,10 +215,10 @@ export async function getHomeFeed(session: JellyfinSession): Promise<HomeFeed> {
       session,
       `/Users/${userId}/Items/Resume?Limit=12&MediaTypes=Video&Fields=${fields}`,
     ).then((result) => result.Items),
-    get<JellyfinItem[]>(
+    get<ItemsResult>(
       session,
-      `/Users/${userId}/Items/Latest?Limit=12&IncludeItemTypes=Movie,Series&Fields=${fields}`,
-    ),
+      `/Users/${userId}/Items?Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=6&Fields=${fields}&EnableUserData=true`,
+    ).then((result) => result.Items),
     get<ItemsResult>(
       session,
       `/Users/${userId}/Items?Recursive=true&IncludeItemTypes=Movie&SortBy=DateCreated&SortOrder=Descending&Limit=12&Fields=${fields}`,
@@ -776,7 +778,12 @@ export function loadSession(): JellyfinSession | null {
   if (!value) return null;
   try {
     const session = JSON.parse(value) as JellyfinSession;
-    sessionStorage.setItem(SESSION_KEY, value);
+    const server = new URL(session.serverUrl);
+    if (server.hostname === PREVIOUS_JELLYFIN_HOST) {
+      server.hostname = new URL(DEFAULT_JELLYFIN_URL).hostname;
+      session.serverUrl = server.toString().replace(/\/+$/, '');
+    }
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
     sessionStorage.removeItem(LEGACY_SESSION_KEY);
     return session;
   } catch {

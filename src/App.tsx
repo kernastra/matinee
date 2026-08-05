@@ -9,6 +9,7 @@ import SearchOverlay from './components/SearchOverlay';
 import SeriesDetails from './components/SeriesDetails';
 import Settings from './components/Settings';
 import PosterStudio from './components/PosterStudio';
+import Calendar from './components/Calendar';
 import type { AppView } from './components/AppNav';
 import {
   clearSession,
@@ -20,6 +21,7 @@ import {
   type JellyfinSession,
 } from './lib/jellyfin';
 import { loadSettings, saveSettings, type AppSettings } from './lib/settings';
+import { integrationEnabled } from './lib/integrations';
 
 export default function App() {
   const [session, setSession] = useState<JellyfinSession | null>(() => loadSession());
@@ -29,6 +31,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const isNavigationScreen = Boolean(session && !selectedItem && !playingItem);
+  const calendarEnabled = integrationEnabled(settings);
 
   function authenticated(nextSession: JellyfinSession) {
     saveSession(nextSession);
@@ -130,6 +133,17 @@ export default function App() {
         onNavigate={navigate}
         onSearch={() => setSearchOpen(true)}
         onSignOut={signOut}
+        calendarEnabled={calendarEnabled}
+      />
+    );
+  } else if (view === 'calendar' && calendarEnabled) {
+    content = (
+      <Calendar
+        session={session}
+        settings={settings}
+        onNavigate={navigate}
+        onSearch={() => setSearchOpen(true)}
+        onSignOut={signOut}
       />
     );
   } else if (view === 'movies' || view === 'series') {
@@ -141,6 +155,7 @@ export default function App() {
         onSearch={() => setSearchOpen(true)}
         onSignOut={signOut}
         onSelect={setSelectedItem}
+        calendarEnabled={calendarEnabled}
       />
     );
   } else {

@@ -19,6 +19,8 @@ describe('application settings', () => {
       reducedMotion: true,
       imageProvider: 'fal' as const,
       posterMetadata: 'never' as const,
+      radarrUrl: 'http://radarr.local:7878',
+      sonarrUrl: 'http://sonarr.local:8989',
     };
     saveSettings(settings);
     expect(loadSettings()).toEqual(settings);
