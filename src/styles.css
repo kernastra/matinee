@@ -854,6 +854,33 @@ button { color: inherit; }
 .settings-about strong { overflow: hidden; color: rgb(var(--foreground-rgb) / 0.78); text-overflow: ellipsis; white-space: nowrap; font: 500 var(--type-metadata)/1.35 var(--body-font); }
 .settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-left: calc(220px + clamp(28px, 5vw, 72px)); }
 .settings-footer p { margin: 0; color: var(--muted); font: 8px var(--chrome-font); }
+.media-path-settings { display: grid; gap: 0; }
+.media-path-settings--loading { min-height: 96px; place-items: center; color: var(--muted); font-size: var(--type-metadata); }
+.media-path-note { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 11px; padding: 17px 20px; border-bottom: 1px solid rgb(var(--foreground-rgb) / 0.075); background: rgb(var(--accent-rgb) / 0.055); }
+.media-path-note > .material-symbols-rounded { margin-top: 1px; color: var(--accent); font-size: 19px; }
+.media-path-note p, .media-path-group__heading > span { display: grid; gap: 5px; margin: 0; }
+.media-path-note strong, .media-path-group__heading strong { font-size: var(--type-metadata); font-weight: 650; }
+.media-path-note small, .media-path-group__heading small { color: var(--muted); font-size: var(--type-caption); line-height: 1.55; }
+.media-path-note code { color: var(--foreground); font-family: var(--chrome-font); }
+.media-path-group { display: grid; gap: 13px; padding: 20px; border-bottom: 1px solid rgb(var(--foreground-rgb) / 0.075); }
+.media-path-group__heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.media-path-group__heading button { min-height: 36px; }
+.media-path-rows, .trusted-root-list { display: grid; gap: 9px; }
+.media-path-row { display: grid; grid-template-columns: minmax(120px, 0.72fr) auto minmax(180px, 1.28fr) auto; align-items: end; gap: 9px; }
+.media-path-row label { min-width: 0; display: grid; gap: 6px; }
+.media-path-row label > span { color: rgb(var(--foreground-rgb) / 0.48); font: 600 var(--type-caption)/1.2 var(--chrome-font); text-transform: uppercase; letter-spacing: 0.045em; }
+.media-path-row input, .trusted-root-row input { min-width: 0; width: 100%; height: 40px; border: 1px solid rgb(var(--foreground-rgb) / 0.14); border-radius: var(--radius); padding: 0 12px; color: var(--foreground); background: rgb(var(--surface-rgb) / 0.96); outline: none; font: 500 var(--type-metadata)/1.2 var(--chrome-font); }
+.media-path-row input:focus, .trusted-root-row input:focus { border-color: rgb(var(--accent-rgb) / 0.56); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.1); }
+.media-path-row input::placeholder, .trusted-root-row input::placeholder { color: rgb(var(--foreground-rgb) / 0.3); }
+.media-path-arrow { align-self: end; display: grid; place-items: center; height: 40px; color: var(--accent); font: 600 17px var(--chrome-font); }
+.media-path-remove { align-self: end; min-height: 40px; border: 0; padding: 0 4px; color: rgb(var(--foreground-rgb) / 0.48); background: transparent; cursor: pointer; font: 600 var(--type-caption)/1 var(--body-font); }
+.media-path-remove:hover, .media-path-remove:focus-visible { color: #d9787f; }
+.trusted-root-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px; }
+.media-path-empty { margin: 0; padding: 12px 14px; border-radius: var(--radius); color: var(--muted); background: rgb(var(--foreground-rgb) / 0.035); font-size: var(--type-caption); line-height: 1.5; }
+.media-path-actions { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 18px 20px; }
+.media-path-actions .primary-button { min-height: 40px; }
+.media-path-actions .primary-button:disabled { opacity: 0.48; cursor: not-allowed; }
+.media-path-actions .provider-message { min-height: 0; }
 
 .studio-shell { position: relative; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; background: var(--surface); }
 .studio-shell::-webkit-scrollbar, .studio-title-list::-webkit-scrollbar, .studio-control-scroll::-webkit-scrollbar { display: none; }

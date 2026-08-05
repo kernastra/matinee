@@ -98,6 +98,8 @@ No environment file is required. On first launch, enter the root URL of your Jel
 
 Radarr, Sonarr, and image-provider credentials are configured inside **Settings**. Matinee stores managed API keys in the operating-system credential vault rather than the repository or browser storage.
 
+If Jellyfin runs in Docker or reports paths that differ from the host filesystem, open **Settings → Media storage** and map each Jellyfin prefix to an existing local folder—for example, `/media` → `/mnt/media`. Trusted roots constrain where Matinee may read `movie.mf.json` or save approved artwork.
+
 ## Usage
 
 1. Start Matinee with `pnpm tauri:dev`.
@@ -186,7 +188,7 @@ docs/
 - Playback compatibility ultimately depends on the source media, server-side FFmpeg setup, enabled Jellyfin transcoding, and codecs supported by the system WebView.
 - Image generation requires a separately authenticated provider and remains subject to that provider's availability, billing, safety systems, and acceptable-use policy. A rejected generation is not retried automatically.
 - Higgsfield can be selected and configured, but generation remains disabled until Matinee adopts a stable documented developer endpoint.
-- `movie.mf.json` discovery and direct `poster.jpg` export currently apply to movies resolved under `~/media-data/media`, `~/media`, or `~/Videos`. Series, other local layouts, and remote-only libraries fall back to Jellyfin metadata and normal image export.
+- `movie.mf.json` discovery and direct `poster.jpg` export require a Jellyfin path that resolves through **Settings → Media storage**. Remote-only libraries fall back to Jellyfin metadata and normal image export.
 - AI-rendered title text may be misspelled. Use **No Text** or the Advanced workflow when deterministic typography is required.
 - Linux packages are produced for x86_64 systems. Windows and macOS releases have not yet been validated.
 

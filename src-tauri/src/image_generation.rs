@@ -1,3 +1,4 @@
+use crate::media_paths::resolve_media_file;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use keyring::{Entry, Error as KeyringError};
 use reqwest::{header::CONTENT_TYPE, Url};
@@ -117,73 +118,6 @@ fn same_http_origin(candidate: &Url, expected: &Url) -> bool {
         && candidate.port_or_known_default() == expected.port_or_known_default()
         && candidate.username().is_empty()
         && candidate.password().is_none()
-}
-
-fn mapped_media_candidates(media_path: &Path, home: &Path) -> Vec<PathBuf> {
-    let local_roots = [home.join("media-data/media"), home.join("media")];
-    let container_roots = [
-        (Path::new("/media"), Path::new("")),
-        (Path::new("/movies"), Path::new("movies")),
-        (Path::new("/tv"), Path::new("tv")),
-        (Path::new("/shows"), Path::new("shows")),
-    ];
-
-    container_roots
-        .iter()
-        .filter_map(|(container_root, local_subdirectory)| {
-            media_path
-                .strip_prefix(container_root)
-                .ok()
-                .map(|relative| (*local_subdirectory, relative))
-        })
-        .flat_map(|(local_subdirectory, relative)| {
-            local_roots
-                .iter()
-                .map(move |root| root.join(local_subdirectory).join(relative))
-        })
-        .collect()
-}
-
-fn allowed_media_roots(app: &AppHandle) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Ok(home) = app.path().home_dir() {
-        roots.extend([
-            home.join("media-data/media"),
-            home.join("media"),
-            home.join("Videos"),
-        ]);
-    }
-    roots
-        .into_iter()
-        .filter_map(|root| root.canonicalize().ok())
-        .collect()
-}
-
-fn canonical_media_file(candidate: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
-    let canonical = candidate.canonicalize().ok()?;
-    (canonical.is_file() && roots.iter().any(|root| canonical.starts_with(root)))
-        .then_some(canonical)
-}
-
-fn resolve_media_file(app: &AppHandle, media_path: &str) -> Result<PathBuf, String> {
-    let reported_path = PathBuf::from(media_path);
-    let roots = allowed_media_roots(app);
-    if let Some(media_file) = canonical_media_file(&reported_path, &roots) {
-        return Ok(media_file);
-    }
-
-    if let Ok(home) = app.path().home_dir() {
-        if let Some(candidate) = mapped_media_candidates(&reported_path, &home)
-            .into_iter()
-            .find_map(|candidate| canonical_media_file(&candidate, &roots))
-        {
-            return Ok(candidate);
-        }
-    }
-
-    Err(format!(
-        "Jellyfin reports this movie at {media_path}, but Matinee could not resolve it inside a trusted local media folder. Matinee supports ~/media-data/media, ~/media, and ~/Videos."
-    ))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -808,41 +742,10 @@ pub fn export_poster_to_media_folder(
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_spec, friendly_codex_failure, mapped_media_candidates, remove_null_fields,
-        same_http_origin, sanitize_movie_manifest, MovieManifest, CODEX_FILESYSTEM_PERMISSIONS,
+        asset_spec, friendly_codex_failure, remove_null_fields, same_http_origin,
+        sanitize_movie_manifest, MovieManifest, CODEX_FILESYSTEM_PERMISSIONS,
     };
     use reqwest::Url;
-    use std::path::{Path, PathBuf};
-
-    #[test]
-    fn maps_jellyfin_media_mount_to_host_media_root() {
-        let candidates = mapped_media_candidates(
-            Path::new("/media/movies/Toy Story (1995)/Toy Story.mkv"),
-            Path::new("/home/sean"),
-        );
-
-        assert_eq!(
-            candidates.first(),
-            Some(&PathBuf::from(
-                "/home/sean/media-data/media/movies/Toy Story (1995)/Toy Story.mkv"
-            ))
-        );
-    }
-
-    #[test]
-    fn maps_separate_movies_mount_to_movies_subdirectory() {
-        let candidates = mapped_media_candidates(
-            Path::new("/movies/Arrival (2016)/Arrival.mkv"),
-            Path::new("/home/sean"),
-        );
-
-        assert_eq!(
-            candidates.first(),
-            Some(&PathBuf::from(
-                "/home/sean/media-data/media/movies/Arrival (2016)/Arrival.mkv"
-            ))
-        );
-    }
 
     #[test]
     fn maps_artwork_types_to_provider_dimensions() {
