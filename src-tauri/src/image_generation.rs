@@ -21,6 +21,8 @@ const MAX_REFERENCE_BYTES: usize = 12 * 1024 * 1024;
 const MAX_MOVIE_MANIFEST_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_PROMPT_CHARACTERS: usize = 30_000;
 const CODEX_LOG_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const CODEX_FILESYSTEM_PERMISSIONS: &str =
+    "permissions.matinee-poster.filesystem={\":root\"=\"deny\",\":minimal\"=\"read\",\":workspace_roots\"={\".\"=\"write\"}}";
 static CODEX_JOB_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 struct CodexJobGuard;
@@ -807,7 +809,7 @@ pub fn export_poster_to_media_folder(
 mod tests {
     use super::{
         asset_spec, friendly_codex_failure, mapped_media_candidates, remove_null_fields,
-        same_http_origin, sanitize_movie_manifest, MovieManifest,
+        same_http_origin, sanitize_movie_manifest, MovieManifest, CODEX_FILESYSTEM_PERMISSIONS,
     };
     use reqwest::Url;
     use std::path::{Path, PathBuf};
@@ -867,6 +869,15 @@ mod tests {
         assert!(message.contains("blocked this result during safety review"));
         assert!(message.contains("Signature Element"));
         assert!(!message.contains("moderation_blocked"));
+    }
+
+    #[test]
+    fn codex_filesystem_permissions_use_a_nested_workspace_root_table() {
+        assert_eq!(
+            CODEX_FILESYSTEM_PERMISSIONS,
+            "permissions.matinee-poster.filesystem={\":root\"=\"deny\",\":minimal\"=\"read\",\":workspace_roots\"={\".\"=\"write\"}}"
+        );
+        assert!(!CODEX_FILESYSTEM_PERMISSIONS.contains(":workspace_roots\"=\"write"));
     }
 
     #[test]
@@ -1282,11 +1293,7 @@ async fn generate_with_codex(
             "-c",
             "permissions.matinee-poster.description=\"Isolated Matinee poster generation\"",
             "-c",
-            "permissions.matinee-poster.filesystem.\":root\"=\"deny\"",
-            "-c",
-            "permissions.matinee-poster.filesystem.\":minimal\"=\"read\"",
-            "-c",
-            "permissions.matinee-poster.filesystem.\":workspace_roots\".\".\"=\"write\"",
+            CODEX_FILESYSTEM_PERMISSIONS,
             "-c",
             "permissions.matinee-poster.network.enabled=false",
             "-c",

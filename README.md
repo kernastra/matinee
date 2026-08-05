@@ -1,12 +1,20 @@
 # Matinee — Your Jellyfin library, dressed for movie night
 
 <p align="center">
-  <img src="docs/assets/hero.png" alt="Matinee neighborhood theater at dusk" width="100%" />
+  <img src="docs/assets/hero.png" alt="Matinee — Your Jellyfin library, dressed for movie night" width="100%" />
 </p>
+
+[![Security audit](https://github.com/kernastra/matinee/actions/workflows/security.yml/badge.svg)](https://github.com/kernastra/matinee/actions/workflows/security.yml)
+[![Latest release](https://img.shields.io/github/v/release/kernastra/matinee)](https://github.com/kernastra/matinee/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB.svg)](https://v2.tauri.app/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 
 ## Overview
 
 Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.org/) libraries. It pairs Jellyfin's media server and playback APIs with a warm, cinema-inspired interface designed for the couch: rich artwork, editorial home sections, focused title pages, custom playback controls, and a built-in studio for creating collector-style library artwork. Matinee connects to your existing server and library; it does not replace or bundle Jellyfin itself.
+
+> **Status:** `v0.5.5` early release. Matinee is actively developed and packaged for x86_64 Linux; Windows and macOS builds have not yet been validated.
 
 ## Demo
 
@@ -20,46 +28,40 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 
 ## Features
 
-- **Cinematic home screen** — Rotating hero artwork, continue-watching titles, recent additions, favorites, featured picks, and ranked collections built from your Jellyfin library.
-- **Personal release calendar** — Connect Radarr or Sonarr to see only monitored movie milestones and upcoming episodes, with a conditional Coming Soon shelf on Home.
-- **Movies and series** — Browse dedicated libraries, open detailed title pages, move through seasons, and choose individual episodes.
-- **Library search** — Search movies, series, and episodes without leaving the app.
-- **Jellyfin playback** — Negotiate direct playback or HLS transcoding with the server and resume titles from their saved position.
-- **Custom player controls** — Play, pause, seek, change volume, select audio or subtitles, choose playback quality, and enter fullscreen from a cinema-styled control surface.
-- **Library actions** — Add titles to the Jellyfin favorites-based watchlist and mark them played or unplayed.
-- **Expanded movie details** — Browse cast, related titles, collection context, chapters, and detailed video, audio, subtitle, and file information.
-- **Poster Studio** — Select a real title, choose four concise creative directions, and generate coordinated posters, backdrops, banners, or thumbnails without writing prompts.
-- **Movie-specific art direction** — Load optional `movie.mf.json` manifests beside local movie files to turn curated characters, signature objects, scenes, environments, palette hints, and visual motifs into selectable creative options.
-- **Matinee house style** — Combine each title's Movie DNA with a versioned palette, typography, screen-print texture, composition, and quality system for a cohesive library.
-- **Multiple image providers** — Generate through an authenticated local Codex CLI or a fal.ai API key stored in the operating-system credential vault. Higgsfield configuration is present for future endpoint support.
-- **Persistent custom artwork** — Assign generated posters throughout Matinee, export copies to Pictures, or save approved movie artwork beside local media as `poster.jpg`.
-- **Native tray support** — Hide Matinee to the system tray, restore the window, or quit from a branded native menu.
-- **Personal settings** — Persist playback quality, preferred audio, subtitle behavior, autoplay, hero rotation, reduced motion, release integrations, image provider, and poster-metadata visibility on the device.
-- **Native desktop shell** — Run in a frameless, resizable Tauri window with custom traffic lights and locally bundled typefaces and icons.
+- 🎬 **Cinematic Jellyfin browsing** — Explore rotating hero artwork, editorial shelves, dedicated movie and series libraries, search, seasons, and episodes
+- ▶️ **Native-feeling playback** — Direct play or HLS transcoding with resume support, quality selection, audio and subtitle controls, seeking, volume, and fullscreen
+- 🍿 **Rich title pages** — Browse cast, related titles, collections, chapters, technical media details, watchlist state, and played status
+- 📅 **Personal release calendar** — Connect Radarr or Sonarr to see only monitored movie milestones and upcoming episodes, plus an optional Coming Soon shelf
+- 🎨 **Guided Poster Studio** — Generate coordinated posters, backdrops, banners, and thumbnails with four approachable creative choices instead of prompt writing
+- 🧬 **Movie-specific art direction** — Combine Jellyfin metadata and optional `movie.mf.json` manifests with Matinee's palette, typography, texture, and composition system
+- 🖼️ **Persistent custom artwork** — Assign generated posters throughout Matinee, export them to Pictures, or save approved movie artwork beside local media as `poster.jpg`
+- 🔌 **Choice of image providers** — Use an authenticated local Codex CLI or a fal.ai API key stored in the operating-system credential vault
+- ⚙️ **Personalized movie night** — Save playback preferences, autoplay, hero timing, reduced motion, artwork labels, integrations, and image-provider settings locally
+- 🖥️ **Desktop-first experience** — Run in a frameless Tauri window with custom chrome, a branded system tray, bundled typography, and Material Symbols
 
 ## Tech Stack
 
-| Layer | Technology |
-| --- | --- |
-| Desktop shell | Tauri 2, Rust |
-| Interface | React 19, TypeScript |
-| Build tooling | Vite 7, pnpm |
-| Playback | HTML5 video, hls.js, Jellyfin REST API |
-| Image generation | Local Codex CLI, fal.ai FLUX/FLUX 2 Edit |
-| Native services | Rust, OS credential vault, local artwork persistence |
-| Styling | Hand-authored CSS |
-| Tests | Vitest, jsdom |
+| Component | Technology |
+|-----------|------------|
+| **Desktop shell** | Tauri 2, Rust |
+| **Interface** | React 19, TypeScript |
+| **Build tooling** | Vite 7, pnpm |
+| **Playback** | HTML5 video, hls.js, Jellyfin REST API |
+| **Image generation** | Local Codex CLI, fal.ai FLUX/FLUX 2 Edit |
+| **Native services** | Rust, OS credential vault, local artwork persistence |
+| **Styling** | Hand-authored CSS, bundled fonts, Material Symbols |
+| **Tests** | Vitest, jsdom, Rust test harness |
 
 ## Getting Started
 
 ### Prerequisites
 
-- A running Jellyfin server that is reachable from your computer
-- Node.js 20 or newer
-- pnpm 10 or newer
-- The stable Rust toolchain
-- The platform dependencies listed in the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
-- Optional: an authenticated local [Codex CLI](https://developers.openai.com/codex/cli/) or a fal.ai API key for Poster Studio generation
+- **Jellyfin server** — A running server reachable from the computer using Matinee
+- **Node.js 20 or newer** — Required when running from source
+- **pnpm 10 or newer** — Required when running from source
+- **Stable Rust toolchain** — Required when running from source
+- **Tauri platform dependencies** — Follow the official [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system
+- **Codex CLI or fal.ai key** — Optional; needed only for Poster Studio image generation
 
 On Fedora, install the current Tauri Linux dependencies with:
 
@@ -78,9 +80,10 @@ sudo dnf group install "c-development"
 
 ### Installation
 
-Download the AppImage, Debian package, or RPM for the latest version from
-[GitHub Releases](https://github.com/kernastra/matinee/releases). To run Matinee
-from source instead:
+Download the AppImage, Debian package, or RPM from the
+[latest GitHub release](https://github.com/kernastra/matinee/releases/latest).
+
+To run Matinee from source instead:
 
 ```bash
 git clone https://github.com/kernastra/matinee.git
@@ -89,7 +92,11 @@ pnpm install
 pnpm tauri:dev
 ```
 
-No environment file is required. On first launch, enter the root URL of your Jellyfin server—such as `http://jellyfin.local:8096`—followed by your Jellyfin username and password. Radarr, Sonarr, and image-provider credentials are configured inside Settings; Matinee stores managed API keys in the operating-system credential vault rather than the repository or browser storage.
+### Configuration
+
+No environment file is required. On first launch, enter the root URL of your Jellyfin server—such as `http://jellyfin.local:8096`—followed by your Jellyfin username and password.
+
+Radarr, Sonarr, and image-provider credentials are configured inside **Settings**. Matinee stores managed API keys in the operating-system credential vault rather than the repository or browser storage.
 
 ## Usage
 
@@ -123,6 +130,12 @@ Poster Studio works from normal Jellyfin metadata when no creative manifest is a
 The **Advanced** panel exposes the assembled prompt, permits an editable copy or complete custom brief, and imports `.txt`, `.md`, and prompt-bearing `.json` files. Matinee styling can be kept or disabled for a custom prompt.
 
 <!-- ===== Repo-Specific Sections ===== -->
+
+## Local-First Scope
+
+Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. Jellyfin credentials remain session-scoped, while Radarr, Sonarr, and fal.ai keys are stored through the operating system's credential vault.
+
+Poster Studio makes one provider request per deliberate generation attempt and never silently retries a rejected image. Codex jobs run in a restricted temporary workspace, successful job files are cleaned up automatically, and failed diagnostics are retained locally for seven days to support troubleshooting.
 
 ## Development
 
