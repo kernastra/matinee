@@ -8,6 +8,7 @@ import Library from './components/Library';
 import SearchOverlay from './components/SearchOverlay';
 import SeriesDetails from './components/SeriesDetails';
 import Settings from './components/Settings';
+import PosterStudio from './components/PosterStudio';
 import type { AppView } from './components/AppNav';
 import {
   clearSession,
@@ -121,6 +122,16 @@ export default function App() {
         onSignOut={signOut}
       />
     );
+  } else if (view === 'studio') {
+    content = (
+      <PosterStudio
+        session={session}
+        provider={settings.imageProvider}
+        onNavigate={navigate}
+        onSearch={() => setSearchOpen(true)}
+        onSignOut={signOut}
+      />
+    );
   } else if (view === 'movies' || view === 'series') {
     content = (
       <Library
@@ -147,7 +158,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-surface${session ? ' app-surface--authenticated' : ''}${settings.reducedMotion ? ' app-surface--reduced-motion' : ''}`}>
+    <div className={`app-surface app-surface--poster-meta-${settings.posterMetadata}${session ? ' app-surface--authenticated' : ''}${settings.reducedMotion ? ' app-surface--reduced-motion' : ''}`}>
       {playingItem ? null : <WindowChrome integratedNavigation={isNavigationScreen} />}
       {content}
       {session && searchOpen ? (

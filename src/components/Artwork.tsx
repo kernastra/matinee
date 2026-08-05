@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { imageUrl, type JellyfinItem, type JellyfinSession } from '../lib/jellyfin';
 import MaterialIcon from './MaterialIcon';
+import { useCustomPosters } from './CustomPosterProvider';
 
 type ArtworkProps = {
   item: JellyfinItem;
@@ -17,9 +18,11 @@ export default function Artwork({
   className = '',
   loading = 'lazy',
 }: ArtworkProps) {
-  const source = imageUrl(session, item, 'Primary', width);
+  const { posters } = useCustomPosters();
+  const customPoster = posters[item.Id];
+  const source = customPoster?.dataUrl || imageUrl(session, item, 'Primary', width);
   const [failedSource, setFailedSource] = useState('');
-  const failed = !item.ImageTags?.Primary || failedSource === source;
+  const failed = (!customPoster && !item.ImageTags?.Primary) || failedSource === source;
 
   if (failed) {
     return (

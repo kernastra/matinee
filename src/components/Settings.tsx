@@ -8,6 +8,7 @@ import {
 } from '../lib/jellyfin';
 import { defaultSettings, type AppSettings } from '../lib/settings';
 import AppNav, { type AppView } from './AppNav';
+import ImageProviderSettings from './ImageProviderSettings';
 
 type SettingsProps = {
   session: JellyfinSession;
@@ -77,7 +78,7 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
       <header className="settings-header">
         <p className="eyebrow">Make Matinee yours</p>
         <h1>Settings</h1>
-        <p>Playback, interface, and Jellyfin account preferences.</p>
+        <p>Playback, interface, image generation, and Jellyfin account preferences.</p>
       </header>
 
       <div className="settings-content">
@@ -174,12 +175,31 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
               checked={settings.reducedMotion}
               onChange={(checked) => update('reducedMotion', checked)}
             />
+            <label className="settings-row">
+              <span><strong>Poster metadata</strong><small>Control when ratings and genres appear over poster artwork.</small></span>
+              <select value={settings.posterMetadata} onChange={(event) => update('posterMetadata', event.target.value as AppSettings['posterMetadata'])}>
+                <option value="always">Always</option>
+                <option value="hover">On hover for custom posters</option>
+                <option value="never">Never</option>
+              </select>
+            </label>
           </div>
+        </section>
+
+        <section className="settings-section" aria-labelledby="image-generation-settings-title">
+          <div className="settings-section__heading">
+            <span>04</span>
+            <div>
+              <h2 id="image-generation-settings-title">Poster generation</h2>
+              <p>Choose how the design studio creates artwork.</p>
+            </div>
+          </div>
+          <ImageProviderSettings value={settings.imageProvider} onChange={(provider) => update('imageProvider', provider)} />
         </section>
 
         <section className="settings-section" aria-labelledby="about-settings-title">
           <div className="settings-section__heading">
-            <span>04</span>
+            <span>05</span>
             <div>
               <h2 id="about-settings-title">About</h2>
               <p>Application and server information.</p>
@@ -195,7 +215,7 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
 
         <div className="settings-footer">
           <button className="secondary-button" type="button" onClick={() => onChange(defaultSettings)}>Restore defaults</button>
-          <p>Settings are saved automatically on this device.</p>
+          <p>Preferences are saved automatically. Provider keys stay in your system credential vault.</p>
         </div>
       </div>
     </main>

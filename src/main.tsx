@@ -7,10 +7,13 @@ import '@fontsource/ibm-plex-mono/latin-500.css';
 import '@fontsource/ibm-plex-mono/latin-600.css';
 import '@fontsource/ibm-plex-mono/latin-700.css';
 import App from './App';
+import { CustomPosterProvider } from './components/CustomPosterProvider';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <CustomPosterProvider>
+      <App />
+    </CustomPosterProvider>
   </StrictMode>,
 );
