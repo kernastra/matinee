@@ -10,6 +10,8 @@ import { defaultSettings, type AppSettings } from '../lib/settings';
 import AppNav, { type AppView } from './AppNav';
 import ImageProviderSettings from './ImageProviderSettings';
 import MediaIntegrationSettings from './MediaIntegrationSettings';
+import MediaPathSettings from './MediaPathSettings';
+import ArtworkStorageSettings from './ArtworkStorageSettings';
 import { integrationEnabled } from '../lib/integrations';
 
 type SettingsProps = {
@@ -117,9 +119,21 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
           </div>
         </section>
 
-        <section className="settings-section" aria-labelledby="playback-settings-title">
+        <section className="settings-section" aria-labelledby="media-path-settings-title">
           <div className="settings-section__heading">
             <span>02</span>
+            <div>
+              <h2 id="media-path-settings-title">Media storage</h2>
+              <p>Connect Jellyfin paths to trusted folders on this computer.</p>
+            </div>
+          </div>
+          <MediaPathSettings />
+          <ArtworkStorageSettings />
+        </section>
+
+        <section className="settings-section" aria-labelledby="playback-settings-title">
+          <div className="settings-section__heading">
+            <span>03</span>
             <div>
               <h2 id="playback-settings-title">Playback</h2>
               <p>Defaults used when a title starts.</p>
@@ -162,7 +176,7 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
 
         <section className="settings-section" aria-labelledby="interface-settings-title">
           <div className="settings-section__heading">
-            <span>03</span>
+            <span>04</span>
             <div>
               <h2 id="interface-settings-title">Interface</h2>
               <p>Control Matinee’s cinematic motion.</p>
@@ -194,7 +208,7 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
 
         <section className="settings-section" aria-labelledby="integration-settings-title">
           <div className="settings-section__heading">
-            <span>04</span>
+            <span>05</span>
             <div>
               <h2 id="integration-settings-title">Coming soon</h2>
               <p>Connect your monitored Radarr and Sonarr releases.</p>
@@ -209,7 +223,7 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
 
         <section className="settings-section" aria-labelledby="image-generation-settings-title">
           <div className="settings-section__heading">
-            <span>05</span>
+            <span>06</span>
             <div>
               <h2 id="image-generation-settings-title">Poster generation</h2>
               <p>Choose how the design studio creates artwork.</p>
@@ -220,7 +234,7 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
 
         <section className="settings-section" aria-labelledby="about-settings-title">
           <div className="settings-section__heading">
-            <span>06</span>
+            <span>07</span>
             <div>
               <h2 id="about-settings-title">About</h2>
               <p>Application and server information.</p>

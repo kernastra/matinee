@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
+  activateArtworkVersion,
+  deleteArtworkVersion,
+  exportArtworkToMediaFolder,
   exportGeneratedImage,
-  exportPosterToMediaFolder,
   generatePosterImage,
+  listArtworkLibrary,
+  storeGeneratedArtwork,
+  type ArtworkRecord,
   type GeneratedImage,
 } from '../lib/imageGeneration';
 import {
@@ -28,6 +33,7 @@ import {
 } from '../lib/posterPrompts';
 import type { ImageProvider } from '../lib/settings';
 import AppNav, { type AppView } from './AppNav';
+import ArtworkLibrary from './ArtworkLibrary';
 import MaterialIcon from './MaterialIcon';
 import { useCustomPosters } from './CustomPosterProvider';
 
@@ -62,7 +68,7 @@ function initialGenre(item?: JellyfinItem) {
 }
 
 export default function PosterStudio({ session, provider, onNavigate, onSearch, onSignOut, calendarEnabled }: Props) {
-  const { posters, assignPoster } = useCustomPosters();
+  const { posters, assignPoster, refreshPosters } = useCustomPosters();
   const promptFileRef = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<JellyfinItem[]>([]);
   const [selectedId, setSelectedId] = useState('');
@@ -78,7 +84,8 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
   const [advancedError, setAdvancedError] = useState('');
   const [generated, setGenerated] = useState<HistoryItem | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [artworkLibrary, setArtworkLibrary] = useState<ArtworkRecord[]>([]);
+  const [managingVersion, setManagingVersion] = useState('');
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -92,11 +99,17 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([getLibraryItems(session, 'Movie'), getLibraryItems(session, 'Series')])
-      .then(([movies, series]) => {
+    Promise.all([
+      getLibraryItems(session, 'Movie'),
+      getLibraryItems(session, 'Series'),
+      getLibraryItems(session, 'BoxSet').catch(() => []),
+      listArtworkLibrary().catch(() => []),
+    ])
+      .then(([movies, series, collections, savedArtwork]) => {
         if (cancelled) return;
-        const library = [...movies, ...series].sort((left, right) => left.Name.localeCompare(right.Name));
+        const library = [...movies, ...series, ...collections].sort((left, right) => left.Name.localeCompare(right.Name));
         setItems(library);
+        setArtworkLibrary(savedArtwork);
         if (library[0]) {
           setSelectedId(library[0].Id);
         }
@@ -123,9 +136,8 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
     () => items.find((item) => item.Id === selectedId),
     [items, selectedId],
   );
-  const selectedMediaPath = selectedItem?.Type === 'Movie'
-    ? selectedItem.MediaSources?.find((source) => source.Path)?.Path
-    : undefined;
+  const selectedMediaPath = selectedItem?.MediaSources?.find((source) => source.Path)?.Path
+    || selectedItem?.Path;
 
   useEffect(() => {
     let cancelled = false;
@@ -254,18 +266,22 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
       };
       setGenerated(artwork);
       setPreviewFailed(false);
-      setHistory((current) => [
-        artwork,
-        ...current,
-      ].slice(0, 6));
       if (assetType === 'Poster') try {
-        await assignPoster(selectedItem.Id, result.localPath);
+        const saved = await assignPoster(selectedItem.Id, selectedItem.Name, selectedItem.Type, result.localPath);
+        setGenerated({ ...artwork, localPath: saved.localPath, dataUrl: saved.dataUrl });
         setNotice('Poster generated and assigned to this title throughout Matinee.');
       } catch (assignmentError) {
         setError(`The poster was generated, but Matinee could not make it persistent: ${messageFrom(assignmentError)}`);
       } else {
-        setNotice(`${assetType} generated. Export it to Pictures when you are ready.`);
+        try {
+          const saved = await storeGeneratedArtwork(selectedItem.Id, selectedItem.Name, selectedItem.Type, assetType, result.localPath);
+          setGenerated({ ...artwork, localPath: saved.localPath });
+          setNotice(`${assetType} generated and saved to the Artwork library.`);
+        } catch (storageError) {
+          setError(`The artwork was generated, but Matinee could not add it to the library: ${messageFrom(storageError)}`);
+        }
       }
+      setArtworkLibrary(await listArtworkLibrary());
     } catch (reason) {
       setError(messageFrom(reason));
     } finally {
@@ -291,19 +307,18 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
 
   async function exportToMediaFolder(overwrite = false) {
     const poster = generated?.itemId === selectedId ? generated : posters[selectedId];
-    const moviePath = selectedItem?.Type === 'Movie'
-      ? selectedItem.MediaSources?.find((source) => source.Path)?.Path
-      : undefined;
-    if (!poster || !moviePath) return;
+    const mediaPath = selectedItem?.MediaSources?.find((source) => source.Path)?.Path || selectedItem?.Path;
+    const exportingAssetType = generated?.itemId === selectedId ? generated.assetType : 'Poster';
+    if (!poster || !mediaPath || !selectedItem) return;
     setExportingToMedia(true);
     setError('');
     setNotice('');
     try {
-      const path = await exportPosterToMediaFolder(poster.localPath, moviePath, overwrite);
-      setNotice(`Saved as ${path}. Jellyfin may need a metadata refresh before it notices the new poster.`);
+      const path = await exportArtworkToMediaFolder(poster.localPath, mediaPath, selectedItem.Type, exportingAssetType, overwrite);
+      setNotice(`Saved as ${path}. Jellyfin may need a metadata refresh before it notices the new artwork.`);
     } catch (reason) {
-      if (reason === 'POSTER_EXISTS' && !overwrite) {
-        const replace = window.confirm('poster.jpg already exists in this movie folder. Replace it with the Matinee poster?');
+      if (reason === 'ARTWORK_EXISTS' && !overwrite) {
+        const replace = window.confirm('That Jellyfin artwork file already exists. Replace it with this Matinee version?');
         if (replace) await exportToMediaFolder(true);
       } else {
         setError(messageFrom(reason));
@@ -311,6 +326,59 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
     } finally {
       setExportingToMedia(false);
     }
+  }
+
+  async function restoreVersion(record: ArtworkRecord) {
+    setManagingVersion(record.versionId);
+    setError('');
+    setNotice('');
+    try {
+      await activateArtworkVersion(record.itemId, record.versionId);
+      await refreshPosters();
+      setArtworkLibrary(await listArtworkLibrary());
+      setNotice(`${record.title} now uses that saved poster throughout Matinee.`);
+    } catch (reason) {
+      setError(messageFrom(reason));
+    } finally {
+      setManagingVersion('');
+    }
+  }
+
+  async function removeVersion(record: ArtworkRecord) {
+    if (!window.confirm(`Remove this saved ${record.assetType.toLowerCase()} for ${record.title}? The exported Jellyfin file, if any, will not be changed.`)) return;
+    setManagingVersion(record.versionId);
+    setError('');
+    setNotice('');
+    try {
+      await deleteArtworkVersion(record.itemId, record.versionId);
+      await refreshPosters();
+      setArtworkLibrary(await listArtworkLibrary());
+      setNotice('Artwork version removed from Matinee’s library.');
+    } catch (reason) {
+      setError(messageFrom(reason));
+    } finally {
+      setManagingVersion('');
+    }
+  }
+
+  function previewSaved(record: ArtworkRecord) {
+    const item = items.find((candidate) => candidate.Id === record.itemId);
+    setSelectedId(record.itemId);
+    setAssetType(record.assetType);
+    setGenerated({
+      provider,
+      localPath: record.localPath,
+      dataUrl: record.thumbnailDataUrl,
+      id: record.versionId,
+      itemId: record.itemId,
+      title: item?.Name || record.title,
+      genre: initialGenre(item),
+      assetType: record.assetType,
+      focus: 'Auto',
+      subject: '',
+      textTreatment: 'Title',
+    });
+    setPreviewFailed(false);
   }
 
   const customPoster = selectedItem ? posters[selectedItem.Id] : undefined;
@@ -380,8 +448,8 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
             <button className="secondary-button" type="button" disabled={!activePoster || exporting} onClick={exportPoster}>
               {exporting ? 'Exporting…' : 'Export to Pictures'}
             </button>
-            <button className="secondary-button" type="button" disabled={!activePoster || assetType !== 'Poster' || !mediaPath || exportingToMedia} title={assetType !== 'Poster' ? 'Only poster artwork can replace poster.jpg' : !mediaPath ? 'Available when Jellyfin exposes a local movie-file path' : 'Save beside the movie as poster.jpg'} onClick={() => exportToMediaFolder()}>
-              {exportingToMedia ? 'Saving…' : 'Save as poster.jpg'}
+            <button className="secondary-button" type="button" disabled={!activePoster || !mediaPath || exportingToMedia} title={!mediaPath ? 'Available when Jellyfin exposes a mapped local path for this title' : `Save ${previewAssetType.toLowerCase()} artwork using Jellyfin’s standard filename`} onClick={() => exportToMediaFolder()}>
+              {exportingToMedia ? 'Saving…' : 'Save to Jellyfin folder'}
             </button>
           </div>
           {referenceUrls.length ? <p className="studio-reference-status"><MaterialIcon name="check_circle" /> Using {referenceUrls.length} Jellyfin backdrop {referenceUrls.length === 1 ? 'still' : 'stills'} as visual references</p> : <p className="studio-reference-status studio-reference-status--muted"><MaterialIcon name="info" /> No Jellyfin backdrop stills are available; this generation will use metadata only.</p>}
@@ -410,12 +478,14 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
         </aside>
       </div>
 
-      {history.length ? (
-        <section className="studio-history">
-          <div className="studio-panel-heading"><div><span>04</span><strong>This session</strong></div><small>Recent generations</small></div>
-          <div>{history.map((item) => <button type="button" key={item.id} aria-label={`Preview generated artwork for ${item.title}`} onClick={() => { setSelectedId(item.itemId); setAssetType(item.assetType); setFocus(item.focus); setSubject(item.subject); setTextTreatment(item.textTreatment); setGenerated(item); setPreviewFailed(false); }}><img className={`studio-history-art--${item.assetType.toLowerCase()}`} src={item.dataUrl} alt="" /><span>{item.title}</span></button>)}</div>
-        </section>
-      ) : null}
+      <ArtworkLibrary
+        records={artworkLibrary}
+        items={items}
+        busyVersion={managingVersion}
+        onPreview={previewSaved}
+        onRestore={(record) => void restoreVersion(record)}
+        onRemove={(record) => void removeVersion(record)}
+      />
 
       {advancedOpen ? (
         <div className="studio-advanced-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdvancedOpen(false); }}>

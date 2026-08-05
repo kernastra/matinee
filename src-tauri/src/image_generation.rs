@@ -1,3 +1,7 @@
+use crate::{
+    artwork_storage::{artwork_export_directory, artwork_library_directory},
+    media_paths::{resolve_media_file, resolve_media_path},
+};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use keyring::{Entry, Error as KeyringError};
 use reqwest::{header::CONTENT_TYPE, Url};
@@ -20,6 +24,8 @@ const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_REFERENCE_BYTES: usize = 12 * 1024 * 1024;
 const MAX_MOVIE_MANIFEST_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_PROMPT_CHARACTERS: usize = 30_000;
+const MAX_ARTWORK_MANIFEST_BYTES: u64 = 512 * 1024;
+const MAX_ARTWORK_VERSIONS_PER_TITLE: usize = 48;
 const CODEX_LOG_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const CODEX_FILESYSTEM_PERMISSIONS: &str =
     "permissions.matinee-poster.filesystem={\":root\"=\"deny\",\":minimal\"=\"read\",\":workspace_roots\"={\".\"=\"write\"}}";
@@ -81,8 +87,45 @@ pub struct GeneratedImage {
 #[serde(rename_all = "camelCase")]
 pub struct CustomPoster {
     item_id: String,
+    version_id: String,
     local_path: String,
     data_url: String,
+    created_at: u128,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtworkVersionMetadata {
+    id: String,
+    asset_type: String,
+    file_name: String,
+    thumbnail_name: String,
+    created_at: u128,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtworkManifest {
+    manifest_version: u8,
+    item_id: String,
+    title: String,
+    item_type: String,
+    active_poster_id: Option<String>,
+    versions: Vec<ArtworkVersionMetadata>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtworkRecord {
+    version_id: String,
+    item_id: String,
+    title: String,
+    item_type: String,
+    asset_type: String,
+    local_path: String,
+    thumbnail_data_url: String,
+    created_at: u128,
+    active: bool,
 }
 
 struct ReferenceAsset {
@@ -117,73 +160,6 @@ fn same_http_origin(candidate: &Url, expected: &Url) -> bool {
         && candidate.port_or_known_default() == expected.port_or_known_default()
         && candidate.username().is_empty()
         && candidate.password().is_none()
-}
-
-fn mapped_media_candidates(media_path: &Path, home: &Path) -> Vec<PathBuf> {
-    let local_roots = [home.join("media-data/media"), home.join("media")];
-    let container_roots = [
-        (Path::new("/media"), Path::new("")),
-        (Path::new("/movies"), Path::new("movies")),
-        (Path::new("/tv"), Path::new("tv")),
-        (Path::new("/shows"), Path::new("shows")),
-    ];
-
-    container_roots
-        .iter()
-        .filter_map(|(container_root, local_subdirectory)| {
-            media_path
-                .strip_prefix(container_root)
-                .ok()
-                .map(|relative| (*local_subdirectory, relative))
-        })
-        .flat_map(|(local_subdirectory, relative)| {
-            local_roots
-                .iter()
-                .map(move |root| root.join(local_subdirectory).join(relative))
-        })
-        .collect()
-}
-
-fn allowed_media_roots(app: &AppHandle) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Ok(home) = app.path().home_dir() {
-        roots.extend([
-            home.join("media-data/media"),
-            home.join("media"),
-            home.join("Videos"),
-        ]);
-    }
-    roots
-        .into_iter()
-        .filter_map(|root| root.canonicalize().ok())
-        .collect()
-}
-
-fn canonical_media_file(candidate: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
-    let canonical = candidate.canonicalize().ok()?;
-    (canonical.is_file() && roots.iter().any(|root| canonical.starts_with(root)))
-        .then_some(canonical)
-}
-
-fn resolve_media_file(app: &AppHandle, media_path: &str) -> Result<PathBuf, String> {
-    let reported_path = PathBuf::from(media_path);
-    let roots = allowed_media_roots(app);
-    if let Some(media_file) = canonical_media_file(&reported_path, &roots) {
-        return Ok(media_file);
-    }
-
-    if let Ok(home) = app.path().home_dir() {
-        if let Some(candidate) = mapped_media_candidates(&reported_path, &home)
-            .into_iter()
-            .find_map(|candidate| canonical_media_file(&candidate, &roots))
-        {
-            return Ok(candidate);
-        }
-    }
-
-    Err(format!(
-        "Jellyfin reports this movie at {media_path}, but Matinee could not resolve it inside a trusted local media folder. Matinee supports ~/media-data/media, ~/media, and ~/Videos."
-    ))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -521,13 +497,7 @@ fn cleanup_expired_codex_jobs(directory: &Path) {
 }
 
 fn custom_posters_directory(app: &AppHandle) -> Result<PathBuf, String> {
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("custom-posters");
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    Ok(directory)
+    artwork_library_directory(app)
 }
 
 fn image_content_type(path: &Path) -> &'static str {
@@ -670,66 +640,438 @@ fn valid_item_id(value: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
 }
 
-#[tauri::command]
-pub fn list_custom_posters(app: AppHandle) -> Result<Vec<CustomPoster>, String> {
-    let directory = custom_posters_directory(&app)?;
-    let mut posters = Vec::new();
-    for path in fs::read_dir(directory)
-        .map_err(|error| error.to_string())?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-    {
-        let Some(item_id) = path.file_stem().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if !valid_item_id(item_id) {
-            continue;
-        }
-        let content_type = image_content_type(&path);
-        let Ok(data_url) = image_data_url(&path, content_type) else {
-            continue;
-        };
-        posters.push(CustomPoster {
-            item_id: item_id.into(),
-            local_path: path.to_string_lossy().into_owned(),
-            data_url,
-        });
-    }
-    Ok(posters)
+fn valid_artwork_text(value: &str) -> bool {
+    !value.trim().is_empty() && value.chars().count() <= 512 && !value.chars().any(char::is_control)
 }
 
-#[tauri::command]
-pub fn assign_generated_poster(
-    app: AppHandle,
+fn valid_item_type(value: &str) -> bool {
+    matches!(value, "Movie" | "Series" | "BoxSet" | "Unknown")
+}
+
+fn artwork_manifest_path(directory: &Path) -> PathBuf {
+    directory.join("manifest.json")
+}
+
+fn artwork_item_directory(app: &AppHandle, item_id: &str, create: bool) -> Result<PathBuf, String> {
+    if !valid_item_id(item_id) {
+        return Err("The Jellyfin item identifier is not valid.".into());
+    }
+    let root = custom_posters_directory(app)?
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let candidate = root.join(item_id);
+    if create {
+        fs::create_dir_all(&candidate).map_err(|error| error.to_string())?;
+    }
+    let directory = candidate
+        .canonicalize()
+        .map_err(|_| "That artwork history no longer exists.".to_string())?;
+    if !directory.starts_with(&root) || !directory.is_dir() {
+        return Err(
+            "Matinee refused an artwork folder outside the configured library root.".into(),
+        );
+    }
+    Ok(directory)
+}
+
+fn load_artwork_manifest(directory: &Path) -> Result<Option<ArtworkManifest>, String> {
+    let path = artwork_manifest_path(directory);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    if fs::metadata(&path)
+        .map_err(|error| error.to_string())?
+        .len()
+        > MAX_ARTWORK_MANIFEST_BYTES
+    {
+        return Err("An artwork manifest is unexpectedly large.".into());
+    }
+    let contents = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let manifest: ArtworkManifest = serde_json::from_str(&contents)
+        .map_err(|error| format!("An artwork manifest is malformed: {error}"))?;
+    if manifest.manifest_version != 1
+        || !valid_item_id(&manifest.item_id)
+        || !valid_artwork_text(&manifest.title)
+        || !valid_item_type(&manifest.item_type)
+        || manifest.versions.len() > MAX_ARTWORK_VERSIONS_PER_TITLE
+        || manifest.versions.iter().any(|version| {
+            !valid_item_id(&version.id)
+                || asset_spec(&version.asset_type).is_err()
+                || Path::new(&version.file_name)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    != Some(version.file_name.as_str())
+                || Path::new(&version.thumbnail_name)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    != Some(version.thumbnail_name.as_str())
+        })
+    {
+        return Err("An artwork manifest contains unsupported values.".into());
+    }
+    if manifest
+        .versions
+        .iter()
+        .enumerate()
+        .any(|(index, version)| {
+            manifest.versions[index + 1..]
+                .iter()
+                .any(|candidate| candidate.id == version.id)
+        })
+        || manifest.active_poster_id.as_ref().is_some_and(|active_id| {
+            !manifest
+                .versions
+                .iter()
+                .any(|version| version.id == *active_id && version.asset_type == "Poster")
+        })
+    {
+        return Err("An artwork manifest contains conflicting version identifiers.".into());
+    }
+    Ok(Some(manifest))
+}
+
+fn save_artwork_manifest(directory: &Path, manifest: &ArtworkManifest) -> Result<(), String> {
+    let contents = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
+    if contents.len() as u64 > MAX_ARTWORK_MANIFEST_BYTES {
+        return Err("This title's artwork manifest is too large.".into());
+    }
+    fs::write(artwork_manifest_path(directory), contents)
+        .map_err(|error| format!("Matinee could not save artwork history: {error}"))
+}
+
+fn write_artwork_thumbnail(source: &Path, destination: &Path) -> Result<(), String> {
+    let thumbnail = image::open(source)
+        .map_err(|error| format!("The generated artwork could not be decoded: {error}"))?
+        .thumbnail(360, 360)
+        .to_rgb8();
+    let file = File::create(destination).map_err(|error| error.to_string())?;
+    image::codecs::jpeg::JpegEncoder::new_with_quality(file, 82)
+        .encode(
+            thumbnail.as_raw(),
+            thumbnail.width(),
+            thumbnail.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn store_artwork_version(
+    app: &AppHandle,
     item_id: String,
-    local_path: String,
-) -> Result<CustomPoster, String> {
+    title: String,
+    item_type: String,
+    asset_type: String,
+    source: &Path,
+    make_active: bool,
+) -> Result<ArtworkRecord, String> {
     if !valid_item_id(&item_id) {
         return Err("The Jellyfin item identifier is not valid.".into());
     }
-    let source = validated_poster_source(&app, &local_path, false)?;
+    if !valid_artwork_text(&title) || !valid_item_type(&item_type) {
+        return Err("The selected title metadata is not valid for artwork storage.".into());
+    }
+    asset_spec(&asset_type)?;
+    let directory = artwork_item_directory(app, &item_id, true)?;
+    let mut manifest = load_artwork_manifest(&directory)?.unwrap_or_else(|| ArtworkManifest {
+        manifest_version: 1,
+        item_id: item_id.clone(),
+        title: title.clone(),
+        item_type: item_type.clone(),
+        active_poster_id: None,
+        versions: Vec::new(),
+    });
+    if manifest.item_id != item_id {
+        return Err("This title's artwork manifest does not match its library folder.".into());
+    }
+    if manifest.versions.len() >= MAX_ARTWORK_VERSIONS_PER_TITLE {
+        return Err(format!(
+            "This title already has {MAX_ARTWORK_VERSIONS_PER_TITLE} saved artwork versions. Remove one in the Artwork library before generating another."
+        ));
+    }
+    manifest.title = title.clone();
+    manifest.item_type = item_type.clone();
+
+    let created_at = timestamp_millis();
+    let id = format!("v{created_at}");
     let extension = source
         .extension()
         .and_then(|value| value.to_str())
         .map(str::to_ascii_lowercase)
         .filter(|value| matches!(value.as_str(), "png" | "jpg" | "jpeg" | "webp"))
         .unwrap_or_else(|| "png".into());
-    let directory = custom_posters_directory(&app)?;
-    let destination = directory.join(format!("{item_id}.{extension}"));
-    fs::copy(&source, &destination).map_err(|error| error.to_string())?;
-    for old_extension in ["png", "jpg", "jpeg", "webp"] {
-        let old_path = directory.join(format!("{item_id}.{old_extension}"));
-        if old_path != destination && old_path.exists() {
-            let _ = fs::remove_file(old_path);
+    let asset_stem = asset_type.to_ascii_lowercase();
+    let file_name = format!("{id}-{asset_stem}.{extension}");
+    let thumbnail_name = format!("{id}-{asset_stem}-thumb.jpg");
+    let destination = directory.join(&file_name);
+    let thumbnail = directory.join(&thumbnail_name);
+    fs::copy(source, &destination).map_err(|error| error.to_string())?;
+    if let Err(error) = write_artwork_thumbnail(&destination, &thumbnail) {
+        let _ = fs::remove_file(&destination);
+        return Err(error);
+    }
+    let version = ArtworkVersionMetadata {
+        id: id.clone(),
+        asset_type: asset_type.clone(),
+        file_name,
+        thumbnail_name,
+        created_at,
+    };
+    manifest.versions.push(version.clone());
+    if asset_type == "Poster" && make_active {
+        manifest.active_poster_id = Some(id.clone());
+    }
+    if let Err(error) = save_artwork_manifest(&directory, &manifest) {
+        let _ = fs::remove_file(&destination);
+        let _ = fs::remove_file(&thumbnail);
+        return Err(error);
+    }
+    Ok(ArtworkRecord {
+        version_id: id,
+        item_id,
+        title,
+        item_type,
+        asset_type,
+        local_path: destination.to_string_lossy().into_owned(),
+        thumbnail_data_url: image_data_url(&thumbnail, "image/jpeg")?,
+        created_at,
+        active: make_active && version.asset_type == "Poster",
+    })
+}
+
+fn migrate_legacy_posters(app: &AppHandle) -> Result<(), String> {
+    let root = custom_posters_directory(app)?;
+    for path in fs::read_dir(&root)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        matches!(
+                            extension.to_ascii_lowercase().as_str(),
+                            "png" | "jpg" | "jpeg" | "webp"
+                        )
+                    })
+        })
+    {
+        let Some(item_id) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !valid_item_id(item_id) || root.join(item_id).is_dir() {
+            continue;
+        }
+        if store_artwork_version(
+            app,
+            item_id.into(),
+            item_id.into(),
+            "Unknown".into(),
+            "Poster".into(),
+            &path,
+            true,
+        )
+        .is_ok()
+        {
+            let _ = fs::remove_file(path);
         }
     }
-    let content_type = image_content_type(&destination);
+    Ok(())
+}
+
+fn artwork_records(app: &AppHandle) -> Result<Vec<ArtworkRecord>, String> {
+    migrate_legacy_posters(app)?;
+    let root = custom_posters_directory(app)?;
+    let mut records = Vec::new();
+    for directory in fs::read_dir(root)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+    {
+        let Ok(directory) = directory.canonicalize() else {
+            continue;
+        };
+        let root = custom_posters_directory(app)?
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if !directory.starts_with(root) {
+            continue;
+        }
+        let Ok(Some(manifest)) = load_artwork_manifest(&directory) else {
+            continue;
+        };
+        if directory.file_name().and_then(|name| name.to_str()) != Some(manifest.item_id.as_str()) {
+            continue;
+        }
+        for version in manifest.versions {
+            let path = directory.join(&version.file_name);
+            let thumbnail = directory.join(&version.thumbnail_name);
+            if !path.is_file() || !thumbnail.is_file() {
+                continue;
+            }
+            let Ok(thumbnail_data_url) = image_data_url(&thumbnail, "image/jpeg") else {
+                continue;
+            };
+            records.push(ArtworkRecord {
+                version_id: version.id.clone(),
+                item_id: manifest.item_id.clone(),
+                title: manifest.title.clone(),
+                item_type: manifest.item_type.clone(),
+                asset_type: version.asset_type,
+                local_path: path.to_string_lossy().into_owned(),
+                thumbnail_data_url,
+                created_at: version.created_at,
+                active: manifest.active_poster_id.as_deref() == Some(version.id.as_str()),
+            });
+        }
+    }
+    records.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(records)
+}
+
+#[tauri::command]
+pub fn list_custom_posters(app: AppHandle) -> Result<Vec<CustomPoster>, String> {
+    let mut posters = Vec::new();
+    for record in artwork_records(&app)?
+        .into_iter()
+        .filter(|record| record.asset_type == "Poster" && record.active)
+    {
+        let path = PathBuf::from(&record.local_path);
+        let content_type = image_content_type(&path);
+        let Ok(data_url) = image_data_url(&path, content_type) else {
+            continue;
+        };
+        posters.push(CustomPoster {
+            item_id: record.item_id,
+            version_id: record.version_id,
+            local_path: record.local_path,
+            data_url,
+            created_at: record.created_at,
+        });
+    }
+    Ok(posters)
+}
+
+#[tauri::command]
+pub fn list_artwork_library(app: AppHandle) -> Result<Vec<ArtworkRecord>, String> {
+    let mut records = artwork_records(&app)?;
+    records.truncate(240);
+    Ok(records)
+}
+
+#[tauri::command]
+pub fn assign_generated_poster(
+    app: AppHandle,
+    item_id: String,
+    title: String,
+    item_type: String,
+    local_path: String,
+) -> Result<CustomPoster, String> {
+    let source = validated_poster_source(&app, &local_path, false)?;
+    let record = store_artwork_version(
+        &app,
+        item_id.clone(),
+        title,
+        item_type,
+        "Poster".into(),
+        &source,
+        true,
+    )?;
+    let _ = fs::remove_file(&source);
+    let destination = PathBuf::from(&record.local_path);
     Ok(CustomPoster {
         item_id,
-        local_path: destination.to_string_lossy().into_owned(),
-        data_url: image_data_url(&destination, content_type)?,
+        version_id: record.version_id,
+        local_path: record.local_path,
+        data_url: image_data_url(&destination, image_content_type(&destination))?,
+        created_at: record.created_at,
     })
+}
+
+#[tauri::command]
+pub fn store_generated_artwork(
+    app: AppHandle,
+    item_id: String,
+    title: String,
+    item_type: String,
+    asset_type: String,
+    local_path: String,
+) -> Result<ArtworkRecord, String> {
+    let source = validated_poster_source(&app, &local_path, false)?;
+    let record =
+        store_artwork_version(&app, item_id, title, item_type, asset_type, &source, false)?;
+    let _ = fs::remove_file(source);
+    Ok(record)
+}
+
+#[tauri::command]
+pub fn activate_artwork_version(
+    app: AppHandle,
+    item_id: String,
+    version_id: String,
+) -> Result<(), String> {
+    if !valid_item_id(&item_id) || !valid_item_id(&version_id) {
+        return Err("That artwork version identifier is invalid.".into());
+    }
+    let directory = artwork_item_directory(&app, &item_id, false)?;
+    let mut manifest = load_artwork_manifest(&directory)?
+        .ok_or_else(|| "That artwork history no longer exists.".to_string())?;
+    if manifest.item_id != item_id {
+        return Err("That artwork manifest does not match its library folder.".into());
+    }
+    let version = manifest
+        .versions
+        .iter()
+        .find(|version| version.id == version_id)
+        .ok_or_else(|| "That artwork version no longer exists.".to_string())?;
+    if version.asset_type != "Poster" {
+        return Err("Only poster artwork can be assigned to title cards.".into());
+    }
+    manifest.active_poster_id = Some(version_id);
+    save_artwork_manifest(&directory, &manifest)
+}
+
+#[tauri::command]
+pub fn delete_artwork_version(
+    app: AppHandle,
+    item_id: String,
+    version_id: String,
+) -> Result<(), String> {
+    if !valid_item_id(&item_id) || !valid_item_id(&version_id) {
+        return Err("That artwork version identifier is invalid.".into());
+    }
+    let directory = artwork_item_directory(&app, &item_id, false)?;
+    let mut manifest = load_artwork_manifest(&directory)?
+        .ok_or_else(|| "That artwork history no longer exists.".to_string())?;
+    if manifest.item_id != item_id {
+        return Err("That artwork manifest does not match its library folder.".into());
+    }
+    let index = manifest
+        .versions
+        .iter()
+        .position(|version| version.id == version_id)
+        .ok_or_else(|| "That artwork version no longer exists.".to_string())?;
+    let removed = manifest.versions.remove(index);
+    if manifest.active_poster_id.as_deref() == Some(version_id.as_str()) {
+        manifest.active_poster_id = manifest
+            .versions
+            .iter()
+            .rev()
+            .find(|version| version.asset_type == "Poster")
+            .map(|version| version.id.clone());
+    }
+    save_artwork_manifest(&directory, &manifest)?;
+    for path in [
+        directory.join(removed.file_name),
+        directory.join(removed.thumbnail_name),
+    ] {
+        if path.is_file() {
+            fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -744,13 +1086,9 @@ pub fn export_generated_image(
         .and_then(|value| value.to_str())
         .filter(|value| matches!(*value, "png" | "jpg" | "jpeg" | "webp"))
         .unwrap_or("png");
-    let pictures = app
-        .path()
-        .picture_dir()
-        .map_err(|_| "Your Pictures folder could not be located.".to_string())?
-        .join("Matinee");
-    fs::create_dir_all(&pictures).map_err(|error| error.to_string())?;
-    let destination = pictures.join(format!(
+    let export_root = artwork_export_directory(&app)?;
+    fs::create_dir_all(&export_root).map_err(|error| error.to_string())?;
+    let destination = export_root.join(format!(
         "{}-{}.{}",
         safe_file_stem(&title),
         timestamp_millis(),
@@ -761,36 +1099,45 @@ pub fn export_generated_image(
 }
 
 #[tauri::command]
-pub fn export_poster_to_media_folder(
+pub fn export_artwork_to_media_folder(
     app: AppHandle,
     local_path: String,
     media_path: String,
+    item_type: String,
+    asset_type: String,
     overwrite: bool,
 ) -> Result<String, String> {
-    let source = validated_poster_source(&app, &local_path, true)?;
-    let media_file = resolve_media_file(&app, &media_path)?;
-    let video_extension = media_file
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !matches!(
-        video_extension.as_str(),
-        "mkv" | "mp4" | "m4v" | "avi" | "mov" | "webm" | "m2ts" | "iso"
-    ) {
-        return Err("Jellyfin did not provide a recognized movie-file path.".into());
+    if !valid_item_type(&item_type) || item_type == "Unknown" {
+        return Err(
+            "Choose a movie, series, or collection before saving artwork to Jellyfin.".into(),
+        );
     }
-    let directory = media_file
-        .parent()
-        .ok_or_else(|| "The movie folder could not be resolved.".to_string())?;
-    let destination = directory.join("poster.jpg");
+    asset_spec(&asset_type)?;
+    let source = validated_poster_source(&app, &local_path, true)?;
+    let resolved = resolve_media_path(&app, &media_path)?;
+    let directory = if resolved.is_dir() {
+        resolved
+    } else {
+        resolved
+            .parent()
+            .ok_or_else(|| "The selected title folder could not be resolved.".to_string())?
+            .to_path_buf()
+    };
+    let file_name = match asset_type.as_str() {
+        "Poster" => "poster.jpg",
+        "Backdrop" => "backdrop.jpg",
+        "Banner" => "banner.jpg",
+        "Thumbnail" => "thumb.jpg",
+        _ => return Err("Choose a supported Matinee artwork type.".into()),
+    };
+    let destination = directory.join(file_name);
     if destination.exists() && !overwrite {
-        return Err("POSTER_EXISTS".into());
+        return Err("ARTWORK_EXISTS".into());
     }
 
     let decoded = image::open(&source)
         .map_err(|error| format!("The generated poster could not be decoded: {error}"))?;
-    let temporary = directory.join(format!(".matinee-poster-{}.jpg", timestamp_millis()));
+    let temporary = directory.join(format!(".matinee-artwork-{}.jpg", timestamp_millis()));
     let file = File::create(&temporary).map_err(|error| error.to_string())?;
     if let Err(error) =
         image::codecs::jpeg::JpegEncoder::new_with_quality(file, 92).encode_image(&decoded)
@@ -808,41 +1155,12 @@ pub fn export_poster_to_media_folder(
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_spec, friendly_codex_failure, mapped_media_candidates, remove_null_fields,
-        same_http_origin, sanitize_movie_manifest, MovieManifest, CODEX_FILESYSTEM_PERMISSIONS,
+        asset_spec, friendly_codex_failure, load_artwork_manifest, remove_null_fields,
+        same_http_origin, sanitize_movie_manifest, save_artwork_manifest, timestamp_millis,
+        ArtworkManifest, ArtworkVersionMetadata, MovieManifest, CODEX_FILESYSTEM_PERMISSIONS,
     };
     use reqwest::Url;
-    use std::path::{Path, PathBuf};
-
-    #[test]
-    fn maps_jellyfin_media_mount_to_host_media_root() {
-        let candidates = mapped_media_candidates(
-            Path::new("/media/movies/Toy Story (1995)/Toy Story.mkv"),
-            Path::new("/home/sean"),
-        );
-
-        assert_eq!(
-            candidates.first(),
-            Some(&PathBuf::from(
-                "/home/sean/media-data/media/movies/Toy Story (1995)/Toy Story.mkv"
-            ))
-        );
-    }
-
-    #[test]
-    fn maps_separate_movies_mount_to_movies_subdirectory() {
-        let candidates = mapped_media_candidates(
-            Path::new("/movies/Arrival (2016)/Arrival.mkv"),
-            Path::new("/home/sean"),
-        );
-
-        assert_eq!(
-            candidates.first(),
-            Some(&PathBuf::from(
-                "/home/sean/media-data/media/movies/Arrival (2016)/Arrival.mkv"
-            ))
-        );
-    }
+    use std::fs;
 
     #[test]
     fn maps_artwork_types_to_provider_dimensions() {
@@ -915,6 +1233,40 @@ mod tests {
             "creativeContext": { "characters": "not-an-array" }
         }))
         .is_err());
+    }
+
+    #[test]
+    fn persists_versioned_artwork_manifests_and_rejects_duplicate_ids() {
+        let directory = std::env::temp_dir().join(format!(
+            "matinee-artwork-manifest-test-{}",
+            timestamp_millis()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let version = ArtworkVersionMetadata {
+            id: "v123".into(),
+            asset_type: "Poster".into(),
+            file_name: "v123-poster.png".into(),
+            thumbnail_name: "v123-poster-thumb.jpg".into(),
+            created_at: 123,
+        };
+        let mut manifest = ArtworkManifest {
+            manifest_version: 1,
+            item_id: "movie-1".into(),
+            title: "Arrival".into(),
+            item_type: "Movie".into(),
+            active_poster_id: Some("v123".into()),
+            versions: vec![version.clone()],
+        };
+
+        save_artwork_manifest(&directory, &manifest).unwrap();
+        let loaded = load_artwork_manifest(&directory).unwrap().unwrap();
+        assert_eq!(loaded.active_poster_id.as_deref(), Some("v123"));
+        assert_eq!(loaded.versions.len(), 1);
+
+        manifest.versions.push(version);
+        save_artwork_manifest(&directory, &manifest).unwrap();
+        assert!(load_artwork_manifest(&directory).is_err());
+        fs::remove_dir_all(directory).unwrap();
     }
 }
 

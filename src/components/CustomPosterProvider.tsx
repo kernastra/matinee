@@ -7,7 +7,8 @@ import {
 
 type CustomPosterContextValue = {
   posters: Record<string, CustomPoster>;
-  assignPoster: (itemId: string, localPath: string) => Promise<CustomPoster>;
+  assignPoster: (itemId: string, title: string, itemType: string, localPath: string) => Promise<CustomPoster>;
+  refreshPosters: () => Promise<void>;
 };
 
 const CustomPosterContext = createContext<CustomPosterContextValue | null>(null);
@@ -15,12 +16,16 @@ const CustomPosterContext = createContext<CustomPosterContextValue | null>(null)
 export function CustomPosterProvider({ children }: { children: ReactNode }) {
   const [posters, setPosters] = useState<Record<string, CustomPoster>>({});
 
+  const refreshPosters = useCallback(async () => {
+    const items = await listCustomPosters();
+    setPosters(Object.fromEntries(items.map((item) => [item.itemId, item])));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     listCustomPosters()
       .then((items) => {
-        if (cancelled) return;
-        setPosters(Object.fromEntries(items.map((item) => [item.itemId, item])));
+        if (!cancelled) setPosters(Object.fromEntries(items.map((item) => [item.itemId, item])));
       })
       .catch(() => {
         // Browser-only development does not expose native poster storage.
@@ -28,12 +33,20 @@ export function CustomPosterProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  const assignPoster = useCallback(async (itemId: string, localPath: string) => {
-    const poster = await assignGeneratedPoster(itemId, localPath);
+  useEffect(() => {
+    function storageChanged() {
+      void refreshPosters().catch(() => setPosters({}));
+    }
+    window.addEventListener('matinee:artwork-storage-change', storageChanged);
+    return () => window.removeEventListener('matinee:artwork-storage-change', storageChanged);
+  }, [refreshPosters]);
+
+  const assignPoster = useCallback(async (itemId: string, title: string, itemType: string, localPath: string) => {
+    const poster = await assignGeneratedPoster(itemId, title, itemType, localPath);
     setPosters((current) => ({ ...current, [itemId]: poster }));
     return poster;
   }, []);
-  const value = useMemo<CustomPosterContextValue>(() => ({ posters, assignPoster }), [assignPoster, posters]);
+  const value = useMemo<CustomPosterContextValue>(() => ({ posters, assignPoster, refreshPosters }), [assignPoster, posters, refreshPosters]);
 
   return <CustomPosterContext.Provider value={value}>{children}</CustomPosterContext.Provider>;
 }

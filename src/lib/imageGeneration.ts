@@ -26,8 +26,22 @@ export type GeneratedImage = {
 
 export type CustomPoster = {
   itemId: string;
+  versionId: string;
   localPath: string;
   dataUrl: string;
+  createdAt: number;
+};
+
+export type ArtworkRecord = {
+  versionId: string;
+  itemId: string;
+  title: string;
+  itemType: string;
+  assetType: ArtworkAssetType;
+  localPath: string;
+  thumbnailDataUrl: string;
+  createdAt: number;
+  active: boolean;
 };
 
 export function scanLocalImageProvider(provider: LocalImageProvider) {
@@ -58,10 +72,26 @@ export function listCustomPosters() {
   return invoke<CustomPoster[]>('list_custom_posters');
 }
 
-export function assignGeneratedPoster(itemId: string, localPath: string) {
-  return invoke<CustomPoster>('assign_generated_poster', { itemId, localPath });
+export function assignGeneratedPoster(itemId: string, title: string, itemType: string, localPath: string) {
+  return invoke<CustomPoster>('assign_generated_poster', { itemId, title, itemType, localPath });
 }
 
-export function exportPosterToMediaFolder(localPath: string, mediaPath: string, overwrite = false) {
-  return invoke<string>('export_poster_to_media_folder', { localPath, mediaPath, overwrite });
+export function storeGeneratedArtwork(itemId: string, title: string, itemType: string, assetType: ArtworkAssetType, localPath: string) {
+  return invoke<ArtworkRecord>('store_generated_artwork', { itemId, title, itemType, assetType, localPath });
+}
+
+export function listArtworkLibrary() {
+  return invoke<ArtworkRecord[]>('list_artwork_library');
+}
+
+export function activateArtworkVersion(itemId: string, versionId: string) {
+  return invoke<void>('activate_artwork_version', { itemId, versionId });
+}
+
+export function deleteArtworkVersion(itemId: string, versionId: string) {
+  return invoke<void>('delete_artwork_version', { itemId, versionId });
+}
+
+export function exportArtworkToMediaFolder(localPath: string, mediaPath: string, itemType: string, assetType: ArtworkAssetType, overwrite = false) {
+  return invoke<string>('export_artwork_to_media_folder', { localPath, mediaPath, itemType, assetType, overwrite });
 }

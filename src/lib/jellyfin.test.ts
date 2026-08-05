@@ -16,6 +16,7 @@ import {
   imageUrl,
   loadSession,
   normalizeServerUrl,
+  refreshSession,
   searchLibrary,
   saveSession,
   userImageUrl,
@@ -90,6 +91,20 @@ it('loads public Jellyfin server information through the active session', async 
   await expect(getServerInfo(session)).resolves.toEqual({ ServerName: 'Andromeda', Version: '10.10.7' });
   expect(fetchMock.mock.calls[0][0]).toBe('http://jellyfin.local:8096/System/Info/Public');
   expect(fetchMock.mock.calls[0][1].headers.Authorization).toContain('Token="token with spaces"');
+});
+
+it('refreshes a remembered session with current Jellyfin user data', async () => {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ Id: 'user-1', Name: 'Sean', PrimaryImageTag: 'new-avatar' }),
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  await expect(refreshSession(session)).resolves.toEqual({
+    ...session,
+    user: { Id: 'user-1', Name: 'Sean', PrimaryImageTag: 'new-avatar' },
+  });
+  expect(fetchMock.mock.calls[0][0]).toBe('http://jellyfin.local:8096/Users/user-1');
 });
 
 it('builds an authenticated direct-play URL', () => {

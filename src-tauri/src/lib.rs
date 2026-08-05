@@ -1,5 +1,8 @@
+mod artwork_storage;
 mod image_generation;
+mod jellyfin_profiles;
 mod media_calendar;
+mod media_paths;
 mod window;
 
 use tauri::{
@@ -41,16 +44,28 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            artwork_storage::get_artwork_storage_settings,
+            artwork_storage::save_artwork_storage_settings,
+            image_generation::activate_artwork_version,
             image_generation::assign_generated_poster,
+            image_generation::delete_artwork_version,
+            image_generation::export_artwork_to_media_folder,
             image_generation::export_generated_image,
-            image_generation::export_poster_to_media_folder,
             image_generation::generate_poster_image,
+            image_generation::list_artwork_library,
             image_generation::list_custom_posters,
             image_generation::load_movie_manifest,
             image_generation::provider_key_status,
             image_generation::remove_provider_key,
             image_generation::save_provider_key,
             image_generation::scan_local_image_provider,
+            image_generation::store_generated_artwork,
+            jellyfin_profiles::forget_jellyfin_profile,
+            jellyfin_profiles::list_jellyfin_profiles,
+            jellyfin_profiles::remember_jellyfin_profile,
+            jellyfin_profiles::restore_jellyfin_profile,
+            media_paths::get_media_path_settings,
+            media_paths::save_media_path_settings,
             media_calendar::fetch_integration_calendar,
             media_calendar::integration_key_status,
             media_calendar::remove_integration_key,
