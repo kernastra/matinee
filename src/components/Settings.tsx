@@ -11,6 +11,7 @@ import AppNav, { type AppView } from './AppNav';
 import ImageProviderSettings from './ImageProviderSettings';
 import MediaIntegrationSettings from './MediaIntegrationSettings';
 import MediaPathSettings from './MediaPathSettings';
+import ArtworkStorageSettings from './ArtworkStorageSettings';
 import { integrationEnabled } from '../lib/integrations';
 
 type SettingsProps = {
@@ -127,6 +128,7 @@ export default function Settings({ session, settings, onChange, onNavigate, onSe
             </div>
           </div>
           <MediaPathSettings />
+          <ArtworkStorageSettings />
         </section>
 
         <section className="settings-section" aria-labelledby="playback-settings-title">

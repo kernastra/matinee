@@ -42,6 +42,7 @@ export type JellyfinItem = {
   PremiereDate?: string;
   DateCreated?: string;
   EndDate?: string;
+  Path?: string;
   Taglines?: string[];
   Studios?: Array<{ Name: string }>;
   People?: Array<{ Id?: string; Name: string; Type?: string; Role?: string; PrimaryImageTag?: string }>;
@@ -206,6 +207,7 @@ const fields = [
   'People',
   'ProductionLocations',
   'ProviderIds',
+  'Path',
 ].join(',');
 
 export type HomeFeed = {
@@ -258,7 +260,7 @@ function itemQuery(params: Record<string, string | number | boolean | undefined>
 
 export async function getLibraryItems(
   session: JellyfinSession,
-  type: 'Movie' | 'Series',
+  type: 'Movie' | 'Series' | 'BoxSet',
   sortBy = 'SortName',
 ): Promise<JellyfinItem[]> {
   const query = itemQuery({

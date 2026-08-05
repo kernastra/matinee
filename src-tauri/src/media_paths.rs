@@ -202,13 +202,15 @@ fn mapped_media_candidates(media_path: &Path, mappings: &[MediaPathMapping]) -> 
         .collect()
 }
 
-fn canonical_media_file(candidate: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+fn canonical_media_path(candidate: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     let canonical = candidate.canonicalize().ok()?;
-    (canonical.is_file() && roots.iter().any(|root| canonical.starts_with(root)))
+    roots
+        .iter()
+        .any(|root| canonical.starts_with(root))
         .then_some(canonical)
 }
 
-pub fn resolve_media_file(app: &AppHandle, media_path: &str) -> Result<PathBuf, String> {
+pub fn resolve_media_path(app: &AppHandle, media_path: &str) -> Result<PathBuf, String> {
     let settings = load_settings(app)?;
     let roots = settings
         .mappings
@@ -226,12 +228,12 @@ pub fn resolve_media_file(app: &AppHandle, media_path: &str) -> Result<PathBuf, 
     }
 
     let reported_path = PathBuf::from(media_path);
-    if let Some(media_file) = canonical_media_file(&reported_path, &roots) {
-        return Ok(media_file);
+    if let Some(media_path) = canonical_media_path(&reported_path, &roots) {
+        return Ok(media_path);
     }
     if let Some(candidate) = mapped_media_candidates(&reported_path, &settings.mappings)
         .into_iter()
-        .find_map(|candidate| canonical_media_file(&candidate, &roots))
+        .find_map(|candidate| canonical_media_path(&candidate, &roots))
     {
         return Ok(candidate);
     }
@@ -239,6 +241,14 @@ pub fn resolve_media_file(app: &AppHandle, media_path: &str) -> Result<PathBuf, 
     Err(format!(
         "Jellyfin reports this title at {media_path}, but no configured mapping resolves it inside a trusted local media folder. Check Settings → Media storage."
     ))
+}
+
+pub fn resolve_media_file(app: &AppHandle, media_path: &str) -> Result<PathBuf, String> {
+    let path = resolve_media_path(app, media_path)?;
+    if !path.is_file() {
+        return Err("Jellyfin did not provide a local media-file path for this title.".into());
+    }
+    Ok(path)
 }
 
 #[tauri::command]
