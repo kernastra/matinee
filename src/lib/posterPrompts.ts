@@ -425,12 +425,12 @@ function unique(values: string[]) {
 }
 
 function concise(value: string, maximum = 84) {
-  const normalized = value.replace(/\s+/g, ' ').trim().replace(/[.;,:]+$/, '');
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[.;,:]+$/, '');
   return normalized.length <= maximum ? normalized : `${normalized.slice(0, maximum).replace(/\s+\S*$/, '')}…`;
 }
 
 function exactText(value: string, maximum = 160) {
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
   return normalized.length <= maximum ? normalized : `${normalized.slice(0, maximum).replace(/\s+\S*$/, '')}…`;
 }
 
@@ -472,29 +472,31 @@ export function getTitlePosterOptions(
     .map((person) => person.Role!.trim())
     .filter((role) => !/^(self|himself|herself|themselves|narrator)$/i.test(role)))
     .slice(0, 4);
-  const storyElements = namedStoryElements(item.Overview);
+  const boundedOverview = concise(item.Overview || '', 4_000);
+  const boundedTitle = concise(item.Name, 240);
+  const storyElements = namedStoryElements(boundedOverview);
   const tagline = item.Taglines?.map((value) => concise(value)).find(Boolean);
 
   const specificFocalSubjects = unique([
     ...roles.map((role) => `a stylized illustrated portrait, silhouette, or keepsake associated with ${role}`),
     ...storyElements.map((element) => `a single emblematic object associated with ${element}`),
     ...(tagline ? [`a visual metaphor for “${tagline}”`] : []),
-    `a unique central symbol drawn from the story of ${item.Name}`,
+    `a unique central symbol drawn from the story of ${boundedTitle}`,
   ]).slice(0, 7);
   const specificSettings = unique([
-    ...storySettings(item.Overview),
+    ...storySettings(boundedOverview),
     ...(item.ProductionLocations || []).slice(0, 3).map((location) => `a cinematic story-world landscape inspired by ${location}`),
-    `an atmospheric location drawn specifically from the story of ${item.Name}`,
+    `an atmospheric location drawn specifically from the story of ${boundedTitle}`,
   ]).slice(0, 7);
-  const fallbackCharacters = roles.length ? roles : [`A central character from ${item.Name}`];
+  const fallbackCharacters = roles.length ? roles : [`A central character from ${boundedTitle}`];
   const fallbackSignatureElements = unique([
     ...storyElements,
     ...(tagline ? [`A visual metaphor for “${tagline}”`] : []),
     ...recipe.focalSubjects,
   ]).slice(0, 8);
   const fallbackScenes = unique([
-    ...storySettings(item.Overview),
-    `A defining story moment from ${item.Name}`,
+    ...storySettings(boundedOverview),
+    `A defining story moment from ${boundedTitle}`,
     ...recipe.settings.map((value) => `A story moment set in ${value}`),
   ]).slice(0, 8);
   const fallbackEnvironments = unique([...specificSettings, ...recipe.settings]).slice(0, 8);
@@ -661,6 +663,7 @@ export function buildCustomArtworkPrompt(input: {
 }
 
 export function buildPosterPrompt(input: PosterPromptInput) {
+  const title = concise(input.title, 240);
   const recipe = getPosterRecipe(input.genres);
   const manifestOptions = getMovieManifestFocusOptions(input.movieManifest);
   const assetType = input.assetType ?? 'Poster';
@@ -668,22 +671,22 @@ export function buildPosterPrompt(input: PosterPromptInput) {
   const textTreatment = input.textTreatment ?? 'Title';
   const visualTreatment = input.visualTreatment ?? automaticTreatment(focus);
   const compositionStyle = input.compositionStyle ?? automaticComposition(focus);
-  const focalSubject = input.subject
+  const focalSubject = concise(input.subject
     ?? input.focalSubject
     ?? input.movieManifest?.artworkBrief?.primarySymbols?.[0]
     ?? manifestOptions['Signature Element'][0]
-    ?? recipe.focalSubjects[0];
-  const setting = input.setting
+    ?? recipe.focalSubjects[0], 500);
+  const setting = concise(input.setting
     ?? input.movieManifest?.creativeContext?.locations?.[0]
     ?? manifestOptions.Environment[0]
-    ?? recipe.settings[0];
-  const mood = input.mood
+    ?? recipe.settings[0], 500);
+  const mood = concise(input.mood
     ?? input.movieManifest?.creativeContext?.themes?.slice(0, 4).join(', ')
-    ?? recipe.mood;
-  const palette = input.colorHint
+    ?? recipe.mood, 700);
+  const palette = concise(input.colorHint
     ?? input.movieManifest?.artworkBrief?.paletteHints?.join('; ')
-    ?? recipe.palette;
-  const titleTreatment = input.titleTreatment ?? recipe.titleTreatment;
+    ?? recipe.palette, 900);
+  const titleTreatment = concise(input.titleTreatment ?? recipe.titleTreatment, 300);
   const compositionLines = compositionStyle === 'Genre Led'
     ? [`Genre-led composition: ${recipe.composition}.`]
     : [
@@ -708,7 +711,7 @@ export function buildPosterPrompt(input: PosterPromptInput) {
     ...(input.includeMatineeStyle === false ? [] : matineeStyleSection()),
     '',
     'STORY',
-    `Title: "${input.title}".`,
+    `Title: "${title}".`,
     ...(input.year ? [`Year: ${input.year}.`] : []),
     `Genre recipe: ${recipe.genre}.`,
     ...(input.storyContext ? [`Story context from the user's Jellyfin library: ${concise(input.storyContext, 520)}`] : []),
@@ -716,7 +719,7 @@ export function buildPosterPrompt(input: PosterPromptInput) {
       ? 'Story interpretation: Use the attached stills for title accuracy, then reinterpret the story through an original illustrated composition.'
       : 'Story interpretation: Treat this context symbolically; do not invent a celebrity likeness or reproduce an existing scene composition.'] : []),
     ...movieManifestSection(input.movieManifest),
-    focusDirection(focus, focalSubject, input.title),
+    focusDirection(focus, focalSubject, title),
     `Supporting environment: ${setting}.`,
     `Emotional direction: ${mood}.`,
     ...referenceLines,

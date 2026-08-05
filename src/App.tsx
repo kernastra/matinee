@@ -22,6 +22,7 @@ import {
 } from './lib/jellyfin';
 import { loadSettings, saveSettings, type AppSettings } from './lib/settings';
 import { integrationEnabled } from './lib/integrations';
+import { debugWarn } from './lib/logger';
 
 export default function App() {
   const [session, setSession] = useState<JellyfinSession | null>(() => loadSession());
@@ -69,7 +70,7 @@ export default function App() {
         return;
       }
     } catch (error) {
-      console.warn('[series] could not resolve next episode', error);
+      debugWarn('[series] could not resolve next episode', error);
     }
     setSelectedItem(item);
   }
@@ -80,7 +81,7 @@ export default function App() {
       const nextEpisode = await getFollowingEpisode(session, item);
       if (nextEpisode) setPlayingItem(nextEpisode);
     } catch (error) {
-      console.warn('[series] could not resolve following episode', error);
+      debugWarn('[series] could not resolve following episode', error);
     }
   }
 

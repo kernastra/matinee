@@ -112,10 +112,11 @@ Matinee reads release information only. It does not add, remove, monitor, search
 ### Create a custom poster
 
 1. Open the profile menu and select **Poster Studio**.
-2. Choose a movie or series from the connected Jellyfin library.
-3. Select an asset type, focus, title-specific subject, and text treatment. Matinee assembles the full creative brief behind the scenes.
-4. Select **Generate poster**. A completed poster is assigned to that title inside Matinee automatically.
-5. Export a normal copy to Pictures, or—for movies whose Jellyfin file resolves to a local folder—save it as `poster.jpg` beside the media.
+2. When using ChatGPT, open **Settings → Image generation** and scan once for the authenticated local Codex CLI. Matinee pins that verified executable until you scan again.
+3. Choose a movie or series from the connected Jellyfin library.
+4. Select an asset type, focus, title-specific subject, and text treatment. Matinee assembles the full creative brief behind the scenes.
+5. Select **Generate poster**. A completed poster is assigned to that title inside Matinee automatically.
+6. Export a normal copy to Pictures, or—for movies whose Jellyfin file resolves to a trusted local media folder—save it as `poster.jpg` beside the media.
 
 Poster Studio works from normal Jellyfin metadata when no creative manifest is available. For richer options, place a version-1 `movie.mf.json` in the movie folder. Matinee reads only the selected title's manifest; it does not independently scan or index the media library.
 
@@ -132,6 +133,8 @@ The **Advanced** panel exposes the assembled prompt, permits an editable copy or
 | `pnpm typecheck` | Check the TypeScript project without emitting files |
 | `pnpm test` | Run the Vitest test suite once |
 | `pnpm build` | Type-check and create the production frontend bundle |
+| `pnpm audit:web` | Check shipped web dependencies for known advisories |
+| `pnpm audit:rust` | Check the native dependency graph after installing `cargo-audit` |
 | `pnpm tauri:build` | Build installable desktop bundles for the current platform |
 
 The visual direction, component rules, interaction patterns, and Matinee color tokens live in [docs/design-spec.md](docs/design-spec.md). Poster generation uses the machine-readable house style in [`src/data/matinee-poster-style.json`](src/data/matinee-poster-style.json) and the prompt architecture documented in [docs/poster-prompt-templates.md](docs/poster-prompt-templates.md).
@@ -170,7 +173,7 @@ docs/
 - Playback compatibility ultimately depends on the source media, server-side FFmpeg setup, enabled Jellyfin transcoding, and codecs supported by the system WebView.
 - Image generation requires a separately authenticated provider and remains subject to that provider's availability, billing, safety systems, and acceptable-use policy. A rejected generation is not retried automatically.
 - Higgsfield can be selected and configured, but generation remains disabled until Matinee adopts a stable documented developer endpoint.
-- `movie.mf.json` discovery and direct `poster.jpg` export currently apply to movies whose Jellyfin media path can be resolved on the same computer. Series and remote-only libraries fall back to Jellyfin metadata and normal image export.
+- `movie.mf.json` discovery and direct `poster.jpg` export currently apply to movies resolved under `~/media-data/media`, `~/media`, or `~/Videos`. Series, other local layouts, and remote-only libraries fall back to Jellyfin metadata and normal image export.
 - AI-rendered title text may be misspelled. Use **No Text** or the Advanced workflow when deterministic typography is required.
 - Linux packages are produced for x86_64 systems. Windows and macOS releases have not yet been validated.
 

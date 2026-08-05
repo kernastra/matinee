@@ -46,8 +46,8 @@ export function removeProviderKey(provider: KeyImageProvider) {
   return invoke<ProviderKeyStatus>('remove_provider_key', { provider });
 }
 
-export function generatePosterImage(provider: ImageProvider, prompt: string, referenceUrls: string[] = [], assetType: ArtworkAssetType = 'Poster') {
-  return invoke<GeneratedImage>('generate_poster_image', { provider, prompt, referenceUrls, assetType });
+export function generatePosterImage(provider: ImageProvider, prompt: string, jellyfinServerUrl: string, referenceUrls: string[] = [], assetType: ArtworkAssetType = 'Poster') {
+  return invoke<GeneratedImage>('generate_poster_image', { provider, prompt, jellyfinServerUrl, referenceUrls, assetType });
 }
 
 export function exportGeneratedImage(localPath: string, title: string) {

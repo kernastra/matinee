@@ -10,6 +10,7 @@ import MediaRow from './MediaRow';
 import MaterialIcon from './MaterialIcon';
 import AppNav, { type AppView } from './AppNav';
 import type { AppSettings } from '../lib/settings';
+import { debugWarn } from '../lib/logger';
 import {
   fetchUpcomingReleases,
   homeUpcoming,
@@ -98,7 +99,7 @@ export default function Home({ session, settings, onSignOut, onNavigate, onSearc
         if (!cancelled) setUpcoming(homeUpcoming(result.events));
       })
       .catch((reason) => {
-        console.warn('[calendar] could not load the home shelf', reason);
+        debugWarn('[calendar] could not load the home shelf', reason);
         if (!cancelled) setUpcoming([]);
       });
     return () => { cancelled = true; };

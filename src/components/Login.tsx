@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { authenticate, DEFAULT_JELLYFIN_URL, type JellyfinSession } from '../lib/jellyfin';
+import { authenticate, DEFAULT_JELLYFIN_URL, normalizeServerUrl, type JellyfinSession } from '../lib/jellyfin';
 
 type LoginProps = { onAuthenticated: (session: JellyfinSession) => void };
 
@@ -9,6 +9,13 @@ export default function Login({ onAuthenticated }: LoginProps) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  let insecureConnection = false;
+  try {
+    const parsed = new URL(normalizeServerUrl(serverUrl));
+    insecureConnection = parsed.protocol === 'http:' && !['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+  } catch {
+    // Validation stays with submit; an incomplete address should not show two errors.
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -30,7 +37,7 @@ export default function Login({ onAuthenticated }: LoginProps) {
         <p className="eyebrow">Your library, reimagined</p>
         <h1>Movie night starts here.</h1>
         <p className="login-copy">
-          Connect to Andromeda to browse your library and pick up exactly where you left off.
+          Connect to your Jellyfin server to browse your library and pick up exactly where you left off.
         </p>
 
         <form onSubmit={(event) => void submit(event)}>
@@ -40,9 +47,11 @@ export default function Login({ onAuthenticated }: LoginProps) {
               value={serverUrl}
               onChange={(event) => setServerUrl(event.target.value)}
               autoComplete="url"
+              placeholder="http://jellyfin.local:8096"
               required
             />
           </label>
+          {insecureConnection ? <p className="form-warning">This server uses unencrypted HTTP. Prefer HTTPS when connecting beyond this computer.</p> : null}
           <label>
             <span>Username</span>
             <input

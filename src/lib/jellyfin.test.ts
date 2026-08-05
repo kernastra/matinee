@@ -25,7 +25,7 @@ import {
 } from './jellyfin';
 
 const session: JellyfinSession = {
-  serverUrl: 'http://192.168.1.158:8096',
+  serverUrl: 'http://jellyfin.local:8096',
   accessToken: 'token with spaces',
   user: { Id: 'user-1', Name: 'Sean' },
 };
@@ -54,21 +54,17 @@ describe('session storage', () => {
     expect(sessionStorage.getItem('matinee.session.v1')).toBe(JSON.stringify(session));
   });
 
-  it('moves an existing Jellyfin session to the new server address', () => {
-    const previousSession = { ...session, serverUrl: 'http://192.168.1.249:8096' };
-    sessionStorage.setItem('matinee.session.v1', JSON.stringify(previousSession));
-
-    expect(loadSession()).toEqual(session);
-    expect(JSON.parse(sessionStorage.getItem('matinee.session.v1') || '{}').serverUrl).toBe(
-      'http://192.168.1.158:8096',
-    );
+  it('drops structurally incomplete session data', () => {
+    sessionStorage.setItem('matinee.session.v1', JSON.stringify({ serverUrl: 'http://jellyfin.local:8096' }));
+    expect(loadSession()).toBeNull();
+    expect(sessionStorage.getItem('matinee.session.v1')).toBeNull();
   });
 });
 
 it('builds an encoded Jellyfin image URL', () => {
   const item: JellyfinItem = { Id: 'movie-1', Name: 'Movie', Type: 'Movie' };
   expect(imageUrl(session, item, 'Primary', 360)).toBe(
-    'http://192.168.1.158:8096/Items/movie-1/Images/Primary?maxWidth=360&quality=90&api_key=token%20with%20spaces',
+    'http://jellyfin.local:8096/Items/movie-1/Images/Primary?maxWidth=360&quality=90&api_key=token%20with%20spaces',
   );
 });
 
@@ -92,7 +88,7 @@ it('loads public Jellyfin server information through the active session', async 
   vi.stubGlobal('fetch', fetchMock);
 
   await expect(getServerInfo(session)).resolves.toEqual({ ServerName: 'Andromeda', Version: '10.10.7' });
-  expect(fetchMock.mock.calls[0][0]).toBe('http://192.168.1.158:8096/System/Info/Public');
+  expect(fetchMock.mock.calls[0][0]).toBe('http://jellyfin.local:8096/System/Info/Public');
   expect(fetchMock.mock.calls[0][1].headers.Authorization).toContain('Token="token with spaces"');
 });
 
@@ -140,7 +136,7 @@ describe('playback negotiation', () => {
     const body = JSON.parse(request[1].body as string);
     const url = new URL(plan.url);
 
-    expect(request[0]).toBe('http://192.168.1.158:8096/Items/movie-1/PlaybackInfo');
+    expect(request[0]).toBe('http://jellyfin.local:8096/Items/movie-1/PlaybackInfo');
     expect(body.IsPlayback).toBe(true);
     expect(body.MaxStreamingBitrate).toBe(8_000_000);
     expect(body.AudioStreamIndex).toBe(2);
@@ -265,7 +261,7 @@ describe('library navigation queries', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await clearItemProgress(session, 'movie-1');
-    expect(fetchMock.mock.calls[0][0]).toBe('http://192.168.1.158:8096/UserItems/movie-1/UserData');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://jellyfin.local:8096/UserItems/movie-1/UserData');
     const update = fetchMock.mock.calls[1];
     expect(update[1].method).toBe('POST');
     expect(JSON.parse(update[1].body)).toEqual(expect.objectContaining({
@@ -303,13 +299,13 @@ describe('library navigation queries', () => {
 
 describe('Jellyfin address normalization', () => {
   it('accepts a bare LAN address', () => {
-    expect(normalizeServerUrl('192.168.1.158:8096')).toBe('http://192.168.1.158:8096');
+    expect(normalizeServerUrl('jellyfin.local:8096')).toBe('http://jellyfin.local:8096');
   });
 
   it('removes a copied Jellyfin web-client path', () => {
     expect(
-      normalizeServerUrl('http://192.168.1.158:8096/web/index.html#!/home.html'),
-    ).toBe('http://192.168.1.158:8096');
+      normalizeServerUrl('http://jellyfin.local:8096/web/index.html#!/home.html'),
+    ).toBe('http://jellyfin.local:8096');
   });
 
   it('preserves a configured base path before the web client', () => {
