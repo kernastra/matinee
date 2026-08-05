@@ -21,6 +21,7 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 ## Features
 
 - **Cinematic home screen** — Rotating hero artwork, continue-watching titles, recent additions, favorites, featured picks, and ranked collections built from your Jellyfin library.
+- **Personal release calendar** — Connect Radarr or Sonarr to see only monitored movie milestones and upcoming episodes, with a conditional Coming Soon shelf on Home.
 - **Movies and series** — Browse dedicated libraries, open detailed title pages, move through seasons, and choose individual episodes.
 - **Library search** — Search movies, series, and episodes without leaving the app.
 - **Jellyfin playback** — Negotiate direct playback or HLS transcoding with the server and resume titles from their saved position.
@@ -33,7 +34,7 @@ Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.
 - **Multiple image providers** — Generate through an authenticated local Codex CLI or a fal.ai API key stored in the operating-system credential vault. Higgsfield configuration is present for future endpoint support.
 - **Persistent custom artwork** — Assign generated posters throughout Matinee, export copies to Pictures, or save approved movie artwork beside local media as `poster.jpg`.
 - **Native tray support** — Hide Matinee to the system tray, restore the window, or quit from a branded native menu.
-- **Personal settings** — Persist playback quality, preferred audio, subtitle behavior, autoplay, hero rotation, reduced motion, image provider, and poster-metadata visibility on the device.
+- **Personal settings** — Persist playback quality, preferred audio, subtitle behavior, autoplay, hero rotation, reduced motion, release integrations, image provider, and poster-metadata visibility on the device.
 - **Native desktop shell** — Run in a frameless, resizable Tauri window with custom traffic lights and locally bundled typefaces and icons.
 
 ## Tech Stack
@@ -88,7 +89,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-No environment file is required. On first launch, enter the root URL of your Jellyfin server—such as `http://jellyfin.local:8096`—followed by your Jellyfin username and password. Image-provider credentials are configured inside Settings; Matinee never stores provider keys in the repository or browser storage.
+No environment file is required. On first launch, enter the root URL of your Jellyfin server—such as `http://jellyfin.local:8096`—followed by your Jellyfin username and password. Radarr, Sonarr, and image-provider credentials are configured inside Settings; Matinee stores managed API keys in the operating-system credential vault rather than the repository or browser storage.
 
 ## Usage
 
@@ -97,6 +98,16 @@ No environment file is required. On first launch, enter the root URL of your Jel
 3. Browse the home screen or use Movies, Series, and Search to find a title.
 4. Open a title for its details, then select Play or Resume. For a series, choose a season and episode first.
 5. Move the pointer over the player to reveal its controls. They fade away after five seconds of inactivity.
+
+### Follow monitored releases
+
+1. Open **Settings → Coming soon**.
+2. Enter the root address and API key for Radarr, Sonarr, or both, then select **Test & save**.
+3. Open **Calendar** from the main navigation. The destination appears whenever at least one release integration is configured.
+4. Use **All**, **Movies**, or **Series** to filter the agenda and month grid. Radarr movies retain separate theatrical, digital, and physical milestones.
+5. Select **Refresh** to bypass the short request cache and request current monitored dates from each connected service.
+
+Matinee reads release information only. It does not add, remove, monitor, search for, or download media, so any compatible request service can continue feeding Radarr and Sonarr independently.
 
 ### Create a custom poster
 
@@ -152,7 +163,8 @@ docs/
 
 ## Known Limitations
 
-- Login state is stored for the current app session, so a full restart requires signing in again.
+- Login state is stored for the current app session, so a full restart may require signing in again.
+- Calendar dates depend on the metadata available in Radarr and Sonarr. A monitored title with no future release or air date will not appear until its upstream metadata is updated.
 - Trailer playback remains unavailable until Jellyfin provides a supported trailer source. The More menu is available for playback, media, watchlist, played-state, progress, and title-copy actions.
 - Chapter navigation works whenever Jellyfin returns chapters; preview artwork requires chapter-image extraction to be enabled and completed on the Jellyfin server.
 - Playback compatibility ultimately depends on the source media, server-side FFmpeg setup, enabled Jellyfin transcoding, and codecs supported by the system WebView.
@@ -197,6 +209,10 @@ Provider safety and content-policy checks can reject either a prompt, a referenc
 ### Matinee cannot save `poster.jpg`
 
 The selected Jellyfin movie must expose a media-file path that resolves on the same computer. If Jellyfin runs in Docker, make sure its `/media`, `/movies`, `/tv`, or `/shows` mount corresponds to a local media folder Matinee can access. Export to Pictures remains available when direct media-folder export is not.
+
+### Calendar is missing or reports an unavailable integration
+
+Calendar remains hidden until Radarr or Sonarr passes **Test & save** in Settings. Use the service's root address, including `http://` or `https://` and its port, then confirm the API key under the service's general settings. If one integration is offline, Matinee keeps showing results from the other and marks the unavailable service in the Calendar status row.
 
 ## License
 

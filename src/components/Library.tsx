@@ -10,9 +10,10 @@ type LibraryProps = {
   onSearch: () => void;
   onSignOut: () => void;
   onSelect: (item: JellyfinItem) => void;
+  calendarEnabled: boolean;
 };
 
-export default function Library({ type, session, onNavigate, onSearch, onSignOut, onSelect }: LibraryProps) {
+export default function Library({ type, session, onNavigate, onSearch, onSignOut, onSelect, calendarEnabled }: LibraryProps) {
   const [items, setItems] = useState<JellyfinItem[]>([]);
   const [sortBy, setSortBy] = useState('SortName');
   const [loading, setLoading] = useState(true);
@@ -40,7 +41,7 @@ export default function Library({ type, session, onNavigate, onSearch, onSignOut
   const view: AppView = type === 'Movie' ? 'movies' : 'series';
   return (
     <main className="library-shell">
-      <AppNav session={session} activeView={view} onNavigate={onNavigate} onSearch={onSearch} onSignOut={onSignOut} />
+      <AppNav session={session} activeView={view} calendarEnabled={calendarEnabled} onNavigate={onNavigate} onSearch={onSearch} onSignOut={onSignOut} />
       <header className="library-header">
         <div>
           <p className="eyebrow">Your library</p>

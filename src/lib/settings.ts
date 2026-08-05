@@ -15,6 +15,8 @@ export type AppSettings = {
   reducedMotion: boolean;
   imageProvider: ImageProvider;
   posterMetadata: PosterMetadataMode;
+  radarrUrl: string;
+  sonarrUrl: string;
 };
 
 export const defaultSettings: AppSettings = {
@@ -26,6 +28,8 @@ export const defaultSettings: AppSettings = {
   reducedMotion: false,
   imageProvider: 'codex',
   posterMetadata: 'hover',
+  radarrUrl: '',
+  sonarrUrl: '',
 };
 
 const qualityValues = new Set<PlaybackQuality>(['auto', 'original', '1080p', '720p']);
@@ -36,6 +40,10 @@ const posterMetadataValues = new Set<PosterMetadataMode>(['always', 'hover', 'ne
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === 'boolean';
+}
+
+function storedUrl(value: unknown) {
+  return typeof value === 'string' && value.length <= 2048 ? value : '';
 }
 
 export function loadSettings(): AppSettings {
@@ -64,6 +72,8 @@ export function loadSettings(): AppSettings {
       posterMetadata: posterMetadataValues.has(stored.posterMetadata as PosterMetadataMode)
         ? stored.posterMetadata as PosterMetadataMode
         : defaultSettings.posterMetadata,
+      radarrUrl: storedUrl(stored.radarrUrl),
+      sonarrUrl: storedUrl(stored.sonarrUrl),
     };
   } catch {
     localStorage.removeItem(SETTINGS_KEY);
