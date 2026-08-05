@@ -1,11 +1,12 @@
+import { debugError, debugInfo, debugWarn } from './logger';
+
 const CLIENT_NAME = 'Matinee';
-export const APP_VERSION = '0.5.0';
+export const APP_VERSION = '0.5.5';
 const DEVICE_NAME = 'Desktop';
 const DEVICE_ID = 'matinee-desktop';
 const SESSION_KEY = 'matinee.session.v1';
 const LEGACY_SESSION_KEY = 'saintstream.session.v1';
-const PREVIOUS_JELLYFIN_HOST = '192.168.1.249';
-export const DEFAULT_JELLYFIN_URL = 'http://192.168.1.158:8096';
+export const DEFAULT_JELLYFIN_URL = '';
 
 export type JellyfinUser = {
   Id: string;
@@ -89,11 +90,14 @@ export function normalizeServerUrl(value: string) {
   try {
     url = new URL(withScheme);
   } catch {
-    throw new Error('Enter a valid Jellyfin address, such as 192.168.1.158:8096.');
+    throw new Error('Enter a valid Jellyfin address, such as jellyfin.local:8096.');
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('Jellyfin addresses must begin with http:// or https://.');
+  }
+  if (url.username || url.password) {
+    throw new Error('Jellyfin addresses cannot include a username or password.');
   }
 
   // A browser often copies Jellyfin as `/web/index.html#!/home.html`. The API
@@ -131,7 +135,7 @@ export async function authenticate(
   let response: Response;
 
   try {
-    console.info('[jellyfin] authentication request', { serverUrl: normalizedUrl });
+    debugInfo('[jellyfin] authentication request', { serverUrl: normalizedUrl });
     response = await fetch(`${normalizedUrl}/Users/AuthenticateByName`, {
       method: 'POST',
       headers: {
@@ -141,18 +145,18 @@ export async function authenticate(
       body: JSON.stringify({ Username: username, Pw: password }),
     });
   } catch {
-    console.error('[jellyfin] authentication request could not reach server', {
+    debugError('[jellyfin] authentication request could not reach server', {
       serverUrl: normalizedUrl,
     });
     throw new Error('Could not reach Jellyfin. Check the server address and try again.');
   }
 
   if (!response.ok) {
-    console.error('[jellyfin] authentication rejected', { status: response.status });
+    debugError('[jellyfin] authentication rejected', { status: response.status });
     throw new Error(await readError(response));
   }
   const result = (await response.json()) as AuthenticationResult;
-  console.info('[jellyfin] authentication succeeded', { serverUrl: normalizedUrl });
+  debugInfo('[jellyfin] authentication succeeded', { serverUrl: normalizedUrl });
   return { serverUrl: normalizedUrl, accessToken: result.AccessToken, user: result.User };
 }
 
@@ -658,7 +662,7 @@ export async function getPlaybackPlan(
   if (!response.ok) throw new Error(await readError(response));
   const result = (await response.json()) as PlaybackInfoResponse;
   if (result.ErrorCode === 'NoCompatibleStream' && (item.Type === 'Movie' || item.Type === 'Episode')) {
-    console.warn('[playback] negotiation found no compatible stream; trying legacy direct play', {
+    debugWarn('[playback] negotiation found no compatible stream; trying legacy direct play', {
       itemId: item.Id,
       itemType: item.Type,
     });
@@ -679,7 +683,7 @@ export async function getPlaybackPlan(
   }
 
   const sources = result.MediaSources ?? [];
-  console.info('[playback] negotiation response', {
+  debugInfo('[playback] negotiation response', {
     hasPlaySession: Boolean(result.PlaySessionId),
     errorCode: result.ErrorCode,
     mediaSources: sources.map((source) => ({
@@ -777,12 +781,10 @@ export function loadSession(): JellyfinSession | null {
   const value = sessionStorage.getItem(SESSION_KEY) ?? sessionStorage.getItem(LEGACY_SESSION_KEY);
   if (!value) return null;
   try {
-    const session = JSON.parse(value) as JellyfinSession;
-    const server = new URL(session.serverUrl);
-    if (server.hostname === PREVIOUS_JELLYFIN_HOST) {
-      server.hostname = new URL(DEFAULT_JELLYFIN_URL).hostname;
-      session.serverUrl = server.toString().replace(/\/+$/, '');
-    }
+    const candidate = JSON.parse(value) as unknown;
+    if (!isJellyfinSession(candidate)) throw new Error('Invalid Jellyfin session.');
+    const session = candidate;
+    session.serverUrl = normalizeServerUrl(session.serverUrl);
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
     sessionStorage.removeItem(LEGACY_SESSION_KEY);
     return session;
@@ -791,6 +793,21 @@ export function loadSession(): JellyfinSession | null {
     sessionStorage.removeItem(LEGACY_SESSION_KEY);
     return null;
   }
+}
+
+function isJellyfinSession(value: unknown): value is JellyfinSession {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  const user = candidate.user;
+  if (!user || typeof user !== 'object') return false;
+  const candidateUser = user as Record<string, unknown>;
+  return typeof candidate.serverUrl === 'string'
+    && typeof candidate.accessToken === 'string'
+    && candidate.accessToken.length > 0
+    && typeof candidateUser.Id === 'string'
+    && candidateUser.Id.length > 0
+    && typeof candidateUser.Name === 'string'
+    && (candidateUser.PrimaryImageTag === undefined || typeof candidateUser.PrimaryImageTag === 'string');
 }
 
 export function clearSession() {

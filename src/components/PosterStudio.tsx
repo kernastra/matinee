@@ -240,7 +240,7 @@ export default function PosterStudio({ session, provider, onNavigate, onSearch, 
     setError('');
     setNotice('');
     try {
-      const result = await generatePosterImage(provider, prompt, referenceUrls, assetType);
+      const result = await generatePosterImage(provider, prompt, session.serverUrl, referenceUrls, assetType);
       const artwork = {
         ...result,
         id: `${Date.now()}-${result.localPath}`,

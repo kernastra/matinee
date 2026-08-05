@@ -48,14 +48,54 @@ export type MovieManifestFocusOptions = {
   Environment: string[];
 };
 
-function unique(values: string[]) {
+function unique(values: unknown[]) {
   const seen = new Set<string>();
-  return values.filter((value) => {
+  return values.filter((value): value is string => typeof value === 'string').filter((value) => {
     const normalized = value.trim().toLowerCase();
     if (!normalized || seen.has(normalized)) return false;
     seen.add(normalized);
     return true;
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateStringArrays(parent: Record<string, unknown>, fields: string[]) {
+  for (const field of fields) {
+    const value = parent[field];
+    if (value !== undefined && (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string'))) {
+      throw new Error(`movie.mf.json field ${field} must be an array of text values.`);
+    }
+  }
+}
+
+export function parseMovieManifest(value: unknown): MovieManifest | null {
+  if (value === null) return null;
+  if (!isRecord(value) || value.manifestVersion !== 1) {
+    throw new Error('movie.mf.json must use Matinee manifestVersion 1.');
+  }
+  for (const field of ['media', 'official', 'creativeContext', 'artworkBrief']) {
+    if (value[field] !== undefined && !isRecord(value[field])) {
+      throw new Error(`movie.mf.json field ${field} must be an object.`);
+    }
+  }
+  if (isRecord(value.official)) {
+    validateStringArrays(value.official, ['genres', 'cast', 'crew', 'productionCompanies']);
+  }
+  if (isRecord(value.creativeContext)) {
+    validateStringArrays(value.creativeContext, [
+      'themes', 'productionContext', 'characters', 'locations', 'vehicles', 'artifacts',
+      'organizations', 'iconicScenes', 'visualMotifs', 'signatureObjects',
+    ]);
+  }
+  if (isRecord(value.artworkBrief)) {
+    validateStringArrays(value.artworkBrief, [
+      'primarySymbols', 'avoidSpoilers', 'paletteHints', 'compositionHints', 'negativePrompts',
+    ]);
+  }
+  return value as MovieManifest;
 }
 
 export function getMovieManifestFocusOptions(manifest?: MovieManifest | null): MovieManifestFocusOptions {
@@ -78,5 +118,5 @@ export function getMovieManifestFocusOptions(manifest?: MovieManifest | null): M
 }
 
 export function loadMovieManifest(mediaPath: string) {
-  return invoke<MovieManifest | null>('load_movie_manifest', { mediaPath });
+  return invoke<unknown>('load_movie_manifest', { mediaPath }).then(parseMovieManifest);
 }

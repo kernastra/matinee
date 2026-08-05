@@ -1,6 +1,6 @@
 use keyring::{Entry, Error as KeyringError};
 use reqwest::Url;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -22,6 +22,13 @@ pub struct IntegrationConnection {
     version: Option<String>,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredIntegration {
+    server_url: String,
+    api_key: String,
+}
+
 fn supported_provider(provider: &str) -> Result<&str, String> {
     match provider {
         "radarr" | "sonarr" => Ok(provider),
@@ -33,13 +40,18 @@ fn keyring_entry(provider: &str) -> Result<Entry, String> {
     Entry::new(KEYRING_SERVICE, supported_provider(provider)?).map_err(|error| error.to_string())
 }
 
-fn stored_key(provider: &str) -> Result<String, String> {
-    keyring_entry(provider)?
+fn stored_integration(provider: &str) -> Result<StoredIntegration, String> {
+    let stored = keyring_entry(provider)?
         .get_password()
         .map_err(|error| match error {
-            KeyringError::NoEntry => format!("No {provider} API key is configured."),
+            KeyringError::NoEntry => format!("No {provider} integration is configured."),
             other => other.to_string(),
-        })
+        })?;
+    serde_json::from_str(&stored).map_err(|_| {
+        format!(
+            "Reconnect {provider} once to securely bind its saved API key to the server address."
+        )
+    })
 }
 
 fn normalize_server_url(value: &str) -> Result<String, String> {
@@ -55,12 +67,22 @@ fn normalize_server_url(value: &str) -> Result<String, String> {
     if url.host_str().is_none() {
         return Err("Enter a valid Radarr or Sonarr server address.".into());
     }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(
+            "Integration addresses cannot contain credentials, a query, or a fragment.".into(),
+        );
+    }
     Ok(value.to_string())
 }
 
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| error.to_string())
 }
@@ -87,7 +109,9 @@ async fn response_json(response: reqwest::Response, provider: &str) -> Result<Va
 pub fn integration_key_status(provider: String) -> Result<IntegrationKeyStatus, String> {
     let provider = supported_provider(&provider)?.to_string();
     let configured = match keyring_entry(&provider)?.get_password() {
-        Ok(value) => !value.trim().is_empty(),
+        Ok(value) => serde_json::from_str::<StoredIntegration>(&value).is_ok_and(|stored| {
+            !stored.api_key.trim().is_empty() && !stored.server_url.trim().is_empty()
+        }),
         Err(KeyringError::NoEntry) => false,
         Err(error) => return Err(error.to_string()),
     };
@@ -108,7 +132,13 @@ pub async fn test_and_save_integration(
     let supplied_key = api_key.unwrap_or_default();
     let supplied_key = supplied_key.trim();
     let key = if supplied_key.is_empty() {
-        stored_key(&provider)?
+        let stored = stored_integration(&provider)?;
+        if stored.server_url != server_url {
+            return Err(format!(
+                "The saved {provider} key is bound to a different server. Enter the API key again to change addresses."
+            ));
+        }
+        stored.api_key
     } else {
         supplied_key.to_string()
     };
@@ -134,11 +164,13 @@ pub async fn test_and_save_integration(
         ));
     }
 
-    if !supplied_key.is_empty() {
-        keyring_entry(&provider)?
-            .set_password(&key)
-            .map_err(|error| error.to_string())?;
-    }
+    let stored = StoredIntegration {
+        server_url: server_url.clone(),
+        api_key: key,
+    };
+    keyring_entry(&provider)?
+        .set_password(&serde_json::to_string(&stored).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
 
     Ok(IntegrationConnection {
         provider,
@@ -166,16 +198,15 @@ pub fn remove_integration_key(provider: String) -> Result<IntegrationKeyStatus, 
 #[tauri::command]
 pub async fn fetch_integration_calendar(
     provider: String,
-    server_url: String,
     start: String,
     end: String,
 ) -> Result<Value, String> {
     let provider = supported_provider(&provider)?.to_string();
-    let server_url = normalize_server_url(&server_url)?;
-    let key = stored_key(&provider)?;
+    let stored = stored_integration(&provider)?;
+    let server_url = normalize_server_url(&stored.server_url)?;
     let mut request = client()?
         .get(format!("{server_url}/api/v3/calendar"))
-        .header("X-Api-Key", key)
+        .header("X-Api-Key", stored.api_key)
         .query(&[
             ("start", start.as_str()),
             ("end", end.as_str()),
@@ -210,5 +241,7 @@ mod tests {
         );
         assert!(normalize_server_url("radarr.local:7878").is_err());
         assert!(normalize_server_url("file:///tmp/radarr").is_err());
+        assert!(normalize_server_url("http://user:secret@radarr.local:7878").is_err());
+        assert!(normalize_server_url("http://radarr.local:7878?key=secret").is_err());
     }
 }

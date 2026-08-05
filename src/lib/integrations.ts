@@ -204,8 +204,8 @@ export function removeIntegration(provider: MediaIntegration) {
   return invoke<IntegrationKeyStatus>('remove_integration_key', { provider });
 }
 
-function fetchProviderCalendar(provider: MediaIntegration, serverUrl: string, start: string, end: string) {
-  return invoke<unknown>('fetch_integration_calendar', { provider, serverUrl, start, end });
+function fetchProviderCalendar(provider: MediaIntegration, start: string, end: string) {
+  return invoke<unknown>('fetch_integration_calendar', { provider, start, end });
 }
 
 export function integrationEnabled(settings: AppSettings) {
@@ -221,7 +221,7 @@ async function requestUpcomingReleases(
   if (settings.radarrUrl) configured.push({ provider: 'radarr', url: settings.radarrUrl });
   if (settings.sonarrUrl) configured.push({ provider: 'sonarr', url: settings.sonarrUrl });
   const settled = await Promise.allSettled(
-    configured.map(({ provider, url }) => fetchProviderCalendar(provider, url, start, end)),
+    configured.map(({ provider }) => fetchProviderCalendar(provider, start, end)),
   );
   const errors: UpcomingResult['errors'] = {};
   const events: UpcomingRelease[] = [];

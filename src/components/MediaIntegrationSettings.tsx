@@ -43,6 +43,15 @@ function errorMessage(error: unknown) {
       : 'Matinee could not update this integration.';
 }
 
+function usesRemotePlainHttp(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' && !['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export default function MediaIntegrationSettings({ radarrUrl, sonarrUrl, onConfigured }: Props) {
   const [urls, setUrls] = useState({ radarr: radarrUrl, sonarr: sonarrUrl });
   const [keys, setKeys] = useState({ radarr: '', sonarr: '' });
@@ -158,6 +167,7 @@ export default function MediaIntegrationSettings({ radarrUrl, sonarrUrl, onConfi
                 onChange={(event) => setUrls((current) => ({ ...current, [provider]: event.target.value }))}
               />
             </label>
+            {usesRemotePlainHttp(urls[provider]) ? <p className="form-warning">This connection sends the API key over unencrypted HTTP. Prefer HTTPS when available.</p> : null}
             <label>
               API key
               <input

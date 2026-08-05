@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type Hls from 'hls.js';
 import MaterialIcon from './MaterialIcon';
 import type { AppSettings, AudioLanguage, PlaybackQuality } from '../lib/settings';
+import { debugWarn } from '../lib/logger';
 import {
   getPlaybackPlan,
   reportPlayback,
@@ -129,7 +130,7 @@ export default function Player({ item, session, settings, onBack, onFinished }: 
       video.currentTime,
       video.paused,
       playMethod.current,
-    ).catch((error: unknown) => console.warn('[playback] progress report failed', error));
+    ).catch((error: unknown) => debugWarn('[playback] progress report failed', error));
   }
 
   function stop() {
