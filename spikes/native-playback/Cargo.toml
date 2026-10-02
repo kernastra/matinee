@@ -1,0 +1,55 @@
+[package]
+name = "native-playback-spike"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+license = "MIT"
+description = "Throwaway feasibility spike: native video playback for Matinee Next (not production code)"
+
+# Deliberately standalone: this spike must never be pulled into the root
+# Matinee Next workspace, and its heavy system dependencies stay opt-in.
+[workspace]
+
+[features]
+default = []
+mpv = []
+gst = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video"]
+ffmpeg = ["dep:ffmpeg-next"]
+gpui = ["mpv", "dep:gpui", "dep:futures", "dep:image"]
+
+[dependencies]
+anyhow = "1"
+futures = { version = "0.3", optional = true }
+gpui = { version = "=0.2.2", optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+gstreamer = { version = "0.23", optional = true }
+gstreamer-app = { version = "0.23", optional = true }
+gstreamer-video = { version = "0.23", optional = true }
+ffmpeg-next = { version = "7.1", optional = true }
+
+[build-dependencies]
+pkg-config = "0.3"
+
+[[bin]]
+name = "mpv-probe"
+path = "src/bin/mpv_probe.rs"
+required-features = ["mpv"]
+
+[[bin]]
+name = "gst-probe"
+path = "src/bin/gst_probe.rs"
+required-features = ["gst"]
+
+[[bin]]
+name = "ffmpeg-probe"
+path = "src/bin/ffmpeg_probe.rs"
+required-features = ["ffmpeg"]
+
+[[bin]]
+name = "gpui-player"
+path = "src/bin/gpui_player.rs"
+required-features = ["gpui"]
+
+[profile.release]
+debug = 1
