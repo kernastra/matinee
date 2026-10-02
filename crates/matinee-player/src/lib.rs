@@ -1,12 +1,15 @@
-//! `matinee-player` — the boundary for Matinee's native playback engine.
+//! `matinee-player`: the boundary for Matinee's native playback engine.
 //!
-//! This crate exists in Phase 0 only to reserve the seam: all video
-//! decoding, rendering, and transport logic will live here, never in the
-//! generic UI framework (`atelier-ui`). No playback backend has been chosen
-//! yet; the feasibility evaluation (libmpv, GStreamer, FFmpeg-based
-//! approaches) and its recommendation are recorded in
-//! `docs/architecture/playback.md`, with the standalone experiment under
-//! `spikes/native-playback/`.
+//! All video decoding, frame production, and transport logic will live here,
+//! never in the generic UI framework (`atelier-ui`).
 //!
-//! Until a backend is selected, this crate deliberately exposes no API so
-//! that no caller can couple to a speculative abstraction.
+//! The feasibility spike (`spikes/native-playback/`, findings in
+//! `docs/architecture/playback.md`) recommends **libmpv** as the engine,
+//! using mpv's software render API on a render thread. Frames are handed to
+//! the UI as BGRA buffers and painted through a GPUI `RenderImage`. Only LGPL
+//! builds of libmpv and FFmpeg may be distributed.
+//!
+//! The crate deliberately exposes no API in Phase 0. The engine and its API
+//! are Phase 1 work (`docs/migration/roadmap.md`). Painting is planned as a
+//! generic frame-surface element in `atelier-ui`, so this crate never needs
+//! to depend on GPUI directly.

@@ -1,6 +1,6 @@
 [package]
 name = "matinee-player"
-description = "Boundary for Matinee's future native playback engine. Intentionally empty in Phase 0."
+description = "Boundary for Matinee's native playback engine (libmpv recommended; see docs/architecture/playback.md). No API in Phase 0."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
