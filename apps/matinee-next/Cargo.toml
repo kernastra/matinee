@@ -1,0 +1,20 @@
+[package]
+name = "matinee-next"
+description = "Phase 0 shell for the future native Matinee app. Not a product; no features are migrated."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "matinee-next"
+path = "src/main.rs"
+
+[dependencies]
+atelier-app.workspace = true
+atelier-ui.workspace = true
+matinee-ui.workspace = true
+
+[lints]
+workspace = true

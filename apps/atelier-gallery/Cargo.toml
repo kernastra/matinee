@@ -1,0 +1,26 @@
+[package]
+name = "atelier-gallery"
+description = "Interactive catalog of Atelier foundations and components."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "atelier-gallery"
+path = "src/main.rs"
+
+[features]
+default = ["matinee-theme"]
+# Lets the gallery preview components under the Matinee theme. The gallery
+# itself stays product-neutral; this is the only Matinee dependency.
+matinee-theme = ["dep:matinee-ui"]
+
+[dependencies]
+atelier-app.workspace = true
+atelier-ui.workspace = true
+matinee-ui = { workspace = true, optional = true }
+
+[lints]
+workspace = true
