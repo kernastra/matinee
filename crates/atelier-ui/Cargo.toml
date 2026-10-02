@@ -10,5 +10,9 @@ publish.workspace = true
 [dependencies]
 gpui.workspace = true
 
+[dev-dependencies]
+# Headless TestPlatform for component behavior tests (no GPU or display).
+gpui = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true
