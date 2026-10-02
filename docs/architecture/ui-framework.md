@@ -79,7 +79,7 @@ not bundled yet, so GPUI falls back to the platform UI font (see "Known gaps").
 | Component | Notes |
 |---|---|
 | `Text` | Role + tone (`Primary/Secondary/Muted/Disabled`); `truncate()`. |
-| `Icon`, `IconName`, `IconSize` | 14 hand-drawn, generic 24px stroke glyphs embedded via `UiAssets`. `spinning(true)` rotates the icon only when continuous motion is allowed. |
+| `Icon`, `IconName`, `IconSize` | 17 hand-drawn, generic 24px stroke glyphs embedded via `UiAssets`. `spinning(true)` rotates the icon only when continuous motion is allowed. |
 | `Button` | Variants `Primary/Secondary/Subtle/Destructive`, sizes `Small/Medium/Large`, optional leading icon, `disabled`, `loading`. |
 | `IconButton` | Same interaction model; square; **label is a constructor argument** (tooltip now, accessible name later). |
 | `Surface` | Themed container (`Canvas/Panel/Elevated`), accepts children and further styling. |
@@ -90,6 +90,15 @@ not bundled yet, so GPUI falls back to the platform UI font (see "Known gaps").
 | `TextField` / `SearchField` | Single-line editing via GPUI's input handler (caret, selection, IME). Controlled `value`. Search adds an icon, a clear button, and Escape. |
 | `Switch` / `Checkbox` / `SegmentedControl` / `Slider` | Pointer and keyboard controls. The switch thumb uses `Spring::Snappy`. The slider is a generic value control with one finite ascending range (`min <= max`); reversed and non-finite ranges collapse to `0`. |
 | `focus_visible` | Keyboard focus draws `FocusRing`. Pointer interaction does not. |
+| `ScrollView`, `ScrollControl` | Wraps GPUI overflow scroll. Axes are vertical, horizontal, or both. Keyboard scrolling is opt-in so a list keeps the arrow keys. |
+| `List`, `ListRow` | One tab stop, single selection, disabled rows skipped, Enter activates. Does not scroll itself. |
+| `Image` | Fixed frame, fit or fill, asset path, pending placeholder, failure fallback. No fetch policy. |
+| `ProgressBar` | Determinate (clamped) and indeterminate. Reduced motion holds the indeterminate segment still. |
+| `Tooltip` | Text, GPUI's hover delay, no focus, no animation. |
+| `Popover` | Anchored layer. Outside press and Escape dismiss. Focus returns to the trigger. |
+| `Menu`, `MenuItem`, `ContextMenu` | One menu implementation. Context menus are that menu at a pointer point. No submenus. |
+| `Dialog`, `DialogAction` | Modal scrim. Tab stays inside. Destructive dialogs focus Cancel. |
+| `Sidebar`, `Toolbar`, `SplitView`, `EmptyState` | Sectioned navigation, a three-region bar with no window buttons, a draggable two-pane split, and a restrained empty state. |
 
 ### Button behavior contract
 
@@ -161,6 +170,11 @@ crates.
 | `simulate_input` splits on `""`, which yields empty keystrokes and panics. | Tests call `Window::dispatch_keystroke` per character. |
 | `Window::scale_factor` is read-only. `set_rem_size` would not scale `px()` layout. | The Gallery displays the live factor and does not simulate one. |
 | No reduced-motion API. | `atelier-app` probes the OS at launch. See platform-strategy.md. |
+| Tooltip show delay is a GPUI constant (500ms), not a motion token. | `Tooltip` uses that delay so a passing pointer does not flash a tip. The bubble itself does not animate. |
+| `ScrollHandle::set_offset` does not animate. | Programmatic scrolling jumps. Reduced motion needs no extra path. |
+| `FocusHandle::contains` reads the previous frame's dispatch tree. | Dialog focus trapping is valid after the first paint. The open frame focuses the chosen action directly. |
+| Center alignment is not a GPUI anchor corner. | The popover measures the layer and shifts it by half that size on the next frame. |
+| `uniform_list` exists. | Lists are not virtualized. A Gallery stress story scrolls a few hundred rows in a normal `ScrollView`. |
 
 ## Gallery (`apps/atelier-gallery`)
 
@@ -174,7 +188,9 @@ crates.
   toggles the preview toolbar.
 - Pages today: Color, Typography, Spacing, Radius & Elevation, Motion, Icons,
   Button, Icon Button, Text Field, Search Field, Switch, Checkbox, Segmented
-  Control, Slider, Text, Surface.
+  Control, Slider, Scroll View, List, Image, Progress, Tooltip, Popover, Menu,
+  Context Menu, Dialog, Sidebar, Toolbar, Split View, Empty State, Desktop
+  Composition, Text, Surface.
 - A lightweight inspector under the story reports the interactive control's
   focus, value, input modality, and reduced motion.
 - Still open: simulated platform (needs `Platform` injection) and high-contrast
@@ -188,6 +204,7 @@ crates.
 | Theme contract | `validate()` tests for every theme | `atelier-ui/src/theme.rs`, `matinee-ui` |
 | Variant/state color resolution | Pure-function tests | `components/button.rs` |
 | Interaction behavior | Headless GPUI `TestAppContext` (keyboard activation, focusability, pointer does not focus, loading/disabled) | `atelier-ui/tests/button_behavior.rs` |
+| Lists, menus, dialogs, scrolling | Headless tests plus pure movement and anchor math | `tests/composition_behavior.rs`, `navigation.rs`, `overlay.rs` |
 | Shortcuts / platform conventions | Pure tests per platform | `atelier-app/src/{command,platform}.rs` |
 | Asset routing | Unit tests | `icon.rs`, `app.rs` |
 | Story registry | Unit tests | `atelier-gallery/src/story.rs` |
@@ -206,6 +223,16 @@ real-window integration tests. Visual states are reviewed in the Gallery.
 control is focused and the modality is keyboard. Text fields are the exception
 that still take focus on click, because they need a caret; they draw a 1px
 `focus.ring` border and a caret, not `FocusRing`.
+
+## Overlay focus
+
+Opening an overlay records the focused element. The overlay (or its menu)
+takes focus. Closing restores that element only while focus is still inside;
+if the user already moved focus elsewhere, it stays there. A dialog is modal:
+Tab and Shift-Tab wrap inside it, and close restores the previous focus.
+Escape dismisses menus, popovers, and dialogs. A dialog with a destructive
+action focuses Cancel, so Enter does not confirm. Click-outside on a dialog
+is off unless the caller asks for it.
 
 ## Text input limits (GPUI 0.2.2)
 

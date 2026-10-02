@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use atelier_ui::{
-    ActiveTheme, ComponentKeymap, Theme, UiAssets, UiPreferences,
+    ActiveTheme, ComponentKeymap, FocusNext, FocusPrevious, Theme, UiAssets, UiPreferences,
     gpui::{
         self, App, Application, AssetSource, Bounds, Entity, Global, KeyBinding, Menu, MenuItem,
         Render, SharedString, SystemMenuType, TitlebarOptions, Window, WindowBounds,
@@ -26,9 +26,6 @@ pub struct AppInfo {
 }
 
 impl Global for AppInfo {}
-
-// Keyboard focus traversal. Not menu commands, so not part of `Command`.
-gpui::actions!(atelier, [FocusNext, FocusPrevious]);
 
 /// Environment override for reduced motion. `1` / `true` forces reduced,
 /// `0` / `false` forces full. Unset leaves the OS signal in charge.

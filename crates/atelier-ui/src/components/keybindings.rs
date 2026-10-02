@@ -24,6 +24,12 @@ pub const TEXT_FIELD_CONTEXT: &str = "TextField";
 pub const SEARCH_FIELD_CONTEXT: &str = "SearchField";
 pub const SLIDER_CONTEXT: &str = "Slider";
 pub const SEGMENTED_CONTEXT: &str = "SegmentedControl";
+pub const LIST_CONTEXT: &str = "List";
+pub const SIDEBAR_CONTEXT: &str = "Sidebar";
+pub const MENU_CONTEXT: &str = "Menu";
+pub const SCROLL_CONTEXT: &str = "ScrollView";
+pub const DIALOG_CONTEXT: &str = "Dialog";
+pub const POPOVER_CONTEXT: &str = "Popover";
 
 actions!(
     atelier_field,
@@ -65,7 +71,14 @@ actions!(
     ]
 );
 
-/// Installs text-field, search-field, slider, and segmented-control bindings.
+// Keyboard focus traversal. Bound by `atelier-app` to Tab and Shift-Tab.
+// Dialogs handle these so focus cannot leave a modal.
+actions!(atelier, [FocusNext, FocusPrevious]);
+
+actions!(atelier_overlay, [Dismiss, Activate]);
+
+/// Installs bindings for text fields, adjustable controls, lists, menus,
+/// scroll views, and overlay dismissal.
 pub fn install_component_keybindings(cx: &mut App, keys: &ComponentKeymap) {
     let text = Some(TEXT_FIELD_CONTEXT);
     let mut bindings = vec![
@@ -140,5 +153,36 @@ pub fn install_component_keybindings(cx: &mut App, keys: &ComponentKeymap) {
     let slider = Some(SLIDER_CONTEXT);
     bindings.push(KeyBinding::new("pageup", NudgePageUp, slider));
     bindings.push(KeyBinding::new("pagedown", NudgePageDown, slider));
+
+    for context in [LIST_CONTEXT, SIDEBAR_CONTEXT, MENU_CONTEXT] {
+        let context = Some(context);
+        bindings.extend([
+            KeyBinding::new("up", NudgeUp, context),
+            KeyBinding::new("down", NudgeDown, context),
+            KeyBinding::new("left", NudgeLeft, context),
+            KeyBinding::new("right", NudgeRight, context),
+            KeyBinding::new("home", NudgeToStart, context),
+            KeyBinding::new("end", NudgeToEnd, context),
+            KeyBinding::new("enter", Activate, context),
+        ]);
+    }
+    bindings.push(KeyBinding::new("space", Activate, Some(MENU_CONTEXT)));
+
+    let scroll = Some(SCROLL_CONTEXT);
+    bindings.extend([
+        KeyBinding::new("up", NudgeUp, scroll),
+        KeyBinding::new("down", NudgeDown, scroll),
+        KeyBinding::new("left", NudgeLeft, scroll),
+        KeyBinding::new("right", NudgeRight, scroll),
+        KeyBinding::new("pageup", NudgePageUp, scroll),
+        KeyBinding::new("pagedown", NudgePageDown, scroll),
+        KeyBinding::new("home", NudgeToStart, scroll),
+        KeyBinding::new("end", NudgeToEnd, scroll),
+    ]);
+
+    for context in [MENU_CONTEXT, POPOVER_CONTEXT, DIALOG_CONTEXT] {
+        bindings.push(KeyBinding::new("escape", Dismiss, Some(context)));
+    }
+
     cx.bind_keys(bindings);
 }

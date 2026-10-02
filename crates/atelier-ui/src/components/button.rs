@@ -1,15 +1,15 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyView, App, AppContext, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    App, ClickEvent, ElementId, FocusHandle, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder, px,
 };
 
 use crate::{
-    ActiveTheme, StyledExt, Theme,
-    components::{FocusRing, Icon, IconName, IconSize, Text},
-    tokens::{Color, Elevation, Radius, Space, TextRole},
+    ActiveTheme, Theme,
+    components::{FocusRing, Icon, IconName, IconSize, Text, tooltip::WithTooltip},
+    tokens::{Color, Radius, Space, TextRole},
 };
 
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -212,6 +212,7 @@ struct ButtonChrome {
     status: ButtonStatus,
     on_click: Option<ClickHandler>,
     tooltip: Option<SharedString>,
+    focus: Option<FocusHandle>,
 }
 
 /// Per-button state that must survive across frames.
@@ -241,10 +242,11 @@ impl ButtonChrome {
             pressed: false,
             focus: cx.focus_handle().tab_index(0).tab_stop(true),
         });
-        let (pressed, focus) = {
-            let state = press.read(cx);
-            (state.pressed, state.focus.clone())
-        };
+        let pressed = press.read(cx).pressed;
+        let focus = self
+            .focus
+            .clone()
+            .unwrap_or_else(|| press.read(cx).focus.clone());
         let focusable = self.status.is_focusable();
         let focused = focusable && focus.is_focused(window);
         let theme = cx.theme();
@@ -309,9 +311,7 @@ impl ButtonChrome {
             .when_some(self.on_click.filter(|_| activates), |this, handler| {
                 this.on_click(move |event, window, cx| handler(event, window, cx))
             })
-            .when_some(self.tooltip, |this, text| {
-                this.tooltip(move |_, cx| Tooltip::view(text.clone(), cx))
-            })
+            .when_some(self.tooltip, |this, text| this.text_tooltip(text))
             .child(
                 div()
                     .flex()
@@ -359,6 +359,7 @@ impl Button {
                 status: ButtonStatus::default(),
                 on_click: None,
                 tooltip: None,
+                focus: None,
             },
             label: label.into(),
             icon: None,
@@ -407,6 +408,12 @@ impl Button {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.chrome.on_click = Some(Rc::new(handler));
+        self
+    }
+
+    /// Use an existing focus handle so a dialog can focus this action.
+    pub fn focus_handle(mut self, focus: FocusHandle) -> Self {
+        self.chrome.focus = Some(focus);
         self
     }
 }
@@ -468,6 +475,7 @@ impl IconButton {
                 status: ButtonStatus::default(),
                 on_click: None,
                 tooltip: Some(label.into()),
+                focus: None,
             },
             icon,
         }
@@ -520,33 +528,6 @@ impl RenderOnce for IconButton {
         let content = Icon::new(self.icon).size(metrics.icon).color(foreground);
         self.chrome
             .render(Some(metrics.height), content, None, window, cx)
-    }
-}
-
-/// Minimal tooltip bubble used for icon-button labels.
-struct Tooltip {
-    text: SharedString,
-}
-
-impl Tooltip {
-    fn view(text: SharedString, cx: &mut App) -> AnyView {
-        cx.new(|_| Tooltip { text }).into()
-    }
-}
-
-impl Render for Tooltip {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        div()
-            .mt(Space::S1.px())
-            .px(Space::S2.px())
-            .py(Space::S1.px())
-            .corner_radius(theme, Radius::Small)
-            .bg(theme.colors.surface.elevated)
-            .border_1()
-            .border_color(theme.colors.border.default)
-            .elevation(theme, Elevation::Overlay)
-            .child(Text::new(self.text.clone()).role(TextRole::Caption))
     }
 }
 

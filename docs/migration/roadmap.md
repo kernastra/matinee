@@ -38,14 +38,22 @@ These stay inside the interaction model. They are not permission to start screen
 - Manual IME validation on macOS, Windows, and Linux. Composition is implemented; headless tests do not drive a session.
 - Windows reduced-motion detection via the Win32 API. The launch probe spawns PowerShell (`SystemParametersInfo`) and that shell-out is temporary technical debt.
 
+## Phase 1B: Desktop composition and overlays (landed)
+
+Done, without window chrome, screen migration, or playback:
+
+- ScrollView, List/ListRow, Image, ProgressBar, Tooltip, Popover, Menu, ContextMenu, Dialog, Sidebar, Toolbar, SplitView, EmptyState.
+- Shared overlay focus (open, move inside, restore on close; dialogs trap Tab) and linear keyboard movement that skips disabled rows.
+- A Desktop Composition Gallery story, plus one story per component.
+- Submenus, list virtualization, and a third split pane are explicitly deferred.
+
 ## Phase 1: Framework depth and playback core (remainder, not started)
 
 Framework (`atelier-ui` / `atelier-app`):
 
 1. ~~Bundle Matinee fonts~~ and ~~OS reduced motion~~ (done in 1A).
-2. Primitives still needed by real screens, each with a Gallery story:
-   scroll container conventions, list/row with selection, overlay/popover,
-   tooltip polish, progress bar, image with a graceful placeholder.
+2. ~~Scroll, list, image, progress, tooltip, and overlays~~ (done in 1B).
+   Still open inside this item: submenu menus, virtualized lists, an inspector pane on SplitView.
 3. Window chrome per [platform-strategy.md](../architecture/platform-strategy.md):
    macOS unified titlebar with real traffic lights, Linux CSD fallback.
 4. Gallery preview axes still open: simulated platform. Scale factor cannot

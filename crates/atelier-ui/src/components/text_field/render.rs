@@ -2,15 +2,15 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, AppContext, Bounds, ContentMask, Context, CursorStyle, Element, ElementId,
-    ElementInputHandler, Entity, GlobalElementId, InspectorElementId, InteractiveElement,
-    IntoElement, LayoutId, MouseButton, MouseMoveEvent, ParentElement, Pixels, RenderOnce,
-    SharedString, StatefulInteractiveElement, Style, Styled, Window, div, point, px, relative,
+    App, Bounds, ContentMask, CursorStyle, Element, ElementId, ElementInputHandler, Entity,
+    GlobalElementId, InspectorElementId, InteractiveElement, IntoElement, LayoutId, MouseButton,
+    MouseMoveEvent, ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement,
+    Style, Styled, Window, div, point, px, relative,
 };
 
 use crate::{
-    ActiveTheme, StyledExt,
-    components::{Icon, IconName, IconSize, Text, v_stack},
+    ActiveTheme,
+    components::{Icon, IconName, IconSize, Text, tooltip::WithTooltip, v_stack},
     editing::sanitize_single_line,
     focus,
     inspect::{self, Inspection},
@@ -213,7 +213,7 @@ fn trailing_button(
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .tooltip(move |_, cx| trailing_tooltip(label.clone(), cx))
+        .text_tooltip(label)
         .on_mouse_down(MouseButton::Left, |_, window, cx| {
             window.prevent_default();
             cx.stop_propagation();
@@ -226,28 +226,6 @@ fn trailing_button(
             }
         })
         .child(Icon::new(icon).size(IconSize::Small).color(color))
-}
-
-fn trailing_tooltip(text: SharedString, cx: &mut App) -> gpui::AnyView {
-    cx.new(|_| TrailingTooltip { text }).into()
-}
-
-struct TrailingTooltip {
-    text: SharedString,
-}
-
-impl gpui::Render for TrailingTooltip {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        div()
-            .px(Space::S2.px())
-            .py(Space::S1.px())
-            .corner_radius(theme, Radius::Small)
-            .bg(theme.colors.surface.elevated)
-            .border_1()
-            .border_color(theme.colors.border.default)
-            .child(Text::new(self.text.clone()).role(TextRole::Caption))
-    }
 }
 
 struct FieldText {

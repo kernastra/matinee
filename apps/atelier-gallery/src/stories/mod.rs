@@ -1,6 +1,8 @@
 pub mod buttons;
 pub mod checkbox;
 pub mod colors;
+pub mod composition;
+pub mod desktop;
 pub mod icon_buttons;
 pub mod icons;
 pub mod motion;
