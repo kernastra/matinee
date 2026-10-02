@@ -21,6 +21,9 @@ pub struct TextColors {
     pub on_accent: Color,
     /// Foreground placed on `control.destructive`.
     pub on_destructive: Color,
+    /// Error and invalid text. Meets 4.5:1 on canvas, panel, and elevated
+    /// surfaces. `control.destructive` is a fill and is too dark for small text.
+    pub danger: Color,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +78,7 @@ pub enum ColorRole {
     TextDisabled,
     TextOnAccent,
     TextOnDestructive,
+    TextDanger,
     SurfaceCanvas,
     SurfacePanel,
     SurfaceElevated,
@@ -98,13 +102,14 @@ pub enum ColorRole {
 }
 
 impl ColorRole {
-    pub const ALL: [ColorRole; 26] = [
+    pub const ALL: [ColorRole; 27] = [
         ColorRole::TextPrimary,
         ColorRole::TextSecondary,
         ColorRole::TextMuted,
         ColorRole::TextDisabled,
         ColorRole::TextOnAccent,
         ColorRole::TextOnDestructive,
+        ColorRole::TextDanger,
         ColorRole::SurfaceCanvas,
         ColorRole::SurfacePanel,
         ColorRole::SurfaceElevated,
@@ -136,6 +141,7 @@ impl ColorRole {
             ColorRole::TextDisabled => "text.disabled",
             ColorRole::TextOnAccent => "text.on_accent",
             ColorRole::TextOnDestructive => "text.on_destructive",
+            ColorRole::TextDanger => "text.danger",
             ColorRole::SurfaceCanvas => "surface.canvas",
             ColorRole::SurfacePanel => "surface.panel",
             ColorRole::SurfaceElevated => "surface.elevated",
@@ -169,6 +175,7 @@ impl ColorTokens {
             ColorRole::TextDisabled => self.text.disabled,
             ColorRole::TextOnAccent => self.text.on_accent,
             ColorRole::TextOnDestructive => self.text.on_destructive,
+            ColorRole::TextDanger => self.text.danger,
             ColorRole::SurfaceCanvas => self.surface.canvas,
             ColorRole::SurfacePanel => self.surface.panel,
             ColorRole::SurfaceElevated => self.surface.elevated,

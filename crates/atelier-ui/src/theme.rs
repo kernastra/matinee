@@ -40,6 +40,7 @@ impl Theme {
                     disabled: Color::hex(0x5d6169),
                     on_accent: white,
                     on_destructive: white,
+                    danger: Color::hex(0xf08a90),
                 },
                 surface: SurfaceColors {
                     canvas: Color::hex(0x16171a),
@@ -94,6 +95,7 @@ impl Theme {
                     disabled: Color::hex(0xa3a7ae),
                     on_accent: Color::hex(0xffffff),
                     on_destructive: Color::hex(0xffffff),
+                    danger: Color::hex(0xb4232e),
                 },
                 surface: SurfaceColors {
                     canvas: Color::hex(0xf5f5f6),
@@ -160,6 +162,9 @@ impl Theme {
         require(TextPrimary, ControlNeutral, 4.5);
         require(TextPrimary, ControlNeutralHover, 4.5);
         require(TextPrimary, ControlNeutralPressed, 4.5);
+        for surface in [SurfaceCanvas, SurfacePanel, SurfaceElevated] {
+            require(TextDanger, surface, 4.5);
+        }
         for accent in [ControlAccent, ControlAccentHover, ControlAccentPressed] {
             require(TextOnAccent, accent, 4.5);
         }
@@ -201,9 +206,24 @@ impl std::fmt::Display for ThemeIssue {
 
 /// Environment preferences that components must respect but that are not
 /// part of a theme (they come from the platform or the user's settings).
+///
+/// Motion resolves in layers: an app or preview override, then the system
+/// preference, then full motion when the system value is unknown. `None`
+/// for [`Self::system_motion`] means detection is unavailable, not that the
+/// OS requested full motion.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UiPreferences {
-    pub motion: MotionPreference,
+    pub system_motion: Option<MotionPreference>,
+    pub motion_override: Option<MotionPreference>,
+}
+
+impl UiPreferences {
+    /// The preference components should honor.
+    pub fn motion(&self) -> MotionPreference {
+        self.motion_override
+            .or(self.system_motion)
+            .unwrap_or(MotionPreference::Full)
+    }
 }
 
 impl Global for UiPreferences {}
@@ -259,6 +279,25 @@ mod tests {
                 .iter()
                 .any(|i| i.foreground == ColorRole::TextMuted && i.ratio < 1.01)
         );
+    }
+
+    #[test]
+    fn motion_override_wins_and_unknown_system_is_not_reduced() {
+        let unknown = UiPreferences::default();
+        assert_eq!(unknown.motion(), MotionPreference::Full);
+        assert!(unknown.system_motion.is_none());
+
+        let system_reduced = UiPreferences {
+            system_motion: Some(MotionPreference::Reduced),
+            motion_override: None,
+        };
+        assert_eq!(system_reduced.motion(), MotionPreference::Reduced);
+
+        let overridden = UiPreferences {
+            system_motion: Some(MotionPreference::Reduced),
+            motion_override: Some(MotionPreference::Full),
+        };
+        assert_eq!(overridden.motion(), MotionPreference::Full);
     }
 
     #[test]

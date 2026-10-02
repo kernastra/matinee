@@ -42,7 +42,15 @@ if grep -qE '^\s*matinee-[a-z]+' crates/atelier-app/Cargo.toml; then
   fail "atelier-app must not depend on Matinee crates"
 fi
 
-# 5. The shipping app and spikes stay outside the workspace.
+# 5. OS checks live only in atelier-app's platform module.
+if matches=$(grep -RInE 'cfg!\(\s*target_os|cfg\(\s*target_os' \
+  crates/atelier-ui/src crates/atelier-app/src --include='*.rs' \
+  | grep -v '^crates/atelier-app/src/platform.rs:'); then
+  fail "cfg(target_os) outside crates/atelier-app/src/platform.rs:"
+  echo "$matches" >&2
+fi
+
+# 6. The shipping app and spikes stay outside the workspace.
 for path in src-tauri spikes; do
   if ! grep -qE "exclude = \[.*\"$path\"" Cargo.toml; then
     fail "root Cargo.toml must exclude \"$path\" from the workspace"

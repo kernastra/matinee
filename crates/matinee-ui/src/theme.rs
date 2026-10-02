@@ -29,8 +29,8 @@ pub mod palette {
     pub const LOBBY_INK: Color = Color::hex(0x1c140c);
 }
 
-/// Font families as specified for Matinee. They are not bundled yet; GPUI
-/// falls back to the platform UI font when a family is not installed.
+/// Font families as specified for Matinee. Static OFL instances are bundled
+/// in `assets/fonts` and registered by [`crate::load_bundled_fonts`].
 pub const FAMILIES: FontFamilies = FontFamilies {
     display: "Fraunces",
     interface: "Manrope",
@@ -68,6 +68,7 @@ pub fn matinee_theme() -> Theme {
                 disabled: Color::hex(0x5f5a52),
                 on_accent: LOBBY_INK,
                 on_destructive: cream,
+                danger: Color::hex(0xe8a8ad),
             },
             surface: SurfaceColors {
                 canvas: MIDNIGHT_NAVY,

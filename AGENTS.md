@@ -22,7 +22,11 @@ without explicit instruction.
    Matinee colors or fonts. Brand values live in `crates/matinee-ui`.
 2. Applications depend on **framework APIs** (`atelier_ui::prelude`,
    `atelier_app`) rather than raw GPUI wherever practical. Only `atelier-ui`
-   and `atelier-app` may list `gpui` as a dependency.
+   and `atelier-app` may list `gpui` as a dependency. When application code
+   needs a raw GPUI API, first determine whether the capability should be
+   exposed through Atelier. Raw GPUI use is allowed when wrapping it would
+   create a speculative abstraction, but the public GPUI surface should grow
+   deliberately. Do not hide GPUI's entire element model.
 3. Use **semantic tokens** (`ColorRole`, `TextRole`, `Space`, `Radius`,
    `Elevation`, `MotionDuration`/`Spring`), never arbitrary colors, sizes,
    or durations.

@@ -34,6 +34,9 @@ fn main() {
     })
     .theme(matinee_theme())
     .run(|cx| {
+        if let Err(error) = matinee_ui::load_bundled_fonts(cx) {
+            eprintln!("failed to load Matinee fonts: {error}");
+        }
         open_window(
             cx,
             WindowSpec {

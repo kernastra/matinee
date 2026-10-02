@@ -19,20 +19,30 @@ Done:
 - Architecture boundary checks; CI on Linux, macOS, and Windows.
 - Native playback feasibility spike: [playback.md](../architecture/playback.md).
 
-## Phase 1: Framework depth and playback core (proposed)
+## Phase 1A: Interaction controls (landed)
+
+Done, without starting screen migration or playback:
+
+- TextField, SearchField, Switch, Checkbox, SegmentedControl, Slider, each
+  with a Gallery story and headless behavior tests.
+- Keyboard-versus-pointer focus rings (`focus_visible`).
+- OS reduced-motion probes, with the Gallery override kept as a separate layer.
+- Matinee fonts bundled in `matinee-ui` (SIL OFL static faces).
+
+## Phase 1: Framework depth and playback core (remainder, not started)
 
 Framework (`atelier-ui` / `atelier-app`):
 
-1. Bundle Matinee fonts as TTF/OTF (OFL) and load them in `matinee-ui`.
-2. Wire OS reduced-motion detection (see platform-strategy.md).
-3. Primitives needed by real screens, each with a Gallery story: text input,
+1. ~~Bundle Matinee fonts~~ and ~~OS reduced motion~~ (done in 1A).
+2. Primitives still needed by real screens, each with a Gallery story:
    scroll container conventions, list/row with selection, overlay/popover,
-   tooltip polish, segmented control, toggle, progress bar, image with
-   graceful placeholder.
-4. Window chrome per [platform-strategy.md](../architecture/platform-strategy.md):
+   tooltip polish, progress bar, image with a graceful placeholder.
+3. Window chrome per [platform-strategy.md](../architecture/platform-strategy.md):
    macOS unified titlebar with real traffic lights, Linux CSD fallback.
-5. Gallery preview axes: scale factor, simulated platform, keyboard-only.
-6. A generic **external frame surface** element: paints an externally produced
+4. Gallery preview axes still open: simulated platform. Scale factor cannot
+   be overridden at runtime in GPUI 0.2.2 (the Gallery shows the live value).
+   Focus-testing mode landed in 1A.
+5. A generic **external frame surface** element: paints an externally produced
    BGRA frame from a latest-frame mailbox via GPUI `RenderImage`. It contains
    no codec or playback knowledge, so it fits `atelier-ui`'s rules. It lets
    `matinee-player` render video without depending on GPUI directly.

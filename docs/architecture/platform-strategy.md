@@ -23,10 +23,11 @@ Everything else asks about a *convention*:
 | `primary_modifier()` | ⌘ | Ctrl | Ctrl |
 | `quits_when_last_window_closes()` | no | yes | yes |
 | `has_global_menu_bar()` | yes | no | no |
+| `word_key()` / emacs line keys / character palette | Option, yes, yes | Ctrl, no, no | Ctrl, no, no |
 
 Components never contain platform checks. `scripts/check-architecture.sh`
-does not grep for `cfg(target_os)` yet; reviewers should reject it outside
-`platform.rs` and `atelier-app`.
+rejects `cfg(target_os)` under `crates/atelier-ui/src` and
+`crates/atelier-app/src` except `platform.rs`.
 
 ## Commands and shortcuts
 
@@ -117,16 +118,21 @@ GPUI 0.2.2 capabilities relevant to the eventual design:
 
 ## Reduced motion and other system preferences
 
-GPUI 0.2.2 exposes no reduced-motion API. Today the preference comes from
-`ATELIER_REDUCED_MOTION=1` or an in-app setting
-(`atelier_app::set_motion_preference`). Components read only
-`UiPreferences::motion`, so wiring the OS source later changes one function:
+GPUI 0.2.2 exposes no reduced-motion API and no change notification.
+`UiPreferences::motion()` resolves in layers: an app or Gallery override,
+then the system probe, then full motion when the probe returns nothing.
+`system_motion: None` means detection is unavailable. It does not mean the
+OS asked for full motion.
 
-| Platform | Source to wire (Phase 1) |
-|---|---|
-| macOS | `NSWorkspace.accessibilityDisplayShouldReduceMotion` (+ change notification) |
-| Windows | `SystemParametersInfo(SPI_GETCLIENTAREAANIMATION)` |
-| Linux | `org.gnome.desktop.interface enable-animations` / `gtk-enable-animations` (XDG settings portal) |
+`ATELIER_REDUCED_MOTION` is an override (`1`/`true` reduced, `0`/`false`
+full). `set_motion_preference` sets that same override and leaves the system
+value in place. Components call `motion()`, not the fields.
+
+| Platform | What the probe actually reads | Limitation |
+|---|---|---|
+| macOS | `defaults read com.apple.universalaccess reduceMotion` | A missing key is full motion. No live notification. |
+| Windows | PowerShell `SystemParametersInfo(0x1042)` (`SPI_GETCLIENTAREAANIMATION`) | Client-area animation, not the Ease of Access "show animations" toggle. No `unsafe`. |
+| Linux | `gsettings get org.gnome.desktop.interface enable-animations`, then KDE `AnimationDurationFactor` (`0` is reduced) via `kreadconfig6`/`kreadconfig5` | Xfce, Sway, and other desktops are unsupported and stay `None`. |
 
 Light/dark appearance is available (`Window::appearance`) but unused because
 Matinee is dark-only. The neutral themes exist to validate the token system.
@@ -151,7 +157,7 @@ packaging or signing (no distributable yet).
 
 ## Open work
 
-- Wire OS reduced-motion and reduced-transparency sources.
+- Reduced-transparency source (no GPUI API). Reduced motion is probed at launch only.
 - macOS Full Keyboard Access semantics for Tab.
 - In-window menus for Windows/Linux; CSD titlebar for GNOME Wayland.
 - `Platform` injection so the Gallery can preview other platforms' conventions.
