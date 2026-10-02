@@ -152,7 +152,7 @@ impl RenderOnce for Icon {
             .size(size)
             .text_color(color);
 
-        let animate = self.spinning && theme.motion.allows_continuous(cx.ui_preferences().motion);
+        let animate = self.spinning && theme.motion.allows_continuous(cx.ui_preferences().motion());
         if animate {
             // One revolution spans several `slow` beats so the indicator reads
             // as calm activity rather than urgency.

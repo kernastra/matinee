@@ -28,7 +28,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         let d = demo.read(cx);
         (d.at_end, d.generation)
     };
-    let reduced = cx.ui_preferences().motion == MotionPreference::Reduced;
+    let reduced = cx.ui_preferences().motion() == MotionPreference::Reduced;
 
     let tokens = [
         Token::Timed(MotionDuration::Fast),

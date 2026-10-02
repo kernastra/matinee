@@ -13,6 +13,7 @@ const GROUPS: [(&str, &str, &[ColorRole]); 5] = [
             ColorRole::TextDisabled,
             ColorRole::TextOnAccent,
             ColorRole::TextOnDestructive,
+            ColorRole::TextDanger,
         ],
     ),
     (

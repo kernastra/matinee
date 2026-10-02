@@ -1,12 +1,13 @@
 use std::borrow::Cow;
 
 use atelier_ui::{
-    Theme, UiAssets, UiPreferences,
+    ActiveTheme, ComponentKeymap, Theme, UiAssets, UiPreferences,
     gpui::{
         self, App, Application, AssetSource, Bounds, Entity, Global, KeyBinding, Menu, MenuItem,
         Render, SharedString, SystemMenuType, TitlebarOptions, Window, WindowBounds,
         WindowDecorations, WindowHandle, WindowOptions, px, size,
     },
+    install_component_keybindings, note_keyboard_navigation,
     tokens::MotionPreference,
 };
 
@@ -29,8 +30,9 @@ impl Global for AppInfo {}
 // Keyboard focus traversal. Not menu commands, so not part of `Command`.
 gpui::actions!(atelier, [FocusNext, FocusPrevious]);
 
-/// Environment variable that forces reduced motion. Platform detection is
-/// not yet wired (see docs/architecture/platform-strategy.md).
+/// Environment override for reduced motion. `1` / `true` forces reduced,
+/// `0` / `false` forces full. Unset leaves the OS signal in charge.
+/// This is an override, not a substitute for detection.
 pub const REDUCED_MOTION_ENV: &str = "ATELIER_REDUCED_MOTION";
 
 /// Builder that boots GPUI with the framework's globals, assets, keymap,
@@ -83,7 +85,14 @@ impl AtelierApp {
                 let platform = Platform::current();
                 cx.set_global(theme);
                 cx.set_global(UiPreferences {
-                    motion: motion_preference_from_env(),
+                    system_motion: platform.detect_reduced_motion().map(|reduced| {
+                        if reduced {
+                            MotionPreference::Reduced
+                        } else {
+                            MotionPreference::Full
+                        }
+                    }),
+                    motion_override: motion_override_from_env(),
                 });
                 install_commands(cx, platform);
                 if platform.has_global_menu_bar() {
@@ -104,10 +113,11 @@ impl AtelierApp {
     }
 }
 
-fn motion_preference_from_env() -> MotionPreference {
+fn motion_override_from_env() -> Option<MotionPreference> {
     match std::env::var(REDUCED_MOTION_ENV).as_deref() {
-        Ok("1") | Ok("true") => MotionPreference::Reduced,
-        _ => MotionPreference::Full,
+        Ok("1") | Ok("true") => Some(MotionPreference::Reduced),
+        Ok("0") | Ok("false") => Some(MotionPreference::Full),
+        _ => None,
     }
 }
 
@@ -124,9 +134,24 @@ fn install_commands(cx: &mut App, platform: Platform) {
         KeyBinding::new("tab", FocusNext, None),
         KeyBinding::new("shift-tab", FocusPrevious, None),
     ]);
+    install_component_keybindings(
+        cx,
+        &ComponentKeymap {
+            primary: platform.primary_key(),
+            word: platform.word_key(),
+            emacs_line_keys: platform.uses_emacs_line_editing(),
+            character_palette: platform.has_character_palette(),
+        },
+    );
 
-    cx.on_action(|_: &FocusNext, cx| with_active_window(cx, |window| window.focus_next()));
-    cx.on_action(|_: &FocusPrevious, cx| with_active_window(cx, |window| window.focus_prev()));
+    cx.on_action(|_: &FocusNext, cx| {
+        note_keyboard_navigation(cx);
+        with_active_window(cx, |window| window.focus_next());
+    });
+    cx.on_action(|_: &FocusPrevious, cx| {
+        note_keyboard_navigation(cx);
+        with_active_window(cx, |window| window.focus_prev());
+    });
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &CloseWindow, cx| {
         with_active_window(cx, |window| window.remove_window());
@@ -231,9 +256,11 @@ pub fn set_theme(cx: &mut App, theme: Theme) {
     cx.refresh_windows();
 }
 
-/// Overrides the motion preference (e.g. from an in-app setting).
+/// Sets the preview or in-app motion override. The system signal is kept.
 pub fn set_motion_preference(cx: &mut App, motion: MotionPreference) {
-    cx.set_global(UiPreferences { motion });
+    let mut preferences = cx.ui_preferences().clone();
+    preferences.motion_override = Some(motion);
+    cx.set_global(preferences);
     cx.refresh_windows();
 }
 

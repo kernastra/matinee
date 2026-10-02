@@ -87,6 +87,9 @@ not bundled yet, so GPUI falls back to the platform UI font (see "Known gaps").
 | `FocusRing` | The framework focus indicator, for app-level focusable elements. |
 | `StyledExt` | `elevation(theme, level)`, `corner_radius(theme, radius)` on any element. |
 | `motion::{timed, spring}` | Turn tokens into GPUI animations. They return `None` under reduced motion, meaning "apply the end state now". |
+| `TextField` / `SearchField` | Single-line editing via GPUI's input handler (caret, selection, IME). Controlled `value`. Search adds an icon, a clear button, and Escape. |
+| `Switch` / `Checkbox` / `SegmentedControl` / `Slider` | Pointer and keyboard controls. The switch thumb uses `Spring::Snappy`. The slider is a generic value control with one finite ascending range (`min <= max`); reversed and non-finite ranges collapse to `0`. |
+| `focus_visible` | Keyboard focus draws `FocusRing`. Pointer interaction does not. |
 
 ### Button behavior contract
 
@@ -113,6 +116,8 @@ Where GPUI is touched:
 - `atelier_ui::prelude`: the **curated re-export** apps rely on (`App`,
   `Context`, `Window`, `Render`, `div`, `px`, element traits, …). This list *is*
   the GPUI surface area apps depend on. Growing it is a deliberate API decision.
+  When application code needs a raw GPUI API, first decide whether Atelier
+  should expose it. Raw use is allowed when a wrapper would be speculative.
 - `atelier_ui::gpui`: full re-export as an escape hatch. Any use outside the
   framework crates is migration debt.
 
@@ -153,6 +158,9 @@ crates.
 | Tab / Shift-Tab are not bound by default. | `atelier-app` binds them to focus traversal. |
 | Focusable elements take focus on mouse-down. | Buttons call `prevent_default` on mouse-down (covered by a test). |
 | `TestAppContext::simulate_keystrokes` sends key-down only; keyboard clicks fire on key-up. | Tests send explicit key-down and key-up events. |
+| `simulate_input` splits on `""`, which yields empty keystrokes and panics. | Tests call `Window::dispatch_keystroke` per character. |
+| `Window::scale_factor` is read-only. `set_rem_size` would not scale `px()` layout. | The Gallery displays the live factor and does not simulate one. |
+| No reduced-motion API. | `atelier-app` probes the OS at launch. See platform-strategy.md. |
 
 ## Gallery (`apps/atelier-gallery`)
 
@@ -160,14 +168,17 @@ crates.
   `story.rs::STORIES`. Adding a demo means writing one function and adding one
   entry. Story state uses `window.use_keyed_state`.
 - Preview settings are globals, so every story reacts to them automatically:
-  theme (Neutral Dark / Neutral Light / Matinee) and reduced motion. The
-  Settings command (⌘, / Ctrl+,) toggles the preview toolbar.
+  theme (Neutral Dark / Neutral Light / Matinee), reduced motion, and a
+  focus-testing note. The toolbar also shows the live scale factor and whether
+  the OS motion probe returned a value. The Settings command (⌘, / Ctrl+,)
+  toggles the preview toolbar.
 - Pages today: Color, Typography, Spacing, Radius & Elevation, Motion, Icons,
-  Button, Icon Button, Text, Surface.
-- Planned preview axes, following the same global-setting pattern: scale factor
-  (needs a GPUI rem/scale override), simulated platform (needs `Platform`
-  injection in `atelier-app`), focus-visible and keyboard-only modes, and
-  high-contrast themes.
+  Button, Icon Button, Text Field, Search Field, Switch, Checkbox, Segmented
+  Control, Slider, Text, Surface.
+- A lightweight inspector under the story reports the interactive control's
+  focus, value, input modality, and reduced motion.
+- Still open: simulated platform (needs `Platform` injection) and high-contrast
+  themes. Scale-factor simulation is not planned until GPUI can change it.
 
 ## Testing strategy
 
@@ -187,12 +198,38 @@ Not automated, on purpose: pixel and visual regression testing (GPUI has no
 stable headless renderer for screenshots, and lavapipe output varies), and
 real-window integration tests. Visual states are reviewed in the Gallery.
 
-## Known gaps (Phase 0)
+## Focus-visible contract
 
-- Matinee fonts are not bundled. GPUI needs TTF/OTF bytes via
-  `text_system().add_fonts`, and the repo only has `@fontsource` WOFF2.
+`InputModality` is a framework global. `move_focus_forward` / `move_focus_backward`
+(what Tab uses) record keyboard modality. Pointer handlers call
+`note_pointer_interaction`. `focus_visible(focused, cx)` is true only when the
+control is focused and the modality is keyboard. Text fields are the exception
+that still take focus on click, because they need a caret; they draw a 1px
+`focus.ring` border and a caret, not `FocusRing`.
+
+## Text input limits (GPUI 0.2.2)
+
+- Printable text and IME go through `EntityInputHandler`. Editing commands are
+  key bindings in the `TextField` context. Word movement is whitespace-delimited,
+  not UAX #29. Newlines are stripped (`shape_line` panics on them).
+- The caret does not blink. Marked text is underlined. Headless tests cover
+  typing via `dispatch_keystroke`, not a real IME session. Blinking, native
+  word boundaries, and manual IME checks on macOS, Windows, and Linux are
+  roadmap follow-ups, not this phase.
+- `text.danger` is the error-text role (4.5:1 on canvas, panel, and elevated).
+  `control.destructive` remains the invalid border and is too dark for small text.
+
+## Known gaps
+
+- Matinee fonts are bundled as static OFL faces (Fraunces SemiBold at optical
+  size 72, Manrope Regular and SemiBold, IBM Plex Mono Regular). GPUI 0.2.2
+  does not apply variable axes, so the variable originals are not shipped.
 - No accessibility tree. GPUI 0.2.2 has no AccessKit integration, so labels are
   captured in the API (for example `IconButton`) for later wiring.
-- Hover and press transitions are instantaneous, matching AppKit push buttons.
-  Animated transitions will use `motion::timed` once a component needs them.
+- Hover and press transitions on buttons are instantaneous, matching AppKit
+  push buttons. The switch thumb is the first control that animates, via
+  `motion::spring`.
 - Letter spacing is not expressible in GPUI 0.2.2 text styles.
+- Linux reduced motion is GNOME and KDE only. The Windows probe still spawns
+  PowerShell; that is temporary technical debt until it calls the Win32 API
+  directly. See platform-strategy.md.

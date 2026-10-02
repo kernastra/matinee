@@ -1,12 +1,18 @@
 pub mod buttons;
+pub mod checkbox;
 pub mod colors;
 pub mod icon_buttons;
 pub mod icons;
 pub mod motion;
+pub mod search_field;
+pub mod segmented;
 pub mod shape;
+pub mod slider;
 pub mod spacing;
 pub mod surfaces;
+pub mod switch;
 pub mod text;
+pub mod text_field;
 pub mod typography;
 
 use atelier_ui::{prelude::*, tokens::Color};
@@ -49,6 +55,13 @@ pub fn caption(text: impl Into<SharedString>) -> Text {
     Text::new(text)
         .role(TextRole::Caption)
         .tone(TextTone::Muted)
+}
+
+pub fn row(label: &'static str, control: impl IntoElement) -> impl IntoElement {
+    h_stack(Space::S4)
+        .items_center()
+        .child(div().w(px(160.0)).child(caption(label)))
+        .child(control)
 }
 
 pub fn metadata(text: impl Into<SharedString>) -> Text {

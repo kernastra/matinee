@@ -293,8 +293,10 @@ impl ButtonChrome {
                     .on_mouse_down(MouseButton::Left, {
                         let set_pressed = set_pressed.clone();
                         move |_, window, cx| {
-                            // Pointer presses must not move keyboard focus.
+                            // Pointer presses must not move keyboard focus
+                            // or show the keyboard focus ring.
                             window.prevent_default();
+                            crate::note_pointer_interaction(cx);
                             set_pressed(true, cx);
                         }
                     })
@@ -329,7 +331,7 @@ impl ButtonChrome {
                         .child(spinner),
                 )
             })
-            .when(focused, |this| {
+            .when(crate::focus_visible(focused, cx), |this| {
                 this.child(FocusRing::new(corner_radius, BORDER_WIDTH))
             })
     }

@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 gpui.workspace = true
+unicode-segmentation = "1.13"
 
 [dev-dependencies]
 # Headless TestPlatform for component behavior tests (no GPU or display).

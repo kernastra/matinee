@@ -2,6 +2,7 @@ use atelier_app::{
     Command, FRAMEWORK_NAME, Platform, command::OpenSettings, set_motion_preference, set_theme,
 };
 use atelier_ui::prelude::*;
+use atelier_ui::{Inspection, clear_inspection, current_inspection};
 
 use crate::story::{STORIES, Section, Story, find};
 
@@ -15,6 +16,7 @@ pub struct Gallery {
     theme_index: usize,
     selected: &'static Story,
     show_preview_controls: bool,
+    focus_testing: bool,
 }
 
 impl Gallery {
@@ -41,6 +43,7 @@ impl Gallery {
             theme_index: 0,
             selected,
             show_preview_controls: true,
+            focus_testing: false,
         }
     }
 
@@ -50,11 +53,16 @@ impl Gallery {
     }
 
     fn toggle_reduced_motion(&mut self, cx: &mut Context<Self>) {
-        let next = match cx.ui_preferences().motion {
+        let next = match cx.ui_preferences().motion() {
             MotionPreference::Full => MotionPreference::Reduced,
             MotionPreference::Reduced => MotionPreference::Full,
         };
         set_motion_preference(cx, next);
+    }
+
+    fn toggle_focus_testing(&mut self, cx: &mut Context<Self>) {
+        self.focus_testing = !self.focus_testing;
+        cx.notify();
     }
 
     fn render_sidebar(
@@ -105,7 +113,14 @@ impl Gallery {
                             .tone(TextTone::Muted),
                     ),
             )
-            .child(nav)
+            .child(
+                div()
+                    .id("gallery-nav")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .child(nav),
+            )
             .child(
                 div().px(Space::S2.px()).child(
                     Text::new(format!("{} · Preview options {settings}", platform.name()))
@@ -137,7 +152,10 @@ impl Gallery {
             .cursor_pointer()
             .when(selected, |this| this.bg(colors.control.subtle_pressed))
             .when(!selected, |this| this.hover(move |s| s.bg(hover)))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                window.prevent_default();
+                note_pointer_interaction(cx);
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selected = story;
                 cx.notify();
@@ -151,13 +169,18 @@ impl Gallery {
                         TextTone::Secondary
                     }),
             )
-            .when(focus.is_focused(window), |this| {
+            .when(focus_visible(focus.is_focused(window), cx), |this| {
                 this.child(FocusRing::new(theme.radius.get(Radius::Medium), 0.0))
             })
     }
 
-    fn render_toolbar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let reduced = cx.ui_preferences().motion == MotionPreference::Reduced;
+    fn render_toolbar(
+        &self,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let reduced = cx.ui_preferences().motion() == MotionPreference::Reduced;
         let mut themes = h_stack(Space::S1).child(
             div().pr(Space::S1.px()).child(
                 Text::new("Theme")
@@ -179,31 +202,68 @@ impl Gallery {
             );
         }
 
+        let system = match cx.ui_preferences().system_motion {
+            Some(MotionPreference::Reduced) => "reduced",
+            Some(MotionPreference::Full) => "full",
+            None => "unavailable",
+        };
+        let scale = format!("Scale {:.2}×", window.scale_factor());
+
         h_stack(Space::S4)
             .flex_none()
-            .h(px(TOOLBAR_HEIGHT))
+            .min_h(px(TOOLBAR_HEIGHT))
             .px(Space::S6.px())
+            .py(Space::S2.px())
+            .flex_wrap()
             .justify_between()
+            .items_center()
             .border_b_1()
             .border_color(theme.colors.border.subtle)
             .child(Text::new(self.selected.title).role(TextRole::Subheading))
             .when(self.show_preview_controls, |this| {
                 this.child(
-                    h_stack(Space::S4).child(themes).child(
-                        Button::new("reduced-motion", "Reduced motion")
-                            .size(ButtonSize::Small)
-                            .variant(if reduced {
-                                ButtonVariant::Secondary
-                            } else {
-                                ButtonVariant::Subtle
-                            })
-                            .icon(if reduced {
-                                IconName::Check
-                            } else {
-                                IconName::Sliders
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_reduced_motion(cx))),
-                    ),
+                    h_stack(Space::S3)
+                        .flex_wrap()
+                        .child(themes)
+                        .child(
+                            Button::new("reduced-motion", "Reduced motion")
+                                .size(ButtonSize::Small)
+                                .variant(if reduced {
+                                    ButtonVariant::Secondary
+                                } else {
+                                    ButtonVariant::Subtle
+                                })
+                                .icon(if reduced {
+                                    IconName::Check
+                                } else {
+                                    IconName::Sliders
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.toggle_reduced_motion(cx)),
+                                ),
+                        )
+                        .child(
+                            Button::new("focus-testing", "Focus testing")
+                                .size(ButtonSize::Small)
+                                .variant(if self.focus_testing {
+                                    ButtonVariant::Secondary
+                                } else {
+                                    ButtonVariant::Subtle
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.toggle_focus_testing(cx)),
+                                ),
+                        )
+                        .child(
+                            Text::new(scale)
+                                .role(TextRole::Caption)
+                                .tone(TextTone::Muted),
+                        )
+                        .child(
+                            Text::new(format!("System motion: {system}"))
+                                .role(TextRole::Caption)
+                                .tone(TextTone::Muted),
+                        ),
                 )
             })
     }
@@ -213,7 +273,14 @@ impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let story = self.selected;
+        clear_inspection();
         let content = (story.render)(window, cx);
+        let inspection = current_inspection();
+        let modality = match input_modality(cx) {
+            InputModality::Keyboard => "keyboard",
+            InputModality::Pointer => "pointer",
+        };
+        let reduced = cx.ui_preferences().motion() == MotionPreference::Reduced;
 
         h_stack(Space::S0)
             .id("gallery")
@@ -233,7 +300,7 @@ impl Render for Gallery {
                     .flex_1()
                     .h_full()
                     .min_w_0()
-                    .child(self.render_toolbar(&theme, cx))
+                    .child(self.render_toolbar(&theme, window, cx))
                     .child(
                         div()
                             .id(SharedString::from(format!("scroll-{}", story.id)))
@@ -250,9 +317,79 @@ impl Render for Gallery {
                                                 Text::new(story.summary).tone(TextTone::Secondary),
                                             ),
                                     )
-                                    .child(content),
+                                    .child(content)
+                                    .when(self.focus_testing, |this| this.child(focus_note(&theme)))
+                                    .child(inspector(
+                                        &theme,
+                                        inspection.as_ref(),
+                                        modality,
+                                        reduced,
+                                    )),
                             ),
                     ),
             )
     }
+}
+
+fn focus_note(theme: &Theme) -> impl IntoElement {
+    Surface::new(SurfaceLevel::Panel)
+        .padding(Space::S4)
+        .child(
+            v_stack(Space::S2)
+                .child(Text::new("Focus testing").role(TextRole::Subheading))
+                .child(
+                    Text::new(
+                        "Tab moves keyboard focus and shows the focus ring. A pointer press records pointer modality, so the ring hides. Text fields still focus on click: they show a caret and a 1px border, not the ring. Scale above is the window's live scale factor. GPUI 0.2.2 does not let an app change it, so the Gallery does not simulate one.",
+                    )
+                    .tone(TextTone::Secondary),
+                )
+                .child(
+                    Text::new(format!("Active theme: {}", theme.name))
+                        .role(TextRole::Caption)
+                        .tone(TextTone::Muted),
+                ),
+        )
+}
+
+fn inspector(
+    theme: &Theme,
+    inspection: Option<&Inspection>,
+    modality: &str,
+    reduced: bool,
+) -> impl IntoElement {
+    let (name, focused, value) = match inspection {
+        Some(inspection) => (
+            inspection.name,
+            inspection.focused.to_string(),
+            inspection.value.clone(),
+        ),
+        None => ("—", "—".to_string(), "—".to_string()),
+    };
+    Surface::new(SurfaceLevel::Elevated)
+        .padding(Space::S4)
+        .child(
+            v_stack(Space::S2)
+                .child(Text::new("Inspector").role(TextRole::Label))
+                .child(meta_line(theme, "Control", name))
+                .child(meta_line(theme, "Focused", &focused))
+                .child(meta_line(theme, "Value", &value))
+                .child(meta_line(theme, "Input", modality))
+                .child(meta_line(
+                    theme,
+                    "Reduced motion",
+                    if reduced { "true" } else { "false" },
+                )),
+        )
+}
+
+fn meta_line(theme: &Theme, label: &str, value: &str) -> impl IntoElement {
+    h_stack(Space::S3)
+        .child(
+            div().w(px(140.0)).child(
+                Text::new(label.to_string())
+                    .role(TextRole::Caption)
+                    .color(theme.colors.text.muted),
+            ),
+        )
+        .child(Text::new(value.to_string()).role(TextRole::Metadata))
 }

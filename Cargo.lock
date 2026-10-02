@@ -440,6 +440,7 @@ name = "atelier-ui"
 version = "0.0.0"
 dependencies = [
  "gpui",
+ "unicode-segmentation",
 ]
 
 [[package]]

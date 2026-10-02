@@ -1,6 +1,6 @@
 # Matinee Next — Architecture Overview
 
-Status: **Phase 0 (foundation)**. The shipping app is still the Tauri + React
+Status: **Phase 1A (interaction controls) on the Phase 0 foundation**. The shipping app is still the Tauri + React
 app in `src/` and `src-tauri/`; it remains the reference implementation and is
 not modified by this work. The Rust + GPUI workspace described here is being
 built *alongside* it.
