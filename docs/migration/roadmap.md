@@ -29,6 +29,15 @@ Done, without starting screen migration or playback:
 - OS reduced-motion probes, with the Gallery override kept as a separate layer.
 - Matinee fonts bundled in `matinee-ui` (SIL OFL static faces).
 
+### Interaction follow-ups (not started)
+
+These stay inside the interaction model. They are not permission to start screen migration, overlays, window chrome, or playback.
+
+- Blinking text caret. The caret is a solid 1px quad.
+- Word-boundary movement that follows platform segmentation. Movement today is whitespace-delimited, not UAX #29.
+- Manual IME validation on macOS, Windows, and Linux. Composition is implemented; headless tests do not drive a session.
+- Windows reduced-motion detection via the Win32 API. The launch probe spawns PowerShell (`SystemParametersInfo`) and that shell-out is temporary technical debt.
+
 ## Phase 1: Framework depth and playback core (remainder, not started)
 
 Framework (`atelier-ui` / `atelier-app`):

@@ -88,7 +88,7 @@ not bundled yet, so GPUI falls back to the platform UI font (see "Known gaps").
 | `StyledExt` | `elevation(theme, level)`, `corner_radius(theme, radius)` on any element. |
 | `motion::{timed, spring}` | Turn tokens into GPUI animations. They return `None` under reduced motion, meaning "apply the end state now". |
 | `TextField` / `SearchField` | Single-line editing via GPUI's input handler (caret, selection, IME). Controlled `value`. Search adds an icon, a clear button, and Escape. |
-| `Switch` / `Checkbox` / `SegmentedControl` / `Slider` | Pointer and keyboard controls. The switch thumb uses `Spring::Snappy`. The slider is a generic value control. |
+| `Switch` / `Checkbox` / `SegmentedControl` / `Slider` | Pointer and keyboard controls. The switch thumb uses `Spring::Snappy`. The slider is a generic value control with one finite ascending range (`min <= max`); reversed and non-finite ranges collapse to `0`. |
 | `focus_visible` | Keyboard focus draws `FocusRing`. Pointer interaction does not. |
 
 ### Button behavior contract
@@ -213,7 +213,9 @@ that still take focus on click, because they need a caret; they draw a 1px
   key bindings in the `TextField` context. Word movement is whitespace-delimited,
   not UAX #29. Newlines are stripped (`shape_line` panics on them).
 - The caret does not blink. Marked text is underlined. Headless tests cover
-  typing via `dispatch_keystroke`, not a real IME session.
+  typing via `dispatch_keystroke`, not a real IME session. Blinking, native
+  word boundaries, and manual IME checks on macOS, Windows, and Linux are
+  roadmap follow-ups, not this phase.
 - `text.danger` is the error-text role (4.5:1 on canvas, panel, and elevated).
   `control.destructive` remains the invalid border and is too dark for small text.
 
@@ -228,4 +230,6 @@ that still take focus on click, because they need a caret; they draw a 1px
   push buttons. The switch thumb is the first control that animates, via
   `motion::spring`.
 - Letter spacing is not expressible in GPUI 0.2.2 text styles.
-- Linux reduced motion is GNOME and KDE only. See platform-strategy.md.
+- Linux reduced motion is GNOME and KDE only. The Windows probe still spawns
+  PowerShell; that is temporary technical debt until it calls the Win32 API
+  directly. See platform-strategy.md.

@@ -131,7 +131,7 @@ value in place. Components call `motion()`, not the fields.
 | Platform | What the probe actually reads | Limitation |
 |---|---|---|
 | macOS | `defaults read com.apple.universalaccess reduceMotion` | A missing key is full motion. No live notification. |
-| Windows | PowerShell `SystemParametersInfo(0x1042)` (`SPI_GETCLIENTAREAANIMATION`) | Client-area animation, not the Ease of Access "show animations" toggle. No `unsafe`. |
+| Windows | PowerShell `SystemParametersInfo(0x1042)` (`SPI_GETCLIENTAREAANIMATION`) | **Temporary technical debt.** The probe spawns PowerShell. The replacement should call the Win32 API directly and not start a shell. It still reads client-area animation, not the Ease of Access "show animations" toggle. No `unsafe` in the current probe. |
 | Linux | `gsettings get org.gnome.desktop.interface enable-animations`, then KDE `AnimationDurationFactor` (`0` is reduced) via `kreadconfig6`/`kreadconfig5` | Xfce, Sway, and other desktops are unsupported and stay `None`. |
 
 Light/dark appearance is available (`Window::appearance`) but unused because
@@ -158,6 +158,7 @@ packaging or signing (no distributable yet).
 ## Open work
 
 - Reduced-transparency source (no GPUI API). Reduced motion is probed at launch only.
+- Windows reduced-motion detection still shells out to PowerShell. Replace it with a direct Win32 `SystemParametersInfo` call. See the roadmap.
 - macOS Full Keyboard Access semantics for Tab.
 - In-window menus for Windows/Linux; CSD titlebar for GNOME Wayland.
 - `Platform` injection so the Gallery can preview other platforms' conventions.

@@ -2,8 +2,15 @@
 //!
 //! A value control only. Timeline-specific behavior belongs in the
 //! application. Component metrics: track height 4, thumb 16,
-//! hit target height 28. `step <= 0` uses one hundredth of the span for both
-//! pointer and keyboard snapping. Pointer drags do not take keyboard focus.
+//! hit target height 28. Pointer drags do not take keyboard focus.
+//!
+//! The range is conventional and ascending: `min` and `max` are finite and
+//! `min <= max`. Reversed ranges are not supported. A non-finite endpoint or
+//! `min > max` is unusable and collapses to the value `0` for rendering,
+//! pointer input, and keyboard input. A zero-span range (`min == max`) is
+//! that single value. A non-positive or non-finite step on a positive span
+//! becomes one hundredth of the span. The same [`SliderRange`] is used for
+//! the thumb, pointer mapping, and keyboard nudges.
 //!
 //! Thumb position is `left` as a percentage of the track. The last painted
 //! bounds of a probe element map pointer position to a value; GPUI has no
@@ -42,43 +49,109 @@ const PAGE: i32 = 10;
 
 type ChangeHandler = Rc<dyn Fn(f32, &mut Window, &mut App)>;
 
-/// Step used for both pointer and keyboard. Non-positive steps become
-/// one hundredth of the span.
-pub fn effective_step(min: f32, max: f32, step: f32) -> f32 {
-    if step > 0.0 {
-        step
-    } else {
-        ((max - min) / 100.0).abs()
+/// Normalized ascending range shared by the thumb, pointer, and keyboard.
+#[derive(Clone, Copy, Debug)]
+struct SliderRange {
+    min: f32,
+    max: f32,
+    step: f32,
+}
+
+impl SliderRange {
+    /// `min` and `max` must be finite and `min <= max`. Otherwise the range
+    /// collapses to `0`. A non-positive or non-finite `step` on a positive
+    /// span becomes `span / 100`.
+    fn conventional(min: f32, max: f32, step: f32) -> Self {
+        if !(min.is_finite() && max.is_finite() && min <= max) {
+            return Self {
+                min: 0.0,
+                max: 0.0,
+                step: 0.0,
+            };
+        }
+        let step = if max == min {
+            0.0
+        } else if step.is_finite() && step > 0.0 {
+            step
+        } else {
+            let fallback = (max - min) / 100.0;
+            if fallback.is_finite() && fallback > 0.0 {
+                fallback
+            } else {
+                0.0
+            }
+        };
+        Self { min, max, step }
     }
+
+    fn resolve(self, value: f32) -> f32 {
+        // NaN has no position. Infinities clamp to the corresponding end.
+        let value = if value.is_nan() { self.min } else { value };
+        let clamped = value.clamp(self.min, self.max);
+        if self.step <= 0.0 {
+            return clamped;
+        }
+        let steps = ((clamped - self.min) / self.step).round();
+        if !steps.is_finite() {
+            return clamped;
+        }
+        let snapped = self.min + steps * self.step;
+        if snapped.is_finite() {
+            snapped.clamp(self.min, self.max)
+        } else {
+            clamped
+        }
+    }
+
+    /// Position of `value` along the track, after the value is resolved.
+    /// Zero-span and unusable ranges sit at 0. This does not apply a second snap.
+    fn position(self, value: f32) -> f32 {
+        let span = self.max - self.min;
+        if span <= 0.0 {
+            return 0.0;
+        }
+        let resolved = self.resolve(value);
+        ((resolved - self.min) / span).clamp(0.0, 1.0)
+    }
+
+    fn at_ratio(self, ratio: f32) -> f32 {
+        let ratio = if ratio.is_finite() {
+            ratio.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        self.resolve(self.min + (self.max - self.min) * ratio)
+    }
+
+    fn nudge(self, value: f32, steps: i32) -> f32 {
+        let base = self.resolve(value);
+        let delta = self.step * steps as f32;
+        if !delta.is_finite() {
+            return base;
+        }
+        self.resolve(base + delta)
+    }
+}
+
+/// Step used for both pointer and keyboard, after the range is normalized.
+pub fn effective_step(min: f32, max: f32, step: f32) -> f32 {
+    SliderRange::conventional(min, max, step).step
 }
 
 pub fn snap_to_step(value: f32, min: f32, max: f32, step: f32) -> f32 {
-    let (min, max) = if min <= max { (min, max) } else { (max, min) };
-    let step = effective_step(min, max, step);
-    if step == 0.0 {
-        return value.clamp(min, max);
-    }
-    let steps = ((value.clamp(min, max) - min) / step).round();
-    (min + steps * step).clamp(min, max)
+    SliderRange::conventional(min, max, step).resolve(value)
 }
 
 pub fn slider_ratio(value: f32, min: f32, max: f32) -> f32 {
-    let span = max - min;
-    if span.abs() < f32::EPSILON {
-        0.0
-    } else {
-        ((value - min) / span).clamp(0.0, 1.0)
-    }
+    SliderRange::conventional(min, max, 0.0).position(value)
 }
 
 pub fn value_from_ratio(ratio: f32, min: f32, max: f32, step: f32) -> f32 {
-    let (min, max) = if min <= max { (min, max) } else { (max, min) };
-    snap_to_step(min + (max - min) * ratio.clamp(0.0, 1.0), min, max, step)
+    SliderRange::conventional(min, max, step).at_ratio(ratio)
 }
 
 pub fn nudge(value: f32, min: f32, max: f32, step: f32, steps: i32) -> f32 {
-    let delta = effective_step(min, max, step) * steps as f32;
-    snap_to_step(value + delta, min, max, step)
+    SliderRange::conventional(min, max, step).nudge(value, steps)
 }
 
 /// A horizontal slider.
@@ -152,8 +225,9 @@ impl RenderOnce for Slider {
         let focus = model.read(cx).focus.clone();
         let dragging = model.read(cx).dragging;
         let focused = !self.disabled && focus.is_focused(window);
-        let value = snap_to_step(self.value, self.min, self.max, self.step);
-        let ratio = slider_ratio(value, self.min, self.max);
+        let range = SliderRange::conventional(self.min, self.max, self.step);
+        let value = range.resolve(self.value);
+        let ratio = range.position(value);
         if self.inspected {
             inspect::report_inspection(Inspection {
                 name: "Slider",
@@ -164,9 +238,6 @@ impl RenderOnce for Slider {
         let colors = &theme.colors;
         let enabled = !self.disabled;
         let on_change = self.on_change.clone();
-        let min = self.min;
-        let max = self.max;
-        let step = self.step;
 
         let mut control = div()
             .id(self.id.clone())
@@ -202,7 +273,7 @@ impl RenderOnce for Slider {
                     apply_pointer(
                         &model_down,
                         event.position,
-                        PointerMap { min, max, step },
+                        PointerMap { range },
                         change_down.clone(),
                         window,
                         cx,
@@ -218,7 +289,7 @@ impl RenderOnce for Slider {
                         apply_pointer(
                             &model_move,
                             event.position,
-                            PointerMap { min, max, step },
+                            PointerMap { range },
                             change_move.clone(),
                             window,
                             cx,
@@ -248,69 +319,49 @@ impl RenderOnce for Slider {
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgeLeft, window, cx| {
-                        emit(nudge(value, min, max, step, -1), change.clone(), window, cx)
+                        emit(range.nudge(value, -1), change.clone(), window, cx)
                     }
                 })
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgeDown, window, cx| {
-                        emit(nudge(value, min, max, step, -1), change.clone(), window, cx)
+                        emit(range.nudge(value, -1), change.clone(), window, cx)
                     }
                 })
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgeRight, window, cx| {
-                        emit(nudge(value, min, max, step, 1), change.clone(), window, cx)
+                        emit(range.nudge(value, 1), change.clone(), window, cx)
                     }
                 })
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgeUp, window, cx| {
-                        emit(nudge(value, min, max, step, 1), change.clone(), window, cx)
+                        emit(range.nudge(value, 1), change.clone(), window, cx)
                     }
                 })
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgePageDown, window, cx| {
-                        emit(
-                            nudge(value, min, max, step, -PAGE),
-                            change.clone(),
-                            window,
-                            cx,
-                        )
+                        emit(range.nudge(value, -PAGE), change.clone(), window, cx)
                     }
                 })
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgePageUp, window, cx| {
-                        emit(
-                            nudge(value, min, max, step, PAGE),
-                            change.clone(),
-                            window,
-                            cx,
-                        )
+                        emit(range.nudge(value, PAGE), change.clone(), window, cx)
                     }
                 })
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgeToStart, window, cx| {
-                        emit(
-                            snap_to_step(min, min, max, step),
-                            change.clone(),
-                            window,
-                            cx,
-                        )
+                        emit(range.resolve(range.min), change.clone(), window, cx)
                     }
                 })
                 .on_action({
                     let change = change.clone();
                     move |_: &NudgeToEnd, window, cx| {
-                        emit(
-                            snap_to_step(max, min, max, step),
-                            change.clone(),
-                            window,
-                            cx,
-                        )
+                        emit(range.resolve(range.max), change.clone(), window, cx)
                     }
                 });
         }
@@ -326,9 +377,7 @@ fn emit(value: f32, on_change: Option<ChangeHandler>, window: &mut Window, cx: &
 }
 
 struct PointerMap {
-    min: f32,
-    max: f32,
-    step: f32,
+    range: SliderRange,
 }
 
 fn apply_pointer(
@@ -347,12 +396,7 @@ fn apply_pointer(
         return;
     }
     let ratio = ((position.x - bounds.left()) / width).clamp(0.0, 1.0);
-    emit(
-        value_from_ratio(ratio, map.min, map.max, map.step),
-        on_change,
-        window,
-        cx,
-    );
+    emit(map.range.at_ratio(ratio), on_change, window, cx);
 }
 
 fn track_visual(track: Color, fill: Color, ratio: f32) -> impl IntoElement {
@@ -450,13 +494,87 @@ impl Element for BoundsProbe {
 mod tests {
     use super::*;
 
+    fn near(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
+    }
+
     #[test]
     fn snap_and_keyboard_stay_inside_the_range() {
-        assert!((snap_to_step(0.26, 0.0, 1.0, 0.25) - 0.25).abs() < 1e-5);
-        assert!((nudge(1.0, 0.0, 1.0, 0.25, 1) - 1.0).abs() < 1e-5);
-        assert!((nudge(0.0, 0.0, 1.0, 0.25, -1) - 0.0).abs() < 1e-5);
-        assert!((nudge(0.0, 0.0, 1.0, 0.0, 1) - 0.01).abs() < 1e-5);
-        assert!((value_from_ratio(1.2, 0.0, 10.0, 1.0) - 10.0).abs() < 1e-5);
-        assert!((slider_ratio(5.0, 0.0, 10.0) - 0.5).abs() < 1e-5);
+        near(snap_to_step(0.26, 0.0, 1.0, 0.25), 0.25);
+        near(nudge(1.0, 0.0, 1.0, 0.25, 1), 1.0);
+        near(nudge(0.0, 0.0, 1.0, 0.25, -1), 0.0);
+        near(nudge(0.0, 0.0, 1.0, 0.0, 1), 0.01);
+        near(value_from_ratio(1.2, 0.0, 10.0, 1.0), 10.0);
+        near(slider_ratio(5.0, 0.0, 10.0), 0.5);
+    }
+
+    #[test]
+    fn unusable_ranges_collapse_to_zero_on_every_path() {
+        for (min, max) in [
+            (10.0, 0.0),
+            (f32::NAN, 1.0),
+            (0.0, f32::INFINITY),
+            (f32::NEG_INFINITY, f32::NAN),
+        ] {
+            near(effective_step(min, max, 1.0), 0.0);
+            near(snap_to_step(5.0, min, max, 1.0), 0.0);
+            near(slider_ratio(5.0, min, max), 0.0);
+            near(value_from_ratio(0.4, min, max, 1.0), 0.0);
+            near(nudge(5.0, min, max, 1.0, 3), 0.0);
+        }
+    }
+
+    #[test]
+    fn zero_span_is_that_single_value() {
+        near(effective_step(4.0, 4.0, 1.0), 0.0);
+        near(snap_to_step(9.0, 4.0, 4.0, 1.0), 4.0);
+        near(snap_to_step(f32::NAN, 4.0, 4.0, 1.0), 4.0);
+        near(slider_ratio(9.0, 4.0, 4.0), 0.0);
+        near(value_from_ratio(1.0, 4.0, 4.0, 1.0), 4.0);
+        near(nudge(9.0, 4.0, 4.0, 1.0, 5), 4.0);
+    }
+
+    #[test]
+    fn out_of_range_and_non_finite_values_clamp_then_snap() {
+        near(snap_to_step(-10.0, 0.0, 10.0, 2.0), 0.0);
+        near(snap_to_step(11.0, 0.0, 10.0, 2.0), 10.0);
+        near(snap_to_step(f32::NAN, 2.0, 8.0, 2.0), 2.0);
+        near(snap_to_step(f32::INFINITY, 0.0, 10.0, 2.0), 10.0);
+        near(snap_to_step(f32::NEG_INFINITY, 0.0, 10.0, 2.0), 0.0);
+        near(nudge(100.0, 0.0, 10.0, 2.0, 1), 10.0);
+        near(nudge(-4.0, 0.0, 10.0, 2.0, -1), 0.0);
+    }
+
+    #[test]
+    fn non_positive_steps_share_one_fallback() {
+        near(effective_step(0.0, 100.0, 0.0), 1.0);
+        near(effective_step(0.0, 100.0, -5.0), 1.0);
+        near(effective_step(0.0, 100.0, f32::NAN), 1.0);
+        near(effective_step(0.0, 100.0, f32::INFINITY), 1.0);
+        near(nudge(0.0, 0.0, 1.0, -1.0, 1), 0.01);
+        near(snap_to_step(0.264, 0.0, 1.0, 0.0), 0.26);
+    }
+
+    #[test]
+    fn pointer_keyboard_and_thumb_use_the_same_range() {
+        let min = 0.0;
+        let max = 10.0;
+        let step = 2.0;
+        for raw in [0.0, 1.2, 3.0, 9.9, 20.0, -1.0, f32::NAN] {
+            let resolved = snap_to_step(raw, min, max, step);
+            let ratio = slider_ratio(resolved, min, max);
+            near(value_from_ratio(ratio, min, max, step), resolved);
+            near(nudge(resolved, min, max, step, 0), resolved);
+        }
+        near(
+            value_from_ratio(0.0, min, max, step),
+            snap_to_step(min, min, max, step),
+        );
+        near(
+            value_from_ratio(1.0, min, max, step),
+            snap_to_step(max, min, max, step),
+        );
+        near(nudge(4.0, min, max, step, 1), 6.0);
+        near(nudge(4.0, min, max, step, -1), 2.0);
     }
 }

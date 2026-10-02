@@ -89,8 +89,10 @@ impl Platform {
     /// Linux reads GNOME `enable-animations` and, if that is missing, KDE's
     /// `AnimationDurationFactor` (0 means reduced). Xfce, Sway, and other
     /// desktops are unsupported. macOS reads `com.apple.universalaccess`
-    /// `reduceMotion`; a missing key is full motion. Windows asks
-    /// `SystemParametersInfo(SPI_GETCLIENTAREAANIMATION)` through PowerShell.
+    /// `reduceMotion`; a missing key is full motion. Windows currently asks
+    /// `SystemParametersInfo(SPI_GETCLIENTAREAANIMATION)` by spawning
+    /// PowerShell. That shell-out is temporary platform technical debt: the
+    /// replacement should call the Win32 API directly, without a process.
     /// GPUI 0.2.2 has no reduced-motion API, and these probes are not live
     /// subscriptions.
     pub fn detect_reduced_motion(self) -> Option<bool> {
@@ -200,6 +202,9 @@ fn detect_macos() -> Option<bool> {
     parse_defaults_reduce_motion(&text)
 }
 
+/// Temporary. Spawning PowerShell is platform technical debt. Replace this
+/// with a direct `SystemParametersInfo(SPI_GETCLIENTAREAANIMATION)` call
+/// when that can be done without `unsafe` or a new platform crate.
 fn detect_windows() -> Option<bool> {
     let script = r#"
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class AtelierSpi { [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint a, uint b, ref bool v, uint f); }'
