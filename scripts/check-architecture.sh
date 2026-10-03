@@ -50,7 +50,18 @@ if matches=$(grep -RInE 'cfg!\(\s*target_os|cfg\(\s*target_os' \
   echo "$matches" >&2
 fi
 
-# 6. The shipping app and spikes stay outside the workspace.
+# 6. Playback does not depend on the UI stack, and foreign calls stay in one module.
+if grep -qE '^\s*(gpui|atelier-ui|atelier-app|matinee-ui)(\s|\.)' crates/matinee-player/Cargo.toml; then
+  fail "matinee-player must not depend on gpui, atelier-ui, atelier-app, or matinee-ui"
+fi
+if matches=$(grep -RInE 'unsafe[[:space:]]*(impl|fn|extern|\{)' \
+  crates/matinee-player/src --include='*.rs' \
+  | grep -v '^crates/matinee-player/src/engine/ffi.rs:'); then
+  fail "unsafe outside crates/matinee-player/src/engine/ffi.rs:"
+  echo "$matches" >&2
+fi
+
+# 7. The shipping app and spikes stay outside the workspace.
 for path in src-tauri spikes; do
   if ! grep -qE "exclude = \[.*\"$path\"" Cargo.toml; then
     fail "root Cargo.toml must exclude \"$path\" from the workspace"

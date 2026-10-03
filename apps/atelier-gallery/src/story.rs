@@ -163,6 +163,13 @@ pub const STORIES: &[Story] = &[
         render: stories::composition::image,
     },
     Story {
+        id: "external-frame",
+        title: "External Frame",
+        summary: "A latest BGRA picture from outside the framework. Fit letterboxes. Fill covers. Nothing here knows about codecs.",
+        section: Section::Components,
+        render: stories::external_frame::render,
+    },
+    Story {
         id: "progress",
         title: "Progress",
         summary: "Determinate and indeterminate meters. Reduced motion holds the indeterminate segment still.",

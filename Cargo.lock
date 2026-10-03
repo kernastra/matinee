@@ -439,7 +439,9 @@ dependencies = [
 name = "atelier-ui"
 version = "0.0.0"
 dependencies = [
+ "futures",
  "gpui",
+ "image",
  "unicode-segmentation",
 ]
 
@@ -3170,8 +3172,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "matinee-playback-lab"
+version = "0.0.0"
+dependencies = [
+ "atelier-app",
+ "atelier-ui",
+ "futures",
+ "matinee-player",
+ "matinee-ui",
+]
+
+[[package]]
 name = "matinee-player"
 version = "0.0.0"
+dependencies = [
+ "libloading",
+ "serde_json",
+]
 
 [[package]]
 name = "matinee-ui"

@@ -1,6 +1,6 @@
 [package]
 name = "matinee-player"
-description = "Boundary for Matinee's native playback engine (libmpv recommended; see docs/architecture/playback.md). No API in Phase 0."
+description = "Matinee's native playback engine. libmpv is loaded at runtime and stays behind this API."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,15 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+libloading = "0.8"
+serde_json = "1"
 
-[lints]
-workspace = true
+# The workspace forbids `unsafe_code`. This crate is the one exception: the
+# libmpv client API is C. Cargo cannot inherit workspace lints and override a
+# single one, so the clippy set is repeated here and `unsafe_code` is allowed.
+# Every `unsafe` block lives in `engine/ffi.rs`.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

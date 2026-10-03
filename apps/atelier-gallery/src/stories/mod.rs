@@ -3,6 +3,7 @@ pub mod checkbox;
 pub mod colors;
 pub mod composition;
 pub mod desktop;
+pub mod external_frame;
 pub mod icon_buttons;
 pub mod icons;
 pub mod motion;

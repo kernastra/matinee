@@ -1,0 +1,22 @@
+[package]
+name = "matinee-playback-lab"
+description = "Manual harness for the native playback engine and the external frame surface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "matinee-playback-lab"
+path = "src/main.rs"
+
+[dependencies]
+atelier-app.workspace = true
+atelier-ui.workspace = true
+futures = "0.3"
+matinee-player.workspace = true
+matinee-ui.workspace = true
+
+[lints]
+workspace = true

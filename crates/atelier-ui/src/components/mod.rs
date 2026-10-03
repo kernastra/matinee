@@ -2,6 +2,7 @@ mod button;
 mod checkbox;
 mod dialog;
 mod empty_state;
+mod external_frame;
 mod focus_gate;
 mod focus_ring;
 mod icon;
@@ -32,6 +33,10 @@ pub use button::{
 pub use checkbox::{Checkbox, CheckboxState, checkbox_activate};
 pub use dialog::{Dialog, DialogAction};
 pub use empty_state::EmptyState;
+pub use external_frame::{
+    BgraFrame, ExternalFrameSurface, FrameError, FrameMailbox, FramePlacement, MailboxStats,
+    place_frame,
+};
 pub use focus_ring::{FOCUS_RING_GAP, FOCUS_RING_WIDTH, FocusRing};
 pub use icon::{Icon, IconName, IconSize, UiAssets};
 pub use image::{Image, ImageContent, ImageFit, SAMPLE_COUNT, sample_asset};
