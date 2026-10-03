@@ -54,9 +54,9 @@ focus traversal is installed by `atelier-app` on all platforms. On macOS,
 On macOS, `AtelierApp` installs a native menu bar: App menu (Settings, Services,
 Quit) and Window menu (Minimize, Full Screen, Close). On Windows and Linux
 GPUI 0.2.2 renders no menu bar. `set_menus` is only called where a global
-menu bar exists. In-window menus for Windows and Linux (a hamburger or
-overflow menu following platform conventions) are Phase 1+ and need an
-overlay/popover primitive.
+menu bar exists. An in-window stand-in for that menu bar (a hamburger or
+overflow following platform conventions) is still not wired. Phase 1B added
+the Popover and Menu primitives that stand-in would use.
 
 ## Window architecture
 

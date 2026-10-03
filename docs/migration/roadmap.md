@@ -5,7 +5,7 @@ The Tauri app stays the shipping product throughout. Each phase begins
 reference app and reach parity screen by screen; nothing in `src/` or
 `src-tauri/` is removed until a replacement is approved.
 
-## Phase 0: Foundation (this phase)
+## Phase 0: Foundation (landed)
 
 Done:
 
@@ -31,21 +31,29 @@ Done, without starting screen migration or playback:
 
 ### Interaction follow-ups (not started)
 
-These stay inside the interaction model. They are not permission to start screen migration, overlays, window chrome, or playback.
+These stay inside the interaction model. They are not permission to start screen migration, window chrome, or playback. Overlays landed separately in Phase 1B.
 
 - Blinking text caret. The caret is a solid 1px quad.
 - Word-boundary movement that follows platform segmentation. Movement today is whitespace-delimited, not UAX #29.
 - Manual IME validation on macOS, Windows, and Linux. Composition is implemented; headless tests do not drive a session.
 - Windows reduced-motion detection via the Win32 API. The launch probe spawns PowerShell (`SystemParametersInfo`) and that shell-out is temporary technical debt.
 
+## Phase 1B: Desktop composition and overlays (landed)
+
+Done, without window chrome, screen migration, or playback:
+
+- ScrollView, List/ListRow, Image, ProgressBar, Tooltip, Popover, Menu, ContextMenu, Dialog, Sidebar, Toolbar, SplitView, EmptyState.
+- Shared overlay focus (open, move inside, restore on close; dialogs trap Tab) and linear keyboard movement that skips disabled rows.
+- A Desktop Composition Gallery story, plus one story per component.
+- Submenus, list virtualization, and a third split pane are explicitly deferred.
+
 ## Phase 1: Framework depth and playback core (remainder, not started)
 
 Framework (`atelier-ui` / `atelier-app`):
 
 1. ~~Bundle Matinee fonts~~ and ~~OS reduced motion~~ (done in 1A).
-2. Primitives still needed by real screens, each with a Gallery story:
-   scroll container conventions, list/row with selection, overlay/popover,
-   tooltip polish, progress bar, image with a graceful placeholder.
+2. ~~Scroll, list, image, progress, tooltip, and overlays~~ (done in 1B).
+   Still open inside this item: submenu menus, virtualized lists, an inspector pane on SplitView.
 3. Window chrome per [platform-strategy.md](../architecture/platform-strategy.md):
    macOS unified titlebar with real traffic lights, Linux CSD fallback.
 4. Gallery preview axes still open: simulated platform. Scale factor cannot

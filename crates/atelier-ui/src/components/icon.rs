@@ -38,7 +38,10 @@ icons! {
     ChevronLeft => "chevron-left",
     ChevronRight => "chevron-right",
     Close => "close",
+    Download => "download",
+    Folder => "folder",
     Heart => "heart",
+    Home => "home",
     Info => "info",
     More => "more",
     Pause => "pause",
@@ -51,6 +54,26 @@ icons! {
 }
 
 const ASSET_PREFIX: &str = "atelier/icons/";
+const SAMPLE_PREFIX: &str = "atelier/samples/";
+
+const SAMPLE_FILES: &[(&str, &[u8])] = &[
+    (
+        "swatch-0.png",
+        include_bytes!("../../assets/samples/swatch-0.png"),
+    ),
+    (
+        "swatch-1.png",
+        include_bytes!("../../assets/samples/swatch-1.png"),
+    ),
+    (
+        "swatch-2.png",
+        include_bytes!("../../assets/samples/swatch-2.png"),
+    ),
+    (
+        "swatch-3.png",
+        include_bytes!("../../assets/samples/swatch-3.png"),
+    ),
+];
 
 impl IconName {
     pub fn asset_path(self) -> SharedString {
@@ -65,24 +88,35 @@ pub struct UiAssets;
 
 impl AssetSource for UiAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-        let Some(name) = path
+        if let Some(name) = path
             .strip_prefix(ASSET_PREFIX)
             .and_then(|p| p.strip_suffix(".svg"))
-        else {
-            return Ok(None);
-        };
-        Ok(IconName::ALL
-            .iter()
-            .find(|icon| icon.file_name() == name)
-            .map(|icon| Cow::Borrowed(icon.bytes())))
+        {
+            return Ok(IconName::ALL
+                .iter()
+                .find(|icon| icon.file_name() == name)
+                .map(|icon| Cow::Borrowed(icon.bytes())));
+        }
+        if let Some(name) = path.strip_prefix(SAMPLE_PREFIX) {
+            return Ok(SAMPLE_FILES
+                .iter()
+                .find(|(file, _)| *file == name)
+                .map(|(_, bytes)| Cow::Borrowed(*bytes)));
+        }
+        Ok(None)
     }
 
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
-        Ok(IconName::ALL
+        let mut paths: Vec<SharedString> = IconName::ALL
             .iter()
             .map(|icon| icon.asset_path())
             .filter(|p| p.starts_with(path))
-            .collect())
+            .collect();
+        paths.extend(SAMPLE_FILES.iter().filter_map(|(file, _)| {
+            let path_for_file: SharedString = format!("{SAMPLE_PREFIX}{file}").into();
+            path_for_file.starts_with(path).then_some(path_for_file)
+        }));
+        Ok(paths)
     }
 }
 
@@ -188,5 +222,14 @@ mod tests {
     fn unknown_paths_are_not_claimed() {
         assert!(UiAssets.load("app/logo.png").unwrap().is_none());
         assert!(UiAssets.load("atelier/icons/nope.svg").unwrap().is_none());
+    }
+
+    #[test]
+    fn sample_images_are_pngs() {
+        for (file, _) in SAMPLE_FILES {
+            let path = format!("{SAMPLE_PREFIX}{file}");
+            let bytes = UiAssets.load(&path).unwrap().expect(file);
+            assert!(bytes.starts_with(b"\x89PNG"), "{file}");
+        }
     }
 }
