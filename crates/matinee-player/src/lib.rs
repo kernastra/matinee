@@ -12,7 +12,6 @@ mod engine;
 mod error;
 mod frame;
 mod player;
-mod profile;
 mod state;
 mod tracks;
 
@@ -20,6 +19,5 @@ pub use engine::{EngineInfo, LoadRequest, measure_software_render, probe_engine}
 pub use error::PlayerError;
 pub use frame::{CpuFrame, Diagnostics};
 pub use player::Player;
-pub use profile::{PROFILE_NAME, native_device_profile};
 pub use state::{PlaybackState, PlayerEvent, Snapshot};
 pub use tracks::{SubtitleForm, Track, TrackId, TrackKind};

@@ -190,8 +190,15 @@ CI is split by platform. That split is not playback validation on every OS.
 
 ## Jellyfin
 
-`native_device_profile()` is the declaration a future client would post.
-The name is `Matinee Native`. It is not the shipping WebKit profile.
+`matinee_core::native_playback()` is the capability declaration. The name
+is `Matinee Native`. It is not the shipping WebKit profile.
+`matinee-jellyfin` turns that declaration into the device-profile JSON it
+posts. This crate does not build that JSON and does not depend on
+`matinee-core` or `matinee-jellyfin`. The engine plays the formats the
+declaration lists. The client does not use the shipping static
+`/Videos/{id}/stream?Static=true` fallback when negotiation returns
+`NoCompatibleStream`. It returns a typed `NoCompatibleSource` error instead.
+See [jellyfin.md](jellyfin.md).
 
 Direct play, because these combinations were opened with this engine:
 

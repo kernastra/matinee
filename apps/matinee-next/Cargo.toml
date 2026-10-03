@@ -1,6 +1,6 @@
 [package]
 name = "matinee-next"
-description = "Phase 0 shell for the future native Matinee app. Not a product; no features are migrated."
+description = "Featureless shell for the native Matinee app. Depends on the domain crate only to record that direction."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 atelier-app.workspace = true
 atelier-ui.workspace = true
+matinee-core.workspace = true
 matinee-ui.workspace = true
 
 [lints]

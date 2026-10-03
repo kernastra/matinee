@@ -31,6 +31,8 @@ atelier-app = { path = "crates/atelier-app" }
 # Matinee crates.
 matinee-ui = { path = "crates/matinee-ui" }
 matinee-player = { path = "crates/matinee-player" }
+matinee-core = { path = "crates/matinee-core" }
+matinee-jellyfin = { path = "crates/matinee-jellyfin" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
