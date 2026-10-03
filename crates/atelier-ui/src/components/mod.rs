@@ -36,7 +36,8 @@ pub use focus_ring::{FOCUS_RING_GAP, FOCUS_RING_WIDTH, FocusRing};
 pub use icon::{Icon, IconName, IconSize, UiAssets};
 pub use image::{Image, ImageContent, ImageFit, SAMPLE_COUNT, sample_asset};
 pub use keybindings::{
-    Activate, ComponentKeymap, Dismiss, FocusNext, FocusPrevious, install_component_keybindings,
+    Activate, ComponentKeymap, Copy, Cut, Dismiss, FocusNext, FocusPrevious, Paste, SelectAll,
+    install_component_keybindings,
 };
 pub use list::{List, ListRow};
 pub use menu::{ContextMenu, Menu, MenuEntry, MenuItem, MenuSeparator};

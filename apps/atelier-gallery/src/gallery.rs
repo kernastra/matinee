@@ -1,5 +1,6 @@
 use atelier_app::{
-    Command, FRAMEWORK_NAME, Platform, command::OpenSettings, set_motion_preference, set_theme,
+    ChromeIntent, Command, FRAMEWORK_NAME, Platform, command::OpenSettings, on_fullscreen_escape,
+    resolve_chrome, set_motion_preference, set_theme,
 };
 use atelier_ui::prelude::*;
 use atelier_ui::{Inspection, clear_inspection, current_inspection};
@@ -282,9 +283,11 @@ impl Render for Gallery {
         };
         let reduced = cx.ui_preferences().motion() == MotionPreference::Reduced;
 
-        h_stack(Space::S0)
+        let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
+        let body = h_stack(Space::S0)
             .id("gallery")
             .track_focus(&self.focus_handle)
+            .on_key_down(on_fullscreen_escape)
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
                 this.show_preview_controls = !this.show_preview_controls;
                 cx.notify();
@@ -327,7 +330,16 @@ impl Render for Gallery {
                                     )),
                             ),
                     ),
-            )
+            );
+        if chrome.band_height > 0.0 {
+            v_stack(Space::S0)
+                .size_full()
+                .child(div().w_full().h(px(chrome.band_height)).flex_none())
+                .child(body.flex_1().min_h(px(0.0)))
+                .into_any_element()
+        } else {
+            body.into_any_element()
+        }
     }
 }
 

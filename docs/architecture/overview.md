@@ -1,6 +1,6 @@
 # Matinee Next — Architecture Overview
 
-Status: **Phase 1B (desktop composition and overlays) on the Phase 0 foundation**. The shipping app is still the Tauri + React
+Status: **Phase 1C (native window) on the Phase 1B foundation**. The shipping app is still the Tauri + React
 app in `src/` and `src-tauri/`; it remains the reference implementation and is
 not modified by this work. The Rust + GPUI workspace described here is being
 built *alongside* it.
@@ -30,11 +30,13 @@ Applications live in `apps/`:
 | App | Purpose |
 |---|---|
 | `apps/atelier-gallery` | The component catalog (Storybook / SwiftUI Previews equivalent). Product-neutral; Matinee's theme is an opt-in cargo feature (`matinee-theme`, on by default in this repo) so components can be previewed under it. |
-| `apps/matinee-next` | A Phase 0 shell that boots the framework with the Matinee theme. Has no product features by design. |
+| `apps/atelier-window-lab` | Manual inspection of native window chrome, insets, fullscreen, and scale. Not a component story. |
+| `apps/matinee-next` | A featureless shell: Matinee theme, native window, generic toolbar and sidebar. |
 
 ```
 apps/atelier-gallery ─┬─> atelier-app ──> atelier-ui ──> gpui (=0.2.2)
                       └─> matinee-ui (optional) ──> atelier-ui
+apps/atelier-window-lab ──> atelier-app
 apps/matinee-next ────┬─> atelier-app
                       └─> matinee-ui
 matinee-player          (no dependencies yet)
@@ -52,11 +54,12 @@ Cargo.toml            Rust workspace root (members: crates/*, apps/*)
 Cargo.lock            Lockfile for the new workspace only
 crates/
   atelier-ui/         tokens/, theme.rs, components/, motion.rs, bridge.rs (GPUI conversions)
-  atelier-app/        app.rs (bootstrap, windows), command.rs, platform.rs
+  atelier-app/        app.rs, window.rs, chrome.rs, geometry.rs, command.rs, platform.rs
   matinee-ui/         Matinee theme and bundled fonts
   matinee-player/     Playback boundary (no API yet)
 apps/
   atelier-gallery/    story registry + stories/
+  atelier-window-lab/ native window harness
   matinee-next/       themed shell
 scripts/check-architecture.sh
 src/, src-tauri/      Shipping Tauri + React app (unchanged; src-tauri has its own Cargo.lock)
@@ -105,6 +108,7 @@ sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland
 
 cargo +1.90.0 run -p atelier-gallery            # opens the Gallery
 cargo +1.90.0 run -p atelier-gallery -- button  # opens a specific story by id
+cargo +1.90.0 run -p atelier-window-lab         # native window harness
 cargo +1.90.0 run -p matinee-next               # Matinee-themed shell
 ATELIER_REDUCED_MOTION=1 cargo +1.90.0 run -p atelier-gallery
 

@@ -444,6 +444,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "atelier-window-lab"
+version = "0.0.0"
+dependencies = [
+ "atelier-app",
+ "atelier-ui",
+]
+
+[[package]]
 name = "atomic"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

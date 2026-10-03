@@ -1,9 +1,9 @@
 //! Horizontal toolbar.
 //!
 //! Leading and trailing regions share the leftover width, so a center title
-//! sits in the middle. The bar does not draw window controls and does not
-//! assume it sits under a separate titlebar. A later platform pass can place
-//! it in a unified titlebar without changing this layout.
+//! sits in the middle. The bar does not draw window controls. Callers that
+//! place it in an in-client titlebar apply the inset from `atelier-app`
+//! around this layout; the bar itself has no platform pixel constants.
 
 use gpui::prelude::FluentBuilder;
 use gpui::{AnyElement, App, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px};
