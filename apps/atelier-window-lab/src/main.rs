@@ -5,7 +5,7 @@
 //! Gallery story and it has no product content.
 
 use atelier_app::{
-    AppInfo, AtelierApp, ChromeIntent, Platform, WindowSpec, install_window_input, open_window,
+    AppInfo, AtelierApp, ChromeIntent, Platform, WindowSpec, on_fullscreen_escape, open_window,
     resolve_chrome, titlebar_leading, titlebar_spacer,
 };
 use atelier_ui::prelude::*;
@@ -33,7 +33,6 @@ impl Lab {
 
 impl Render for Lab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        install_window_input(window);
         let theme = cx.theme().clone();
         let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
         let platform = Platform::current();
@@ -161,6 +160,7 @@ impl Render for Lab {
         v_stack(Space::S0)
             .id("window-lab")
             .track_focus(&self.focus)
+            .on_key_down(on_fullscreen_escape)
             .size_full()
             .bg(theme.colors.surface.canvas)
             .font_family(theme.typography.families.interface)

@@ -152,15 +152,19 @@ pub fn next_saved_geometry(
     fullscreen: bool,
     min_size: (f32, f32),
     max_size: Option<(f32, f32)>,
+    displays: &[LogicalRect],
 ) -> WindowGeometry {
-    if fullscreen {
-        return previous;
-    }
-    if maximized {
+    if fullscreen || maximized {
         return WindowGeometry {
-            maximized: true,
+            maximized: maximized || (previous.maximized && fullscreen),
             ..previous
         };
+    }
+    // A fullscreen transition can report the display size before
+    // `is_fullscreen` flips. A frame past the requested maximum is the same
+    // kind of transient. Neither replaces the normal frame.
+    if frame_is_transient(observed, max_size, displays) {
+        return previous;
     }
     let (width, height) = clamp_size(observed.width, observed.height, min_size, max_size);
     WindowGeometry {
@@ -170,6 +174,22 @@ pub fn next_saved_geometry(
         height,
         maximized: false,
     }
+}
+
+fn frame_is_transient(
+    observed: LogicalRect,
+    max_size: Option<(f32, f32)>,
+    displays: &[LogicalRect],
+) -> bool {
+    if let Some((max_width, max_height)) = max_size
+        && (observed.width > max_width + 1.0 || observed.height > max_height + 1.0)
+    {
+        return true;
+    }
+    displays.iter().any(|display| {
+        (observed.width - display.width).abs() < 2.0
+            && (observed.height - display.height).abs() < 2.0
+    })
 }
 
 pub fn encode_geometry(geometry: &WindowGeometry) -> String {
@@ -436,6 +456,7 @@ mod tests {
             true,
             (400.0, 300.0),
             None,
+            &[],
         );
         assert_eq!(next, previous);
     }
@@ -461,10 +482,75 @@ mod tests {
             false,
             (400.0, 300.0),
             None,
+            &[],
         );
         assert!(next.maximized);
         assert_eq!(next.width, 800.0);
         assert_eq!(next.x, 10.0);
+    }
+
+    #[test]
+    fn display_sized_frame_does_not_replace_the_normal_frame() {
+        let previous = WindowGeometry {
+            x: 40.0,
+            y: 60.0,
+            width: 720.0,
+            height: 480.0,
+            maximized: false,
+        };
+        let display = LogicalRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1200.0,
+        };
+        let next = next_saved_geometry(
+            previous,
+            LogicalRect {
+                x: 0.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1200.0,
+            },
+            false,
+            false,
+            (720.0, 480.0),
+            Some((1600.0, 1000.0)),
+            &[display],
+        );
+        assert_eq!(next, previous);
+        let over_max = next_saved_geometry(
+            previous,
+            LogicalRect {
+                x: 0.0,
+                y: 0.0,
+                width: 1700.0,
+                height: 1100.0,
+            },
+            false,
+            false,
+            (720.0, 480.0),
+            Some((1600.0, 1000.0)),
+            &[display],
+        );
+        assert_eq!(over_max, previous);
+        let resized = next_saved_geometry(
+            previous,
+            LogicalRect {
+                x: 80.0,
+                y: 90.0,
+                width: 1000.0,
+                height: 700.0,
+            },
+            false,
+            false,
+            (720.0, 480.0),
+            Some((1600.0, 1000.0)),
+            &[display],
+        );
+        assert_eq!(resized.width, 1000.0);
+        assert_eq!(resized.height, 700.0);
+        assert_eq!(resized.x, 80.0);
     }
 
     #[test]

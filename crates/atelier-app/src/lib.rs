@@ -17,7 +17,7 @@ pub use chrome::{ChromeIntent, DecorationSource, ResolvedChrome, resolve_chrome}
 pub use command::{Command, Shortcut};
 pub use platform::Platform;
 pub use window::{
-    WindowSpec, install_window_input, open_window, titlebar_leading, titlebar_spacer,
+    WindowSpec, on_fullscreen_escape, open_window, titlebar_leading, titlebar_spacer,
 };
 
 /// Display name of the framework. Kept in one place so the working name

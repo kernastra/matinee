@@ -1,5 +1,5 @@
 use atelier_app::{
-    ChromeIntent, Command, FRAMEWORK_NAME, Platform, command::OpenSettings, install_window_input,
+    ChromeIntent, Command, FRAMEWORK_NAME, Platform, command::OpenSettings, on_fullscreen_escape,
     resolve_chrome, set_motion_preference, set_theme,
 };
 use atelier_ui::prelude::*;
@@ -272,7 +272,6 @@ impl Gallery {
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        install_window_input(window);
         let theme = cx.theme().clone();
         let story = self.selected;
         clear_inspection();
@@ -288,6 +287,7 @@ impl Render for Gallery {
         let body = h_stack(Space::S0)
             .id("gallery")
             .track_focus(&self.focus_handle)
+            .on_key_down(on_fullscreen_escape)
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
                 this.show_preview_controls = !this.show_preview_controls;
                 cx.notify();

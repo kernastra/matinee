@@ -142,7 +142,10 @@ state directory (`~/Library/Application Support/Atelier`, `%APPDATA%/Atelier`,
 `$XDG_STATE_HOME/atelier` or `~/.local/state/atelier`). The file stores the
 normal origin and size plus a maximized flag. A restored frame that does not
 leave its top edge on a display is moved onto the nearest display. Fullscreen
-does not overwrite that file. This is not a settings database.
+does not overwrite that file. A bounds event that arrives before
+`is_fullscreen` flips, or a frame larger than the requested maximum, is
+treated as transient and left unsaved. A window that is exactly the display
+size is also left unsaved. This is not a settings database.
 
 ### Window Lab
 

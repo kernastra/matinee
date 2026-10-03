@@ -3,10 +3,10 @@
 use std::path::PathBuf;
 
 use atelier_ui::gpui::{
-    App, AppContext, BorrowAppContext, Bounds, Context, DispatchPhase, Entity, Global,
-    InteractiveElement, KeyDownEvent, MouseButton, MouseDownEvent, Render, SharedString, Styled,
-    TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowDecorations, WindowHandle,
-    WindowOptions, div, point, px, size,
+    App, AppContext, BorrowAppContext, Bounds, Context, Entity, Global, InteractiveElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, Render, SharedString, Styled, TitlebarOptions,
+    Window, WindowBounds, WindowControlArea, WindowDecorations, WindowHandle, WindowOptions, div,
+    point, px, size,
 };
 
 use crate::chrome::{ChromeIntent, DecorationSource, resolve_chrome};
@@ -167,18 +167,15 @@ pub fn open_window<V: Render + 'static>(
 }
 
 /// Escape leaves generic window fullscreen when no focused control consumed it.
-/// Call this from the root view's paint. Dialogs, menus, and search fields
-/// handle Escape first, so this does not dismiss them.
-pub fn install_window_input(window: &mut Window) {
-    window.on_key_event(|event: &KeyDownEvent, phase, window, cx| {
-        if phase != DispatchPhase::Bubble {
-            return;
-        }
-        if event.keystroke.key == "escape" && window.is_fullscreen() {
-            window.toggle_fullscreen();
-            cx.stop_propagation();
-        }
-    });
+/// Attach it with `.on_key_down(on_fullscreen_escape)` on the root element.
+/// Dialogs, menus, and search fields handle Escape as an action first, so
+/// this does not dismiss them. `Window::on_key_event` cannot run from a
+/// view's `render`: GPUI has not pushed a dispatch node yet.
+pub fn on_fullscreen_escape(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+    if event.keystroke.key == "escape" && window.is_fullscreen() {
+        window.toggle_fullscreen();
+        cx.stop_propagation();
+    }
 }
 
 /// Empty space in an in-client titlebar. Drag and double-click apply only
@@ -228,7 +225,7 @@ struct WindowSession {
 }
 
 impl WindowSession {
-    fn on_bounds(&mut self, window: &Window) {
+    fn on_bounds(&mut self, window: &Window, displays: &[LogicalRect]) {
         let bounds = window.bounds();
         let observed = LogicalRect {
             x: f32::from(bounds.origin.x),
@@ -246,6 +243,7 @@ impl WindowSession {
             window.is_fullscreen(),
             self.min_size,
             self.max_size,
+            displays,
         );
         if next == self.saved || window.is_fullscreen() {
             return;
@@ -280,8 +278,9 @@ fn retain_session(cx: &mut App, window: &mut Window, config: SessionConfig) {
         saved,
     } = config;
     let session = cx.new(|cx: &mut Context<WindowSession>| {
-        cx.observe_window_bounds(window, |session, window, _cx| {
-            session.on_bounds(window);
+        cx.observe_window_bounds(window, |session, window, cx| {
+            let displays = display_rects(cx);
+            session.on_bounds(window, &displays);
         })
         .detach();
         WindowSession {

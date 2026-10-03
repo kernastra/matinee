@@ -4,7 +4,7 @@
 //! It has no product features: no library, no server, and no playback.
 
 use atelier_app::{
-    AppInfo, AtelierApp, ChromeIntent, Platform, WindowSpec, install_window_input, open_window,
+    AppInfo, AtelierApp, ChromeIntent, Platform, WindowSpec, on_fullscreen_escape, open_window,
     resolve_chrome, titlebar_leading, titlebar_spacer,
 };
 use atelier_ui::prelude::*;
@@ -16,7 +16,6 @@ struct Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        install_window_input(window);
         let theme = cx.theme().clone();
         let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
         let row_height = if chrome.band_height > 0.0 {
@@ -33,6 +32,7 @@ impl Render for Shell {
         v_stack(Space::S0)
             .id("matinee-shell")
             .track_focus(&self.focus)
+            .on_key_down(on_fullscreen_escape)
             .size_full()
             .bg(theme.colors.surface.canvas)
             .font_family(theme.typography.families.interface)
