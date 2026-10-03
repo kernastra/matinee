@@ -14,7 +14,7 @@ Done:
   Surface / Stack / FocusRing, motion resolver with reduced motion.
 - `atelier-app`: bootstrap, native windows, platform conventions, commands
   and shortcuts, macOS menus, theme and motion coordination.
-- `matinee-ui` (Matinee theme), `matinee-player` (boundary only).
+- `matinee-ui` (Matinee theme), `matinee-player` (crate reserved; engine landed in 1D).
 - Atelier Gallery and a Matinee Next shell.
 - Architecture boundary checks; CI on Linux, macOS, and Windows.
 - Native playback feasibility spike: [playback.md](../architecture/playback.md).
@@ -56,7 +56,19 @@ Done, without a frame surface, screen migration, or playback:
 - Window Lab (`apps/atelier-window-lab`). `matinee-next` uses the window infrastructure and stays featureless.
 - Still open: a macOS client drag region (GPUI 0.2.2 cannot start one; the system titlebar still moves the window), GNOME Wayland client-side decorations, an About panel.
 
-## Phase 1: Framework depth and playback core (remainder, not started)
+## Phase 1D: Native playback foundation (landed)
+
+Done, without a Player screen, Jellyfin client, or packaging:
+
+- `ExternalFrameSurface` in `atelier-ui`: latest BGRA frame, fit/fill, delayed image release. No codec knowledge.
+- `matinee-player`: libmpv behind load / transport / seek / volume / tracks, one owner thread, software render capped at 1080p, runtime-loaded library, typed failure when it is missing.
+- Jellyfin device profile `Matinee Native` for the formats this phase opened. Not the WebKit profile.
+- Playback Lab (`apps/matinee-playback-lab`) and an External Frame gallery story.
+- Linux CI installs libmpv and ffmpeg so integration tests run. The distro build is GPL and is not a redistributable artifact.
+
+Details, licensing, and the 4K software limit: [playback.md](../architecture/playback.md).
+
+## Phase 1: Framework depth (remainder, not started)
 
 Framework (`atelier-ui` / `atelier-app`):
 
@@ -67,24 +79,12 @@ Framework (`atelier-ui` / `atelier-app`):
 4. Gallery preview axes still open: simulated platform. Scale factor cannot
    be overridden at runtime in GPUI 0.2.2 (the Gallery shows the live value).
    Focus-testing mode landed in 1A.
-5. A generic **external frame surface** element: paints an externally produced
-   BGRA frame from a latest-frame mailbox via GPUI `RenderImage`. It contains
-   no codec or playback knowledge, so it fits `atelier-ui`'s rules. It lets
-   `matinee-player` render video without depending on GPUI directly.
+5. ~~External frame surface~~ (done in 1D).
 
-Playback (`matinee-player`), following the spike recommendation in
-[playback.md](../architecture/playback.md):
-
-7. libmpv engine behind a small Matinee-owned API: load URL, play/pause,
-   seek, volume, audio and subtitle track selection, resume position,
-   playback-state events. Use mpv's software render API on a render thread,
-   feeding the frame surface. Adopt the spike's timing fix
-   (`BLOCK_FOR_TARGET_TIME=0`) and delayed image release.
-8. Distribution groundwork: LGPL libmpv/FFmpeg builds (`-Dgpl=false`), loaded
-   at runtime and pinned and hash-checked per platform in CI. Never
-   redistribute distro GPL builds.
-9. A Jellyfin device profile for native playback that direct-plays what libmpv
-   supports (the WebKit profile forces transcodes and burned-in subtitles).
+Playback core landed in 1D. Still open, and not started here: LGPL artifact
+pinning once those binaries exist (the loader and the license rules are in
+place; no hash is published yet), and a GPUI path for frames larger than
+the software cap.
 
 ## Phase 2: Domain extraction (proposed)
 

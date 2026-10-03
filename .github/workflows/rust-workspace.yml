@@ -54,7 +54,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
-            libvulkan-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev
+            libvulkan-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev \
+            libmpv2 ffmpeg
       - name: Architecture boundaries
         run: scripts/check-architecture.sh
       - name: Format
@@ -84,7 +85,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
-            libvulkan-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev
+            libvulkan-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev \
+            libmpv2 ffmpeg
       - name: Build workspace
         run: cargo build --workspace --all-targets --locked
       - name: Test (platform-specific code paths)

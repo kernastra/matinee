@@ -1,6 +1,6 @@
 # Matinee Next — Architecture Overview
 
-Status: **Phase 1C (native window) on the Phase 1B foundation**. The shipping app is still the Tauri + React
+Status: **Phase 1D (native playback foundation) on the Phase 1C window**. The shipping app is still the Tauri + React
 app in `src/` and `src-tauri/`; it remains the reference implementation and is
 not modified by this work. The Rust + GPUI workspace described here is being
 built *alongside* it.
@@ -9,7 +9,7 @@ Related documents:
 
 - [ui-framework.md](ui-framework.md) — design system, components, GPUI policy
 - [platform-strategy.md](platform-strategy.md) — macOS / Windows / Linux adaptation, windows, CI
-- [playback.md](playback.md) — native playback feasibility spike and recommendation (all playback findings live there)
+- [playback.md](playback.md) — native playback engine, frame surface, and licensing (all playback findings live there)
 - [../migration/current-matinee.md](../migration/current-matinee.md) — inventory of the shipping app
 - [../migration/roadmap.md](../migration/roadmap.md) — phased migration plan
 
@@ -23,7 +23,7 @@ this list.
 | 1. Reusable UI framework | `crates/atelier-ui` | Semantic tokens, themes, generic components, GPUI |
 | 2. Reusable desktop infrastructure | `crates/atelier-app` | App lifecycle, windows, commands/shortcuts, menus, platform conventions |
 | 3. Matinee presentation | `crates/matinee-ui` | Matinee brand palette, bundled fonts, and type, mapped onto layer-1 tokens; later Matinee-specific components |
-| 4. Matinee domain | `crates/matinee-player` (boundary only); later `matinee-core`, `matinee-jellyfin`, … | Playback, Jellyfin, integrations, Poster Studio |
+| 4. Matinee domain | `crates/matinee-player`; later `matinee-core`, `matinee-jellyfin`, … | Playback and, later, Jellyfin, integrations, Poster Studio |
 
 Applications live in `apps/`:
 
@@ -31,7 +31,8 @@ Applications live in `apps/`:
 |---|---|
 | `apps/atelier-gallery` | The component catalog (Storybook / SwiftUI Previews equivalent). Product-neutral; Matinee's theme is an opt-in cargo feature (`matinee-theme`, on by default in this repo) so components can be previewed under it. |
 | `apps/atelier-window-lab` | Manual inspection of native window chrome, insets, fullscreen, and scale. Not a component story. |
-| `apps/matinee-next` | A featureless shell: Matinee theme, native window, generic toolbar and sidebar. |
+| `apps/matinee-next` | A featureless shell: Matinee theme, native window, generic toolbar and sidebar. No player. |
+| `apps/matinee-playback-lab` | Load, transport, tracks, and an external frame. Not the Matinee Player screen. |
 
 ```
 apps/atelier-gallery ─┬─> atelier-app ──> atelier-ui ──> gpui (=0.2.2)
@@ -39,7 +40,10 @@ apps/atelier-gallery ─┬─> atelier-app ──> atelier-ui ──> gpui (=0.
 apps/atelier-window-lab ──> atelier-app
 apps/matinee-next ────┬─> atelier-app
                       └─> matinee-ui
-matinee-player          (no dependencies yet)
+apps/matinee-playback-lab ─┬─> atelier-app
+                           ├─> matinee-ui
+                           └─> matinee-player   (libmpv at runtime, no GPUI)
+matinee-player             (no GPUI or Atelier dependency)
 ```
 
 The rules are enforced by `scripts/check-architecture.sh` (run in CI):
@@ -56,11 +60,12 @@ crates/
   atelier-ui/         tokens/, theme.rs, components/, motion.rs, bridge.rs (GPUI conversions)
   atelier-app/        app.rs, window.rs, chrome.rs, geometry.rs, command.rs, platform.rs
   matinee-ui/         Matinee theme and bundled fonts
-  matinee-player/     Playback boundary (no API yet)
+  matinee-player/     Playback engine (runtime-loaded libmpv, no GPUI)
 apps/
   atelier-gallery/    story registry + stories/
   atelier-window-lab/ native window harness
-  matinee-next/       themed shell
+  matinee-playback-lab/ playback harness (not the Player screen)
+  matinee-next/       themed shell, still featureless
 scripts/check-architecture.sh
 src/, src-tauri/      Shipping Tauri + React app (unchanged; src-tauri has its own Cargo.lock)
 spikes/               Standalone experiments with their own [workspace] (e.g. native-playback)
@@ -83,7 +88,7 @@ spikes/               Standalone experiments with their own [workspace] (e.g. na
 |---|---|---|
 | `matinee-core`, `matinee-jellyfin`, `matinee-integrations`, `matinee-studio` | Not created | Phase 0 has no code for them; an empty crate would be a speculative boundary. They are scheduled in the roadmap. |
 | — | Added `matinee-ui` | Layer 3 (Matinee-specific presentation) needs a home that is neither the generic framework nor domain logic. The Matinee theme lives here. |
-| `matinee-player` | Created as an API-less boundary | Reserves the seam and documents where playback goes; the backend recommendation is in [playback.md](playback.md). |
+| `matinee-player` | Playback engine, still UI-agnostic | Phase 1D filled the Phase 0 boundary. The design is in [playback.md](playback.md). |
 | `apps/matinee-next` | Minimal shell only | Proves an app can boot on the framework with the Matinee theme without depending on GPUI directly. |
 
 ## Toolchain
@@ -110,6 +115,7 @@ cargo +1.90.0 run -p atelier-gallery            # opens the Gallery
 cargo +1.90.0 run -p atelier-gallery -- button  # opens a specific story by id
 cargo +1.90.0 run -p atelier-window-lab         # native window harness
 cargo +1.90.0 run -p matinee-next               # Matinee-themed shell
+cargo +1.90.0 run -p matinee-playback-lab -- --demo   # playback harness
 ATELIER_REDUCED_MOTION=1 cargo +1.90.0 run -p atelier-gallery
 
 scripts/check-architecture.sh

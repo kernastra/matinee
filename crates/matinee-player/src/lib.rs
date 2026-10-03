@@ -1,15 +1,25 @@
-//! `matinee-player`: the boundary for Matinee's native playback engine.
+//! Matinee's playback engine.
 //!
-//! All video decoding, frame production, and transport logic will live here,
-//! never in the generic UI framework (`atelier-ui`).
+//! Applications load a URL, read a [`Snapshot`], and take [`CpuFrame`]s.
+//! They never see a libmpv handle or a GPUI type. Presentation is an
+//! external frame surface in the UI framework. Jellyfin chooses a direct or
+//! transcoded URL before [`Player::load`]; this crate plays that URL either way.
 //!
-//! The feasibility spike (`spikes/native-playback/`, findings in
-//! `docs/architecture/playback.md`) recommends **libmpv** as the engine,
-//! using mpv's software render API on a render thread. Frames are handed to
-//! the UI as BGRA buffers and painted through a GPUI `RenderImage`. Only LGPL
-//! builds of libmpv and FFmpeg may be distributed.
-//!
-//! The crate deliberately exposes no API in Phase 0. The engine and its API
-//! are Phase 1 work (`docs/migration/roadmap.md`). Painting is planned as a
-//! generic frame-surface element in `atelier-ui`, so this crate never needs
-//! to depend on GPUI directly.
+//! The shared library is loaded at runtime. A missing or incompatible build
+//! is a [`PlayerError`]. The process keeps running.
+
+mod engine;
+mod error;
+mod frame;
+mod player;
+mod profile;
+mod state;
+mod tracks;
+
+pub use engine::{EngineInfo, LoadRequest, measure_software_render, probe_engine};
+pub use error::PlayerError;
+pub use frame::{CpuFrame, Diagnostics};
+pub use player::Player;
+pub use profile::{PROFILE_NAME, native_device_profile};
+pub use state::{PlaybackState, PlayerEvent, Snapshot};
+pub use tracks::{SubtitleForm, Track, TrackId, TrackKind};
