@@ -14,7 +14,8 @@
 
 Matinee is a standalone desktop client for personal [Jellyfin](https://jellyfin.org/) libraries. It pairs Jellyfin's media server and playback APIs with a warm, cinema-inspired interface designed for the couch: rich artwork, editorial home sections, focused title pages, custom playback controls, and a built-in studio for creating collector-style library artwork. Matinee connects to your existing server and library; it does not replace or bundle Jellyfin itself.
 
-> **Status:** `v0.5.6` early release. Matinee is actively developed and packaged for x86_64 Linux; Windows and macOS builds have not yet been validated.
+> [!IMPORTANT]
+> **Matinee v2 is a work in progress.** The current `v0.5.6` Tauri/React app remains the usable release while v2 is being rebuilt as a native Rust + GPUI desktop client. The v2 code in `crates/` and `apps/` is under active development and is not yet a replacement for the released app.
 
 ## Demo
 
@@ -133,7 +134,7 @@ The **Advanced** panel exposes the assembled prompt, permits an editable copy or
 
 ## Local-First Scope
 
-Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. Jellyfin credentials remain session-scoped, while Radarr, Sonarr, and fal.ai keys are stored through the operating system's credential vault.
+Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. The released v0.5.6 app keeps Jellyfin login state session-scoped. The in-progress native v2 backend includes credential-vault primitives for persistent Jellyfin sessions; Radarr, Sonarr, and image-provider secrets are also stored through the operating system credential vault.
 
 Poster Studio makes one provider request per deliberate generation attempt and never silently retries a rejected image. Codex jobs run in a restricted temporary workspace, successful job files are cleaned up automatically, and failed diagnostics are retained locally for seven days to support troubleshooting.
 
