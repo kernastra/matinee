@@ -72,9 +72,26 @@ newest frame; it does not sleep inside `mpv_render_context_render`.
   no stretch). `ImageFit::Fill` covers and the surface clips. A size change
   replaces the picture. An empty mailbox shows the accessible label on the
   canvas color.
-- Publishing builds the GPUI image off the UI thread and wakes the surface
-  with a channel. There is no 60 Hz timer. Reduced motion does not drop
-  frames; it only collapses Atelier transitions.
+- Publishing builds the CPU image off the UI thread, then wakes the surface
+  on a channel. There is no polling loop and no 60 Hz timer. Reduced motion
+  does not drop frames; it only collapses Atelier transitions.
+- That off-thread build is safe on the pinned GPUI 0.2.2. `image::Frame::new`
+  stores an `RgbaImage`. `RenderImage::new` (`gpui` `assets.rs`) stores those
+  frames and an id from a process-wide atomic. Neither touches a window, the
+  sprite atlas, or a GPU device. GPUI's own `App::fetch_asset` constructs
+  `RenderImage` on `background_executor` the same way. GPU and window work
+  starts later, on the window thread: `Window::paint_image` uploads into the
+  sprite atlas, and `Window::drop_image` removes that atlas entry.
+- Every image that was presented is released through GPUI. The surface
+  `drop_image`s the frame from two updates ago so an in-flight scene can
+  still sample the previous one. `release`, and entity drop via
+  `App::drop_image`, release whatever is still presented or retired. GPUI
+  flushes entity release after the window is back in the app map, so a live
+  window does not keep the atlas entry. A window that has already closed
+  drops its atlas with the window. An unpublished replacement is dropped as
+  a CPU value and is not passed to `drop_image`. The mailbox never holds
+  more than one unpublished frame. Presented plus the previous painted frame
+  is that delayed release, not a frame queue.
 
 ## Player API
 
@@ -159,10 +176,17 @@ LGPL FFmpeg (`-Dgpl=false`), loaded dynamically. No binaries are committed.
 | Windows | `libmpv-2.dll` | Not pinned yet. |
 
 The pin is the file's sha256, recorded here when the artifact is produced.
-There is no installer in this phase. CI installs `libmpv2` and `ffmpeg` on
-Linux so integration tests run. macOS and Windows CI compile the crate and
-run the pure tests; integration tests skip when the library is absent.
-Linux CI panics if the library or ffmpeg is missing.
+There is no installer in this phase.
+
+CI is split by platform. That split is not playback validation on every OS.
+
+- Linux CI compiles the workspace and runs the architecture check, formatting,
+  clippy, unit tests, and the real libmpv integration tests. That job installs
+  `libmpv2` and `ffmpeg`. Linux CI panics if either is missing. The interactive
+  Playback Lab was also run on a Linux host (`media/phase-1d/linux/`).
+- macOS and Windows CI compile the workspace and run the pure tests. They do
+  not install libmpv. Integration tests skip there. That is compile coverage
+  plus pure tests, not playback validation, and not a libmpv integration run.
 
 ## Jellyfin
 
@@ -229,8 +253,9 @@ The lab presented every produced frame across the sampled seconds, paused, seeke
   not, and the renderer will not upload a frame above the cap.
 - A future GPU path needs a GPUI extension (a persistent texture or a
   cross-platform external surface). This phase does not add one.
-- Interactive playback was exercised on Linux. Other platforms are compile
-  and unit-test targets until someone runs the lab there.
+- Interactive playback was exercised on Linux. macOS and Windows CI compile
+  the workspace and run pure tests. They do not install libmpv, so those jobs
+  are not playback validation and are not libmpv integration runs.
 - The distro library used in development is GPL. Shipping it would violate
   the license plan above.
 - HDR, tone-mapping UI, picture-in-picture, and remote-renderer playback

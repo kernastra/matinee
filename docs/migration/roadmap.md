@@ -64,7 +64,7 @@ Done, without a Player screen, Jellyfin client, or packaging:
 - `matinee-player`: libmpv behind load / transport / seek / volume / tracks, one owner thread, software render capped at 1080p, runtime-loaded library, typed failure when it is missing.
 - Jellyfin device profile `Matinee Native` for the formats this phase opened. Not the WebKit profile.
 - Playback Lab (`apps/matinee-playback-lab`) and an External Frame gallery story.
-- Linux CI installs libmpv and ffmpeg so integration tests run. The distro build is GPL and is not a redistributable artifact.
+- Linux CI installs libmpv and ffmpeg so integration tests run, and the interactive lab was run on Linux. macOS and Windows CI compile and run pure tests only. They do not install libmpv, so those jobs are not playback validation. The distro build is GPL and is not a redistributable artifact.
 
 Details, licensing, and the 4K software limit: [playback.md](../architecture/playback.md).
 

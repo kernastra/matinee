@@ -229,7 +229,15 @@ impl FrameMailbox {
         self.lock().wake = Some(wake);
     }
 
-    /// Replace the pending frame and wake the UI. Safe from a producer thread.
+    /// Replace the pending frame and wake the UI. Callable from a producer thread.
+    ///
+    /// `RgbaImage`, `image::Frame`, and `RenderImage` are CPU data here. In
+    /// GPUI 0.2.2, `RenderImage::new` (`assets.rs`) stores the frames and an
+    /// id from a process-wide atomic. It does not touch a window, the sprite
+    /// atlas, or a GPU device. GPUI's own `App::fetch_asset` builds
+    /// `RenderImage` on `background_executor` the same way. Upload and release
+    /// start on the window thread, in `Window::paint_image` and
+    /// `Window::drop_image`.
     pub fn publish(&self, frame: BgraFrame) -> Result<(), FrameError> {
         let packed = pack_bgra(frame)?;
         let image = RgbaImage::from_raw(packed.width, packed.height, packed.pixels).ok_or(
@@ -344,6 +352,16 @@ impl ExternalFrameSurface {
             }
         })
         .detach();
+        // Entity release runs after the window update returns the window to
+        // the app map, so `App::drop_image` still sees a live window. A closed
+        // window has already dropped its atlas. Unpublished mailbox frames are
+        // not included: they were never passed to `paint_image`.
+        cx.on_release(|this, app| {
+            for image in this.take_painted_images().into_iter().flatten() {
+                app.drop_image(image, None);
+            }
+        })
+        .detach();
         Self {
             mailbox,
             fit: ImageFit::Fit,
@@ -401,14 +419,24 @@ impl ExternalFrameSurface {
             .last
     }
 
-    /// Release painted images. Unpublished mailbox frames are dropped with the handle.
+    /// Release painted images through this window.
+    ///
+    /// Unpublished mailbox frames stay out of this path. They were never
+    /// uploaded, so they need no `drop_image`. Entity drop releases whatever
+    /// is still presented or retired. Depth of the unpublished slot stays at
+    /// most one; presented plus the previous frame is the delayed GPU release,
+    /// not a queue.
     pub fn release(&mut self, window: &mut Window) {
-        if let Some(frame) = self.presented.take() {
-            let _ = window.drop_image(frame.image);
-        }
-        if let Some(image) = self.retired.take() {
+        for image in self.take_painted_images().into_iter().flatten() {
             let _ = window.drop_image(image);
         }
+    }
+
+    /// Presented image and the one retained for the in-flight scene.
+    fn take_painted_images(&mut self) -> [Option<Arc<RenderImage>>; 2] {
+        let presented = self.presented.take().map(|frame| frame.image);
+        let retired = self.retired.take();
+        [presented, retired]
     }
 
     fn consume(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -549,8 +577,11 @@ mod tests {
 
     #[test]
     fn dropping_an_unpublished_frame_does_not_panic() {
+        // Never painted, so this drop must not need `Window::drop_image`.
         let mailbox = FrameMailbox::new();
         mailbox.publish(solid(2, 2, 1, 3)).unwrap();
+        mailbox.publish(solid(2, 2, 2, 4)).unwrap();
+        assert_eq!(mailbox.stats().depth, 1);
         drop(mailbox);
     }
 
