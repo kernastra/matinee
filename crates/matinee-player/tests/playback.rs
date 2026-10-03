@@ -368,6 +368,16 @@ fn software_1080p_stays_bounded() {
     assert!(!depth_over);
     assert!(stats.mailbox_depth <= 1);
     assert!(stats.produced >= 20, "{stats:?}");
+    eprintln!(
+        "1080p produced={} replaced={} depth={} frame={}x{} render_mean_us={} opaque_mean_us={}",
+        stats.produced,
+        stats.replaced,
+        stats.mailbox_depth,
+        stats.frame_width,
+        stats.frame_height,
+        stats.render_mean.as_micros(),
+        stats.opaque_mean.as_micros(),
+    );
     player.pause().unwrap();
     player.seek(Duration::from_millis(500)).unwrap();
     player.play().unwrap();

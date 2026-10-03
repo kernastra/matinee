@@ -208,6 +208,21 @@ selection, mailbox depth, and that a few seconds of 1080p does not grow
 the mailbox or resident memory without bound. They are skipped when libmpv
 or ffmpeg is absent, except on Linux CI.
 
+## Measurement on the Phase 1D Linux host
+
+Release build, libmpv 0.37.0, FFmpeg 6.1.1, 4 vCPU, lavapipe, no audio device.
+Source: generated 1920×1080 H.264 at 24 fps, local file, direct play.
+
+| | Headless engine | Playback Lab |
+|---|---|---|
+| Software render | 1.54 ms mean | about 1.9–2.2 ms mean |
+| Force opaque alpha | 0.55 ms mean | (included in the engine, not the upload) |
+| GPUI upload | not uploaded | about 0.52 ms |
+| Mailbox depth | 0 | 0 |
+| Replaced before present | 0 | 0 |
+
+The lab presented every produced frame across the sampled seconds, paused, seeked, and resumed. A separate 3840×2160 software render, not uploaded, averaged 8.88 ms plus 1.71 ms to force alpha. That is inside a 24 fps budget on this host before any GPU upload. It is not a 4K production result: the surface still refuses frames above the 1080p cap, and the earlier spike measured about 36 ms for the same class of work. 1080p is the target.
+
 ## Known limits
 
 - 1080p24 software frames are the production target. 4K software upload is
