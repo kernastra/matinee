@@ -7,11 +7,13 @@
 //! negotiation the native profile just performed, including a file the server
 //! refused. The difference is intentional and tested.
 //!
-//! Direct play still builds an authenticated `/Videos/{id}/stream` URL when
-//! the chosen source says direct play is supported. That URL is the negotiated
-//! result for this client, not an assumption that every response looks like
-//! that. A transcode uses the server's `TranscodingUrl`, resolved against the
-//! server and rejected if it leaves the origin.
+//! Direct play builds `/Videos/{id}/stream` when the chosen source says direct
+//! play is supported. A direct stream is a remux: the server returned a
+//! transcoding address whose reasons are only about the container, or it set
+//! direct stream without transcoding. A re-encode is `Transcode` even when
+//! the same source also says direct stream is possible. The stream URL does
+//! not carry the access token. The plan asks the future adapter to attach
+//! the session authorization header instead.
 //!
 //! Reporting is a single request. Nothing here schedules the next one.
 
@@ -19,7 +21,7 @@ use std::time::Duration;
 
 use matinee_core::{
     MediaItem, MediaSourceId, PlaySessionId, PlaybackMethod, PlaybackOptions, PlaybackPlan,
-    PlaybackReport, ReportKind,
+    PlaybackReport, ReportKind, StreamAuthorization,
 };
 use serde_json::json;
 use url::Url;
@@ -84,14 +86,15 @@ impl<T: Transport> JellyfinClient<T> {
             return Err(playback_error(code));
         }
         let sources = dto.media_sources.unwrap_or_default();
-        let source = choose_source(&sources).ok_or_else(|| {
+        let chosen = choose_source(&sources).ok_or_else(|| {
             log::warn!(target: "matinee_jellyfin::playback", "compatibility failure: no media source");
             JellyfinError::playback_unavailable(
                 "No playable media source was returned by Jellyfin.",
             )
         })?;
-        let play_session_id = play_session_id(dto.play_session_id.as_deref())?;
-        let streams = source
+        let play_session_id = optional_play_session(dto.play_session_id.as_deref())?;
+        let streams = chosen
+            .source
             .media_streams
             .clone()
             .unwrap_or_default()
@@ -100,74 +103,52 @@ impl<T: Transport> JellyfinClient<T> {
             .collect::<Result<Vec<_>, _>>()?;
         let selected_audio = options
             .audio_stream_index
-            .or(source.default_audio_stream_index);
+            .or(chosen.source.default_audio_stream_index);
         let selected_subtitle = options
             .subtitle_stream_index
-            .or(source.default_subtitle_stream_index);
-        let source_id = match source.id.as_deref() {
+            .or(chosen.source.default_subtitle_stream_index);
+        let source_id = match chosen.source.id.as_deref() {
             Some(value) if !value.trim().is_empty() => Some(
                 MediaSourceId::parse(value.trim())
                     .map_err(|_| JellyfinError::malformed("media source"))?,
             ),
             _ => None,
         };
-        if source.supports_direct_play {
-            let url = direct_play_url(
+        let url = match chosen.method {
+            PlaybackMethod::DirectPlay => direct_play_url(
                 self.session().server_url(),
                 item.id().as_str(),
                 source_id.as_ref(),
-                play_session_id.as_str(),
-                self.session().access_token(),
-            )?;
-            log::info!(target: "matinee_jellyfin::playback", "negotiation DirectPlay");
-            return Ok(PlaybackPlan {
-                url,
-                source_id,
-                play_session_id,
-                method: PlaybackMethod::DirectPlay,
-                streams,
-                selected_audio,
-                selected_subtitle,
-                start_position: start,
-            });
-        }
-        let transcoding = source
-            .transcoding_url
-            .as_deref()
-            .filter(|url| !url.trim().is_empty())
-            .ok_or_else(|| {
-                log::warn!(
-                    target: "matinee_jellyfin::playback",
-                    "compatibility failure: media source has no playable address"
-                );
-                JellyfinError::playback_unavailable(
-                    "Jellyfin returned media information without a playable stream URL.",
-                )
-            })?;
-        let url = resolve_transcoding_url(
-            self.session().server_url(),
-            transcoding,
-            self.session().access_token(),
-        )?;
-        let method = if source.supports_direct_stream {
-            PlaybackMethod::DirectStream
-        } else {
-            PlaybackMethod::Transcode
+                play_session_id.as_ref().map(PlaySessionId::as_str),
+            )?,
+            PlaybackMethod::DirectStream | PlaybackMethod::Transcode => {
+                let transcoding = stream_address(chosen.source).ok_or_else(|| {
+                    log::warn!(
+                        target: "matinee_jellyfin::playback",
+                        "compatibility failure: media source has no playable address"
+                    );
+                    JellyfinError::playback_unavailable(
+                        "Jellyfin returned media information without a playable stream URL.",
+                    )
+                })?;
+                resolve_transcoding_url(self.session().server_url(), transcoding)?
+            }
         };
         log::info!(
             target: "matinee_jellyfin::playback",
             "negotiation {}",
-            method.as_str()
+            chosen.method.as_str()
         );
         Ok(PlaybackPlan {
             url,
             source_id,
             play_session_id,
-            method,
+            method: chosen.method,
             streams,
             selected_audio,
             selected_subtitle,
             start_position: start,
+            authorization: StreamAuthorization::Session,
         })
     }
 
@@ -185,7 +166,6 @@ impl<T: Transport> JellyfinClient<T> {
             .map_err(|_| JellyfinError::malformed("position"))?;
         let mut body = json!({
             "ItemId": report.item_id.as_str(),
-            "PlaySessionId": report.play_session_id.as_str(),
             "PositionTicks": position,
             "IsPaused": report.paused,
             "IsMuted": report.muted,
@@ -193,6 +173,9 @@ impl<T: Transport> JellyfinClient<T> {
             "CanSeek": true,
             "PlayMethod": report.method.as_str(),
         });
+        if let Some(id) = &report.play_session_id {
+            body["PlaySessionId"] = json!(id.as_str());
+        }
         if let Some(source) = &report.media_source_id {
             body["MediaSourceId"] = json!(source.as_str());
         }
@@ -227,41 +210,146 @@ fn playback_error(code: &str) -> JellyfinError {
     }
 }
 
-fn choose_source(sources: &[MediaSourceDto]) -> Option<&MediaSourceDto> {
-    sources
-        .iter()
-        .find(|source| source.supports_direct_play)
-        .or_else(|| {
-            sources.iter().find(|source| {
-                source
-                    .transcoding_url
-                    .as_ref()
-                    .is_some_and(|url| !url.trim().is_empty())
-            })
-        })
-        .or_else(|| sources.first())
+struct Chosen<'a> {
+    source: &'a MediaSourceDto,
+    method: PlaybackMethod,
 }
 
-fn play_session_id(value: Option<&str>) -> Result<PlaySessionId, JellyfinError> {
-    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-        return PlaySessionId::parse(value).map_err(|_| JellyfinError::malformed("play session"));
+/// First playable direct play, then direct stream, then transcode.
+fn choose_source(sources: &[MediaSourceDto]) -> Option<Chosen<'_>> {
+    if let Some(source) = sources.iter().find(|source| source.supports_direct_play) {
+        return Some(Chosen {
+            source,
+            method: PlaybackMethod::DirectPlay,
+        });
     }
-    PlaySessionId::parse(uuid::Uuid::new_v4().to_string())
-        .map_err(|_| JellyfinError::malformed("play session"))
+    if let Some(source) = sources.iter().find(|source| {
+        stream_address(source)
+            .is_some_and(|url| delivery_method(source, url) == PlaybackMethod::DirectStream)
+    }) {
+        return Some(Chosen {
+            source,
+            method: PlaybackMethod::DirectStream,
+        });
+    }
+    sources.iter().find_map(|source| {
+        let url = stream_address(source)?;
+        (delivery_method(source, url) == PlaybackMethod::Transcode).then_some(Chosen {
+            source,
+            method: PlaybackMethod::Transcode,
+        })
+    })
+}
+
+fn stream_address(source: &MediaSourceDto) -> Option<&str> {
+    source
+        .transcoding_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+}
+
+/// What the address actually delivers.
+///
+/// `SupportsDirectStream` is not enough. The server sets that flag for direct
+/// play as well, and a source can claim both direct stream and transcoding
+/// while the address re-encodes. Container-only reasons, or copied codecs,
+/// are a remux. Any other reason is a transcode.
+fn delivery_method(source: &MediaSourceDto, url: &str) -> PlaybackMethod {
+    if let Some(reasons) = transcode_reasons(source, url) {
+        return if remux_only(&reasons) {
+            PlaybackMethod::DirectStream
+        } else {
+            PlaybackMethod::Transcode
+        };
+    }
+    if codecs_are_copy(url) {
+        return PlaybackMethod::DirectStream;
+    }
+    if source.supports_direct_stream && !source.supports_transcoding {
+        PlaybackMethod::DirectStream
+    } else {
+        PlaybackMethod::Transcode
+    }
+}
+
+fn transcode_reasons(source: &MediaSourceDto, url: &str) -> Option<String> {
+    query_value(url, "TranscodeReasons").or_else(|| match source.transcode_reasons.as_ref() {
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(serde_json::Value::Number(value)) => value.as_u64().map(|bits| bits.to_string()),
+        _ => None,
+    })
+}
+
+fn remux_only(reasons: &str) -> bool {
+    let trimmed = reasons.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Ok(bits) = trimmed.parse::<u64>() {
+        // ContainerNotSupported = 1, ContainerBitrateExceedsLimit = 8.
+        return bits != 0 && bits & !9 == 0;
+    }
+    let mut any = false;
+    for part in trimmed.split(|character: char| character == ',' || character.is_whitespace()) {
+        if part.is_empty() {
+            continue;
+        }
+        any = true;
+        if !matches!(
+            part,
+            "ContainerNotSupported" | "ContainerBitrateExceedsLimit"
+        ) {
+            return false;
+        }
+    }
+    any
+}
+
+fn codecs_are_copy(url: &str) -> bool {
+    let Some(video) = query_value(url, "VideoCodec") else {
+        return false;
+    };
+    if !video.eq_ignore_ascii_case("copy") {
+        return false;
+    }
+    query_value(url, "AudioCodec").is_none_or(|audio| audio.eq_ignore_ascii_case("copy"))
+}
+
+fn query_value(url: &str, key: &str) -> Option<String> {
+    let parsed = Url::parse(url).ok().or_else(|| {
+        Url::parse("http://placeholder.invalid/")
+            .ok()?
+            .join(url)
+            .ok()
+    })?;
+    parsed
+        .query_pairs()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.into_owned())
+}
+
+fn optional_play_session(value: Option<&str>) -> Result<Option<PlaySessionId>, JellyfinError> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => PlaySessionId::parse(value)
+            .map(Some)
+            .map_err(|_| JellyfinError::malformed("play session")),
+        None => Ok(None),
+    }
 }
 
 fn direct_play_url(
     server: &str,
     item_id: &str,
     source_id: Option<&MediaSourceId>,
-    play_session_id: &str,
-    token: &str,
+    play_session_id: Option<&str>,
 ) -> Result<String, JellyfinError> {
     let mut query = Query::new()
         .pair("Static", "true")
-        .pair("DeviceId", DEVICE_ID)
-        .pair("PlaySessionId", play_session_id)
-        .pair("api_key", token);
+        .pair("DeviceId", DEVICE_ID);
+    if let Some(play_session_id) = play_session_id {
+        query = query.pair("PlaySessionId", play_session_id);
+    }
     if let Some(source_id) = source_id {
         query = query.pair("MediaSourceId", source_id.as_str());
     }
@@ -273,11 +361,7 @@ fn direct_play_url(
     join_server(server, &path)
 }
 
-fn resolve_transcoding_url(
-    server: &str,
-    transcoding: &str,
-    token: &str,
-) -> Result<String, JellyfinError> {
+fn resolve_transcoding_url(server: &str, transcoding: &str) -> Result<String, JellyfinError> {
     if transcoding.chars().any(char::is_control) {
         log::warn!(
             target: "matinee_jellyfin::playback",
@@ -310,13 +394,11 @@ fn resolve_transcoding_url(
             "Jellyfin returned a stream address outside the server.",
         ));
     }
-    let mut pairs: Vec<(String, String)> = resolved
+    let pairs: Vec<(String, String)> = resolved
         .query_pairs()
+        .filter(|(key, _)| !is_credential_query(key))
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect();
-    if !pairs.iter().any(|(key, _)| key == "api_key") {
-        pairs.push(("api_key".to_string(), token.to_string()));
-    }
     let mut encoded = String::new();
     for (index, (key, value)) in pairs.iter().enumerate() {
         if index > 0 {
@@ -333,4 +415,11 @@ fn resolve_transcoding_url(
         address.push_str(&encoded);
     }
     Ok(address)
+}
+
+fn is_credential_query(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "api_key" | "apikey" | "accesstoken" | "token"
+    )
 }

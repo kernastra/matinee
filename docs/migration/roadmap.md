@@ -94,8 +94,9 @@ the software cap.
   media, and playback plans. No HTTP and no GPUI.
 - `matinee-jellyfin`: Rust client for the shipping `src/lib/jellyfin.ts`
   behaviors, converting into domain types. In-memory session only. The
-  Matinee Native profile is posted from this crate. The shipping static
-  stream fallback is a typed `NoCompatibleSource` error.
+  Matinee Native profile is built in this crate from
+  `matinee_core::native_playback()`. The shipping static stream fallback is
+  a typed `NoCompatibleSource` error.
 
 **Phase 2B is not started.** Screens are not started.
 
@@ -114,6 +115,20 @@ Login → Player (first, since native playback is the main motivation) →
 Details → Home → Library → Search → Calendar → Settings → Poster Studio.
 Each screen ships only after behavioral parity with the reference app,
 including the product rules in `docs/design-spec.md`.
+
+The first screen that calls `matinee-jellyfin` also owns the Tokio runtime.
+The UI framework does not poll `ReqwestTransport` itself:
+
+```text
+GPUI application → application/service runtime → matinee-jellyfin async calls
+```
+
+Calling the production transport from a UI task panics. That adapter is not
+part of Phase 2.
+
+Artwork for that screen uses `ArtworkRequest`: the URL has no `api_key`, and
+the loader sends `Session::authorization_header`. The compatibility builders
+that still put `api_key` on the URL stay until that loader exists.
 
 ## Phase 4: Distribution and cut-over (proposed)
 

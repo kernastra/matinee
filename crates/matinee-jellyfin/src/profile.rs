@@ -1,53 +1,57 @@
-//! Jellyfin device profile posted by this client.
+//! Device profile posted to PlaybackInfo.
 //!
-//! The document is negotiation policy. The same declaration lives in
-//! `matinee-player` as the engine's capability list (`native_device_profile`).
-//! The player crate does not depend on this one, and this one does not depend
-//! on the player, so the JSON is built here. The two copies are the Phase 1D
-//! `Matinee Native` profile and have to move together.
-//!
-//! It is not the shipping WebKit profile. WebKit direct-plays only MP4/H.264
-//! and asks Jellyfin to burn subtitles. This profile direct-plays the
-//! containers and codecs Phase 1D opened, and it asks for external or embedded
-//! SubRip rather than burn-in.
+//! The facts come from [`matinee_core::native_playback`]. This module only
+//! turns them into the server's JSON. The playback engine does not build
+//! that document and does not depend on this crate.
 
+use matinee_core::native_playback;
 use serde_json::{Value, json};
 
 pub(crate) fn native_device_profile() -> Value {
+    let caps = native_playback();
+    let mut subtitles = Vec::new();
+    for format in caps.subtitles.formats {
+        if caps.subtitles.embedded {
+            subtitles.push(json!({ "Format": format, "Method": "Embed" }));
+        }
+        if caps.subtitles.external {
+            subtitles.push(json!({ "Format": format, "Method": "External" }));
+        }
+    }
+    let protocol = if caps.transcode.segmented_mp4 {
+        "hls"
+    } else {
+        "http"
+    };
     json!({
-        "Name": "Matinee Native",
-        "MaxStreamingBitrate": 120_000_000,
-        "MaxStaticBitrate": 120_000_000,
+        "Name": caps.name,
+        "MaxStreamingBitrate": caps.max_bitrate,
+        "MaxStaticBitrate": caps.max_bitrate,
         "DirectPlayProfiles": [
             {
-                "Container": "mkv,mp4,m4v",
+                "Container": caps.containers.join(","),
                 "Type": "Video",
-                "VideoCodec": "h264,hevc,av1",
-                "AudioCodec": "aac,ac3,eac3,opus"
+                "VideoCodec": caps.video_codecs.join(","),
+                "AudioCodec": caps.audio_codecs.join(","),
             }
         ],
         "TranscodingProfiles": [
             {
-                "Container": "mp4",
+                "Container": caps.transcode.container,
                 "Type": "Video",
-                "VideoCodec": "h264",
-                "AudioCodec": "aac",
+                "VideoCodec": caps.transcode.video_codec,
+                "AudioCodec": caps.transcode.audio_codec,
                 "Context": "Streaming",
-                "Protocol": "hls",
-                "MaxAudioChannels": "6",
+                "Protocol": protocol,
+                "MaxAudioChannels": caps.transcode.max_audio_channels.to_string(),
                 "MinSegments": 1,
                 "BreakOnNonKeyFrames": true,
-                "SegmentContainer": "mp4"
+                "SegmentContainer": caps.transcode.container,
             }
         ],
         "ContainerProfiles": [],
         "CodecProfiles": [],
-        "SubtitleProfiles": [
-            { "Format": "srt", "Method": "Embed" },
-            { "Format": "srt", "Method": "External" },
-            { "Format": "subrip", "Method": "Embed" },
-            { "Format": "subrip", "Method": "External" }
-        ]
+        "SubtitleProfiles": subtitles,
     })
 }
 
@@ -56,22 +60,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn profile_is_the_native_one() {
+    fn profile_is_built_from_the_shared_capabilities() {
+        let caps = native_playback();
         let profile = native_device_profile();
-        assert_eq!(profile["Name"], "Matinee Native");
+        assert_eq!(profile["Name"], caps.name);
         assert_ne!(profile["Name"], "Matinee WebKit");
         let direct = &profile["DirectPlayProfiles"][0];
-        let video = direct["VideoCodec"].as_str().unwrap();
-        assert!(video.contains("h264") && video.contains("hevc") && video.contains("av1"));
-        let audio = direct["AudioCodec"].as_str().unwrap();
-        for codec in ["aac", "ac3", "eac3", "opus"] {
-            assert!(audio.contains(codec), "{codec}");
-        }
+        assert_eq!(direct["Container"], caps.containers.join(","));
+        assert_eq!(direct["VideoCodec"], caps.video_codecs.join(","));
+        assert_eq!(direct["AudioCodec"], caps.audio_codecs.join(","));
+        assert!(direct.get("MaxAudioChannels").is_none());
         let transcode = &profile["TranscodingProfiles"][0];
         assert_eq!(transcode["Protocol"], "hls");
-        assert_eq!(transcode["Container"], "mp4");
-        assert_eq!(transcode["MaxAudioChannels"], "6");
+        assert_eq!(transcode["Container"], caps.transcode.container);
+        assert_eq!(transcode["VideoCodec"], caps.transcode.video_codec);
+        assert_eq!(
+            transcode["MaxAudioChannels"],
+            caps.transcode.max_audio_channels.to_string()
+        );
         let subs = profile["SubtitleProfiles"].as_array().unwrap();
         assert!(subs.iter().all(|entry| entry["Method"] != "Encode"));
+        assert!(subs.iter().any(|entry| entry["Method"] == "External"));
     }
 }

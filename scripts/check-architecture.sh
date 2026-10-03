@@ -108,6 +108,25 @@ for path in src-tauri spikes; do
   fi
 done
 
+# 9. One capability declaration. The player does not build a device profile.
+#    The domain crate does not speak HTTP or name a media server. Neither
+#    domain nor network crate names the UI framework.
+if matches=$(grep -RInE 'DeviceProfile|native_device_profile|TranscodingUrl|DirectPlayProfiles|TranscodingProfiles|SubtitleProfiles|serde_json' \
+  crates/matinee-player/src crates/matinee-player/tests --include='*.rs'); then
+  fail "device-profile or server JSON construction found in matinee-player:"
+  echo "$matches" >&2
+fi
+if matches=$(grep -RInE 'reqwest|DeviceProfile|TranscodingUrl|api_key|MediaBrowser|Jellyfin|jellyfin' \
+  crates/matinee-core/src --include='*.rs'); then
+  fail "HTTP or media-server concepts found in matinee-core:"
+  echo "$matches" >&2
+fi
+if matches=$(grep -RIniE 'gpui|atelier' \
+  crates/matinee-core/src crates/matinee-jellyfin/src --include='*.rs'); then
+  fail "UI framework names found in matinee-core or matinee-jellyfin:"
+  echo "$matches" >&2
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

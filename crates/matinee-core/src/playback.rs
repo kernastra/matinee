@@ -35,17 +35,33 @@ pub struct PlaybackOptions {
     pub start_position: Option<Duration>,
 }
 
+/// Whether the player must attach session authorization when it loads `url`.
+///
+/// The secret stays in the session. This plan does not carry a token or a
+/// header value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamAuthorization {
+    /// The URL can be loaded as-is.
+    None,
+    /// The app copies the session authorization header onto the load request.
+    Session,
+}
+
 /// A playable result. `url` is ready for a player that can load an HTTP URL.
+///
+/// `play_session_id` is the server-issued id when the server sent one. It is
+/// absent when the server omitted it. This crate does not invent one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaybackPlan {
     pub url: String,
     pub source_id: Option<MediaSourceId>,
-    pub play_session_id: PlaySessionId,
+    pub play_session_id: Option<PlaySessionId>,
     pub method: PlaybackMethod,
     pub streams: Vec<MediaStream>,
     pub selected_audio: Option<i32>,
     pub selected_subtitle: Option<i32>,
     pub start_position: Duration,
+    pub authorization: StreamAuthorization,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,7 +76,7 @@ pub enum ReportKind {
 pub struct PlaybackReport {
     pub item_id: ItemId,
     pub media_source_id: Option<MediaSourceId>,
-    pub play_session_id: PlaySessionId,
+    pub play_session_id: Option<PlaySessionId>,
     pub position: Duration,
     pub paused: bool,
     pub muted: bool,
@@ -72,7 +88,7 @@ pub struct PlaybackReport {
 }
 
 impl PlaybackReport {
-    /// Jellyfin's volume field is an integer percentage.
+    /// Servers that want a volume percentage use 0–100.
     pub fn volume_percent(&self) -> u32 {
         if !self.volume.is_finite() {
             return 0;
@@ -99,7 +115,7 @@ mod tests {
         let mut report = PlaybackReport {
             item_id: item,
             media_source_id: None,
-            play_session_id: session,
+            play_session_id: Some(session),
             position: Duration::from_secs(3),
             paused: false,
             muted: true,

@@ -3189,7 +3189,6 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
- "uuid",
  "zeroize",
 ]
 
@@ -3219,7 +3218,6 @@ name = "matinee-player"
 version = "0.0.0"
 dependencies = [
  "libloading",
- "serde_json",
 ]
 
 [[package]]

@@ -69,15 +69,26 @@ flags. Stream indexes are Jellyfin's indexes. They are not
 
 ## Playback plan
 
+Premiere, date created, and end date are a `CalendarDate` (year, month,
+day). A client accepts `YYYY-MM-DD` and ignores a time after `T` or a space.
+A malformed day becomes absent. The UI does not parse a server timestamp.
+
+`native_playback()` is the one declaration of native playback capabilities:
+containers, video codecs, audio codecs, subtitle formats, and the transcode
+target. A server client turns that into its own request document. The
+playback engine implements those formats and does not import this crate.
+
 `PlaybackPlan` is what a future player adapter consumes:
 
-- stream URL
-- `PlaySessionId`
+- stream URL, with no access token and no generic headers
+- `StreamAuthorization`: `None`, or `Session` when the adapter must copy the
+  session authorization header onto the load request
+- `PlaySessionId` when the server sent one, otherwise absent
 - `PlaybackMethod`: `DirectPlay`, `DirectStream`, or `Transcode`
 - the source and its streams
 - selected audio and subtitle indexes
 - start position
 
-`PlaybackReport` is one sample: item, media source, play session, position,
-paused, mute, volume (0–1, with a 0–100 percent helper), selected streams,
-and method. The domain does not schedule the next sample.
+`PlaybackReport` is one sample: item, media source, optional play session,
+position, paused, mute, volume (0–1, with a 0–100 percent helper), selected
+streams, and method. The domain does not schedule the next sample.

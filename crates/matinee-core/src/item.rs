@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use crate::date::CalendarDate;
 use crate::id::ItemId;
 use crate::images::{ImageTag, ItemArtwork};
 use crate::media::TechnicalMedia;
@@ -83,9 +84,9 @@ pub struct ItemMetadata {
     pub studios: Vec<String>,
     pub production_locations: Vec<String>,
     pub provider_ids: BTreeMap<String, String>,
-    pub premiere: Option<String>,
-    pub date_created: Option<String>,
-    pub end_date: Option<String>,
+    pub premiere: Option<CalendarDate>,
+    pub date_created: Option<CalendarDate>,
+    pub end_date: Option<CalendarDate>,
 }
 
 /// Where an item sits in a series or a parent folder.

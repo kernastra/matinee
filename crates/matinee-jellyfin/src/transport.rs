@@ -35,8 +35,12 @@ impl Method {
     }
 }
 
-/// Cooperative cancel flag. Set it before a call, or drop the future to cancel
-/// an in-flight [`ReqwestTransport`] request.
+/// Stops a call that has not started.
+///
+/// [`CancelFlag::cancel`] is read once, before the transport builds the HTTP
+/// call. It does not interrupt a request already on the wire. Dropping the
+/// future from [`ReqwestTransport`] cancels that in-flight call. Search is
+/// the caller that passes this flag.
 #[derive(Clone, Debug, Default)]
 pub struct CancelFlag {
     cancelled: Arc<AtomicBool>,
@@ -110,16 +114,12 @@ impl ReqwestTransport {
         let client = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 5 {
-                    return attempt.error(RedirectReject("too many redirects"));
-                }
-                match attempt.previous().first() {
-                    Some(start) if same_origin(start, attempt.url()) => attempt.follow(),
-                    Some(_) => attempt.error(RedirectReject("cross-origin redirect")),
-                    None => attempt.follow(),
-                }
-            }))
+            .redirect(reqwest::redirect::Policy::custom(
+                |attempt| match follow_redirect(attempt.previous(), attempt.url()) {
+                    Ok(()) => attempt.follow(),
+                    Err(reason) => attempt.error(RedirectReject(reason)),
+                },
+            ))
             .user_agent(format!("Matinee/{CLIENT_VERSION}"))
             .build()
             .map_err(|_| JellyfinError::unreachable("The HTTP client could not be created."))?;
@@ -170,6 +170,18 @@ async fn execute(
     Ok(HttpResponse { status, body })
 }
 
+pub(crate) fn follow_redirect(previous: &[url::Url], next: &url::Url) -> Result<(), &'static str> {
+    if previous.len() >= 5 {
+        return Err("too many redirects");
+    }
+    if let Some(start) = previous.first()
+        && !same_origin(start, next)
+    {
+        return Err("cross-origin redirect");
+    }
+    Ok(())
+}
+
 fn map_reqwest(error: reqwest::Error) -> TransportError {
     if error.is_timeout() {
         return TransportError::Unreachable("timed out".into());
@@ -195,3 +207,29 @@ impl fmt::Display for RedirectReject {
 }
 
 impl std::error::Error for RedirectReject {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirects_stay_on_the_origin_and_stop_after_five() {
+        let start = url::Url::parse("http://jellyfin.local:8096/jellyfin").unwrap();
+        let same = url::Url::parse("http://jellyfin.local:8096/Videos/1").unwrap();
+        let other = url::Url::parse("https://evil.example/steal").unwrap();
+        assert!(follow_redirect(std::slice::from_ref(&start), &same).is_ok());
+        assert_eq!(
+            follow_redirect(std::slice::from_ref(&start), &other),
+            Err("cross-origin redirect")
+        );
+        let chain = vec![
+            start.clone(),
+            same.clone(),
+            same.clone(),
+            same.clone(),
+            same,
+        ];
+        assert_eq!(chain.len(), 5);
+        assert_eq!(follow_redirect(&chain, &start), Err("too many redirects"));
+    }
+}

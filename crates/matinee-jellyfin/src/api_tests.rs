@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use matinee_core::{
     ImageRole, ImageTag, ItemHierarchy, ItemId, ItemIdentity, ItemKind, ItemMetadata, LibraryKind,
-    LibrarySort, MediaItem, PlaybackMethod, PlaybackOptions, PlaybackReport, ReportKind,
-    TechnicalMedia, User, UserId, UserItemState,
+    LibrarySort, MediaItem, PlaySessionId, PlaybackMethod, PlaybackOptions, PlaybackPlan,
+    PlaybackReport, ReportKind, StreamAuthorization, TechnicalMedia, User, UserId, UserItemState,
 };
 use serde_json::Value;
 use url::Url;
@@ -124,6 +124,21 @@ fn authorization_header_uses_the_fixed_device_id() {
     assert!(!format!("{:?}", session()).contains("token with spaces"));
     assert!(Session::new("http://jellyfin.local:8096", "bad\ntoken", user()).is_err());
     assert!(!format!("{:?}", Password::new("hunter2")).contains("hunter2"));
+    let request = HttpRequest {
+        method: Method::Post,
+        url: "http://jellyfin.local:8096/Users/AuthenticateByName?api_key=super-secret".into(),
+        headers: vec![(
+            "Authorization".into(),
+            "MediaBrowser Token=\"super-secret\"".into(),
+        )],
+        body: Some("{\"Pw\":\"hunter2\"}".into()),
+        cancel: None,
+    };
+    let rendered = format!("{request:?}");
+    assert!(rendered.contains("<omitted>"));
+    assert!(rendered.contains("redacted"));
+    assert!(!rendered.contains("super-secret"));
+    assert!(!rendered.contains("hunter2"));
 }
 
 #[test]
@@ -135,6 +150,14 @@ fn image_urls_encode_the_token() {
         current.artwork().image(item.id(), ImageRole::Primary, 360),
         "http://jellyfin.local:8096/Items/movie-1/Images/Primary?maxWidth=360&quality=90&api_key=token%20with%20spaces"
     );
+    let native = current
+        .artwork()
+        .image_request(item.id(), ImageRole::Primary, 360);
+    assert_eq!(
+        native.url,
+        "http://jellyfin.local:8096/Items/movie-1/Images/Primary?maxWidth=360&quality=90"
+    );
+    assert!(!native.url.contains("api_key"));
     assert!(
         current
             .artwork()
@@ -405,6 +428,43 @@ fn a_required_home_shelf_failure_is_not_an_empty_feed() {
 }
 
 #[test]
+fn latest_movies_and_series_failures_fail_the_feed() {
+    for kind in ["latest", "movies", "series"] {
+        let kind = kind.to_string();
+        let label = kind.clone();
+        let transport = Mock::new(move |request| {
+            let url = Url::parse(&request.url).unwrap();
+            let types = pair(&url, "IncludeItemTypes");
+            let limit = pair(&url, "Limit");
+            let failed = match label.as_str() {
+                "latest" => {
+                    types.as_deref() == Some("Movie,Series") && limit.as_deref() == Some("6")
+                }
+                "movies" => types.as_deref() == Some("Movie") && limit.as_deref() == Some("12"),
+                "series" => types.as_deref() == Some("Series"),
+                _ => false,
+            };
+            if failed {
+                Ok(HttpResponse {
+                    status: 500,
+                    body: Vec::new(),
+                })
+            } else {
+                Ok(ok_json(&items_body(&[])))
+            }
+        });
+        let client = JellyfinClient::new(session(), transport);
+        assert!(
+            matches!(
+                wait(client.home_feed()).unwrap_err(),
+                JellyfinError::Server { status: 500, .. }
+            ),
+            "{kind} must fail the feed"
+        );
+    }
+}
+
+#[test]
 fn library_sorts_are_typed() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let record = Arc::clone(&seen);
@@ -488,7 +548,7 @@ fn clear_progress_writes_zeroes_and_keeps_the_rest() {
         if request.method == Method::Get {
             assert_eq!(path_of(request), "/UserItems/movie-1/UserData");
             return Ok(ok_json(
-                r#"{"IsFavorite":true,"PlaybackPositionTicks":42,"PlayedPercentage":12,"LastPlayedDate":"2024-01-01T00:00:00Z"}"#,
+                r#"{"IsFavorite":true,"PlaybackPositionTicks":42,"PlayedPercentage":12,"LastPlayedDate":"2024-01-01T00:00:00Z","Played":true,"PlayCount":7,"CustomPluginField":{"Nested":"keep","Flag":null},"Rating":null}"#,
             ));
         }
         assert_eq!(request.method, Method::Post);
@@ -497,6 +557,11 @@ fn clear_progress_writes_zeroes_and_keeps_the_rest() {
         assert_eq!(body["PlaybackPositionTicks"], 0);
         assert_eq!(body["PlayedPercentage"], 0);
         assert_eq!(body["LastPlayedDate"], "2024-01-01T00:00:00Z");
+        assert_eq!(body["Played"], true);
+        assert_eq!(body["PlayCount"], 7);
+        assert_eq!(body["CustomPluginField"]["Nested"], "keep");
+        assert!(body["CustomPluginField"]["Flag"].is_null());
+        assert!(body["Rating"].is_null());
         Ok(ok_json(""))
     });
     let client = JellyfinClient::new(session(), transport);
@@ -631,7 +696,11 @@ fn playback_uses_the_native_profile_and_rejects_the_legacy_fallback() {
     ))
     .unwrap();
     assert_eq!(plan.method, PlaybackMethod::DirectPlay);
-    assert_eq!(plan.play_session_id.as_str(), "play-1");
+    assert_eq!(plan.authorization, StreamAuthorization::Session);
+    assert_eq!(
+        plan.play_session_id.as_ref().map(PlaySessionId::as_str),
+        Some("play-1")
+    );
     assert_eq!(plan.selected_audio, Some(2));
     assert_eq!(plan.selected_subtitle, Some(-1));
     assert_eq!(plan.start_position, Duration::from_secs(9));
@@ -640,7 +709,8 @@ fn playback_uses_the_native_profile_and_rejects_the_legacy_fallback() {
     assert_eq!(pair(&url, "Static").as_deref(), Some("true"));
     assert_eq!(pair(&url, "MediaSourceId").as_deref(), Some("source-1"));
     assert_eq!(pair(&url, "PlaySessionId").as_deref(), Some("play-1"));
-    assert_eq!(pair(&url, "api_key").as_deref(), Some("token with spaces"));
+    assert_eq!(pair(&url, "DeviceId").as_deref(), Some(DEVICE_ID));
+    assert!(pair(&url, "api_key").is_none());
     assert_eq!(plan.streams.len(), 1);
 
     let legacy = Mock::new(|_| {
@@ -674,10 +744,11 @@ fn transcode_urls_stay_on_the_server() {
     ))
     .unwrap();
     assert_eq!(plan.method, PlaybackMethod::Transcode);
+    assert_eq!(plan.authorization, StreamAuthorization::Session);
     let url = Url::parse(&plan.url).unwrap();
     assert_eq!(url.path(), "/Videos/movie-1/master.m3u8");
     assert_eq!(pair(&url, "MediaSourceId").as_deref(), Some("source-1"));
-    assert_eq!(pair(&url, "api_key").as_deref(), Some("token with spaces"));
+    assert!(pair(&url, "api_key").is_none());
 
     let direct_stream = Mock::new(|_| {
         Ok(ok_json(
@@ -692,8 +763,10 @@ fn transcode_urls_stay_on_the_server() {
     ))
     .unwrap();
     assert_eq!(plan.method, PlaybackMethod::DirectStream);
+    assert_eq!(plan.authorization, StreamAuthorization::Session);
     let url = Url::parse(&plan.url).unwrap();
-    assert_eq!(pair(&url, "api_key").as_deref(), Some("already"));
+    assert_eq!(pair(&url, "MediaSourceId").as_deref(), Some("source-1"));
+    assert!(pair(&url, "api_key").is_none());
 
     let evil = Mock::new(|_| {
         Ok(ok_json(
@@ -727,7 +800,7 @@ fn playback_reports_include_position_streams_and_method() {
     let report = PlaybackReport {
         item_id: ItemId::parse("movie-1").unwrap(),
         media_source_id: Some(matinee_core::MediaSourceId::parse("source-1").unwrap()),
-        play_session_id: matinee_core::PlaySessionId::parse("play-1").unwrap(),
+        play_session_id: Some(PlaySessionId::parse("play-1").unwrap()),
         position: Duration::from_secs(3),
         paused: true,
         muted: true,
@@ -755,6 +828,185 @@ fn playback_reports_include_position_streams_and_method() {
     assert_eq!(body["SubtitleStreamIndex"], -1);
     assert_eq!(body["PlayMethod"], "DirectPlay");
     assert_eq!(body["CanSeek"], true);
+
+    let quiet = PlaybackReport {
+        play_session_id: None,
+        ..report
+    };
+    wait(client.report_playback(ReportKind::Progress, &quiet)).unwrap();
+    let calls = seen.lock().expect("seen").clone();
+    let omitted: Value = serde_json::from_str(&calls[3].1).unwrap();
+    assert!(omitted.get("PlaySessionId").is_none());
+}
+
+fn negotiated(body: &str) -> Result<PlaybackPlan, JellyfinError> {
+    let body = body.to_string();
+    let transport = Mock::new(move |_| Ok(ok_json(&body)));
+    let client = JellyfinClient::new(session(), transport);
+    wait(client.playback_plan(
+        &bare_item("movie-1", "Movie", ItemKind::Movie),
+        PlaybackOptions::default(),
+        None,
+    ))
+}
+
+fn negotiated_item(item_id: &str, body: &str) -> Result<PlaybackPlan, JellyfinError> {
+    let body = body.to_string();
+    let item_id = item_id.to_string();
+    let transport = Mock::new(move |_| Ok(ok_json(&body)));
+    let client = JellyfinClient::new(session(), transport);
+    wait(client.playback_plan(
+        &bare_item(&item_id, "Movie", ItemKind::Movie),
+        PlaybackOptions::default(),
+        None,
+    ))
+}
+
+fn negotiated_on(server: &str, body: &str) -> Result<PlaybackPlan, JellyfinError> {
+    let body = body.to_string();
+    let transport = Mock::new(move |_| Ok(ok_json(&body)));
+    let client = JellyfinClient::new(
+        Session::new(server, "token with spaces", user()).unwrap(),
+        transport,
+    );
+    wait(client.playback_plan(
+        &bare_item("movie-1", "Movie", ItemKind::Movie),
+        PlaybackOptions::default(),
+        None,
+    ))
+}
+
+#[test]
+fn delivery_method_follows_what_the_address_does() {
+    let remux = negotiated(
+        r#"{"PlaySessionId":"play-5","MediaSources":[{"Id":"remux","SupportsDirectPlay":false,"SupportsDirectStream":true,"SupportsTranscoding":true,"TranscodingUrl":"/Videos/movie-1/master.m3u8?MediaSourceId=remux&TranscodeReasons=ContainerNotSupported","TranscodeReasons":"ContainerNotSupported"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(remux.method, PlaybackMethod::DirectStream);
+    assert_eq!(remux.authorization, StreamAuthorization::Session);
+    let url = Url::parse(&remux.url).unwrap();
+    assert_eq!(pair(&url, "MediaSourceId").as_deref(), Some("remux"));
+    assert!(pair(&url, "api_key").is_none());
+
+    let both = negotiated(
+        r#"{"PlaySessionId":"play-6","MediaSources":[{"Id":"both","SupportsDirectPlay":false,"SupportsDirectStream":true,"SupportsTranscoding":true,"TranscodingUrl":"/Videos/movie-1/master.m3u8?MediaSourceId=both&api_key=one&TranscodeReasons=VideoCodecNotSupported&api_key=two"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(both.method, PlaybackMethod::Transcode);
+    let url = Url::parse(&both.url).unwrap();
+    assert_eq!(pair(&url, "MediaSourceId").as_deref(), Some("both"));
+    assert!(pair(&url, "api_key").is_none());
+    assert_eq!(
+        url.query_pairs()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("api_key"))
+            .count(),
+        0
+    );
+
+    let copied = negotiated(
+        r#"{"MediaSources":[{"SupportsDirectPlay":false,"SupportsDirectStream":true,"SupportsTranscoding":true,"TranscodingUrl":"/Videos/movie-1/master.m3u8?MediaSourceId=copy&VideoCodec=copy&AudioCodec=copy"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(copied.method, PlaybackMethod::DirectStream);
+    assert!(copied.play_session_id.is_none());
+    assert!(pair(&Url::parse(&copied.url).unwrap(), "PlaySessionId").is_none());
+}
+
+#[test]
+fn source_selection_prefers_direct_play_then_remux_then_transcode() {
+    let direct = negotiated(
+        r#"{"PlaySessionId":"play-7","MediaSources":[{"Id":"enc","SupportsDirectPlay":false,"SupportsTranscoding":true,"TranscodingUrl":"/Videos/movie-1/master.m3u8?MediaSourceId=enc&TranscodeReasons=VideoCodecNotSupported"},{"Id":"direct","SupportsDirectPlay":true}]}"#,
+    )
+    .unwrap();
+    assert_eq!(direct.method, PlaybackMethod::DirectPlay);
+    assert_eq!(
+        direct.source_id.as_ref().map(|id| id.as_str()),
+        Some("direct")
+    );
+
+    let omitted = negotiated(
+        r#"{"PlaySessionId":"   ","MediaSources":[{"SupportsDirectPlay":true,"Id":"source-1"}]}"#,
+    )
+    .unwrap();
+    assert!(omitted.play_session_id.is_none());
+    assert!(pair(&Url::parse(&omitted.url).unwrap(), "PlaySessionId").is_none());
+    assert_eq!(omitted.authorization, StreamAuthorization::Session);
+
+    let remux = negotiated(
+        r#"{"PlaySessionId":"play-8","MediaSources":[{"Id":"enc","SupportsDirectPlay":false,"SupportsDirectStream":true,"SupportsTranscoding":true,"TranscodingUrl":"/Videos/movie-1/master.m3u8?MediaSourceId=enc&TranscodeReasons=VideoCodecNotSupported"},{"Id":"remux","SupportsDirectPlay":false,"SupportsDirectStream":true,"SupportsTranscoding":true,"TranscodingUrl":"/Videos/movie-1/master.m3u8?MediaSourceId=remux&TranscodeReasons=ContainerBitrateExceedsLimit"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(remux.method, PlaybackMethod::DirectStream);
+    assert_eq!(
+        remux.source_id.as_ref().map(|id| id.as_str()),
+        Some("remux")
+    );
+
+    let missing = negotiated(
+        r#"{"PlaySessionId":"play-9","MediaSources":[{"Id":"dead","SupportsDirectPlay":false,"SupportsDirectStream":true,"SupportsTranscoding":true}]}"#,
+    )
+    .unwrap_err();
+    assert!(matches!(missing, JellyfinError::PlaybackUnavailable { .. }));
+    assert!(missing.to_string().contains("No playable media source"));
+    assert!(!missing.to_string().contains("token"));
+}
+
+#[test]
+fn stream_urls_drop_credentials_and_stay_on_the_server() {
+    let encoded = negotiated_item(
+        "movie+1",
+        r#"{"MediaSources":[{"SupportsDirectPlay":true,"Id":"source&1"}]}"#,
+    )
+    .unwrap();
+    assert!(encoded.url.contains("/Videos/movie%2B1/stream"));
+    assert!(encoded.url.contains("MediaSourceId=source%261"));
+    assert!(!encoded.url.contains("api_key"));
+
+    let ampersand = negotiated_item(
+        "movie&1",
+        r#"{"MediaSources":[{"SupportsDirectPlay":true}]}"#,
+    )
+    .unwrap();
+    assert!(ampersand.url.contains("/Videos/movie%261/stream"));
+
+    let rooted = negotiated_on(
+        "http://jellyfin.local:8096/jellyfin",
+        r#"{"MediaSources":[{"SupportsDirectPlay":false,"SupportsTranscoding":true,"TranscodingUrl":"/Videos/movie-1/master.m3u8?MediaSourceId=source-1&AccessToken=secret&token=also"}]}"#,
+    )
+    .unwrap();
+    let url = Url::parse(&rooted.url).unwrap();
+    assert_eq!(url.path(), "/Videos/movie-1/master.m3u8");
+    assert!(pair(&url, "api_key").is_none());
+    assert!(pair(&url, "AccessToken").is_none());
+    assert!(pair(&url, "token").is_none());
+    assert!(!rooted.url.to_ascii_lowercase().contains("secret"));
+
+    let relative = negotiated_on(
+        "http://jellyfin.local:8096/jellyfin",
+        r#"{"MediaSources":[{"SupportsDirectPlay":false,"SupportsTranscoding":true,"TranscodingUrl":"Videos/movie-1/master.m3u8?MediaSourceId=source-1"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        Url::parse(&relative.url).unwrap().path(),
+        "/jellyfin/Videos/movie-1/master.m3u8"
+    );
+
+    for bad in [
+        "//other-host/path",
+        "http://use%72:secret@evil.example/steal",
+        "/Videos/movie-1/master.m3u8?MediaSourceId=source\n1",
+        "https://evil.example/steal",
+    ] {
+        let body = format!(
+            r#"{{"MediaSources":[{{"SupportsDirectPlay":false,"TranscodingUrl":{}}}]}}"#,
+            serde_json::to_string(bad).unwrap()
+        );
+        let error = negotiated(&body).unwrap_err();
+        assert!(matches!(error, JellyfinError::PlaybackUnavailable { .. }));
+        assert!(!error.to_string().contains("secret"));
+        assert!(!error.to_string().contains("evil.example"));
+        assert!(!error.to_string().contains("other-host"));
+    }
 }
 
 #[test]

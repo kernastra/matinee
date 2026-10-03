@@ -16,8 +16,13 @@
 //!
 //! # HTTP runtime
 //!
-//! [`ReqwestTransport`] must be polled on a Tokio runtime. Tests and other
-//! callers can substitute [`Transport`] and drive that future on any executor.
+//! [`ReqwestTransport`] must be polled on a Tokio runtime. The owner is the
+//! application service runtime, not this crate and not a UI task. That
+//! runtime is not built yet. The first screen that calls this client creates
+//! it and drives these futures there. Calling [`ReqwestTransport`] from a UI
+//! task panics. Tests substitute [`Transport`] and use
+//! `futures::executor::block_on`. The owner diagram is in the architecture
+//! notes for this client.
 
 #[cfg(test)]
 mod api_tests;
@@ -38,7 +43,7 @@ mod ticks;
 mod transport;
 mod url;
 
-pub use artwork::ArtworkUrls;
+pub use artwork::{ArtworkRequest, ArtworkUrls};
 pub use auth::{Password, authenticate};
 pub use client::JellyfinClient;
 pub use error::JellyfinError;

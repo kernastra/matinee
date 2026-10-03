@@ -390,15 +390,6 @@ fn software_1080p_stays_bounded() {
     }
 }
 
-#[test]
-fn missing_commands_do_not_need_a_library() {
-    // Pure validation is covered in the crate. This checks the profile export
-    // stays free of the WebKit direct-play ceiling.
-    let profile = matinee_player::native_device_profile();
-    assert_eq!(profile["Name"], "Matinee Native");
-    assert_ne!(profile["SubtitleProfiles"].as_array().unwrap().len(), 0);
-}
-
 fn rss_bytes() -> Option<u64> {
     let text = std::fs::read_to_string("/proc/self/statm").ok()?;
     let pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;

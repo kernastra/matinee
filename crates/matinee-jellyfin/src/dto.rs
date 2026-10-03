@@ -148,6 +148,7 @@ pub(crate) struct MediaSourceDto {
     #[serde(default)]
     pub(crate) supports_transcoding: bool,
     pub(crate) transcoding_url: Option<String>,
+    pub(crate) transcode_reasons: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) media_streams: Option<Vec<MediaStreamDto>>,
     pub(crate) default_audio_stream_index: Option<i32>,

@@ -6,9 +6,10 @@
 use std::time::Duration;
 
 use matinee_core::{
-    AudioStream, Chapter, Credit, Delivery, DynamicRange, ImageTag, ItemArtwork, ItemHierarchy,
-    ItemId, ItemIdentity, ItemKind, ItemMetadata, MediaItem, MediaSource, MediaSourceId,
-    MediaStream, Person, SubtitleStream, TechnicalMedia, User, UserId, UserItemState, VideoStream,
+    AudioStream, CalendarDate, Chapter, Credit, Delivery, DynamicRange, ImageTag, ItemArtwork,
+    ItemHierarchy, ItemId, ItemIdentity, ItemKind, ItemMetadata, MediaItem, MediaSource,
+    MediaSourceId, MediaStream, Person, SubtitleStream, TechnicalMedia, User, UserId,
+    UserItemState, VideoStream,
 };
 use serde_json::Value;
 
@@ -67,8 +68,8 @@ pub(crate) fn item_from_dto(dto: ItemDto) -> Result<MediaItem, JellyfinError> {
                 .filter(|year| (1..10_000).contains(year)),
             runtime: optional_ticks(dto.run_time_ticks.as_ref())?
                 .filter(|runtime| !runtime.is_zero()),
-            community_rating: finite(dto.community_rating)?,
-            critic_rating: finite(dto.critic_rating)?,
+            community_rating: optional_rating(dto.community_rating, 10.0),
+            critic_rating: optional_rating(dto.critic_rating, 100.0),
             official_rating: blank(dto.official_rating),
             genres: strings(dto.genres),
             taglines: strings(dto.taglines),
@@ -85,9 +86,9 @@ pub(crate) fn item_from_dto(dto: ItemDto) -> Result<MediaItem, JellyfinError> {
                 .into_iter()
                 .filter(|(key, value)| !key.trim().is_empty() && !value.trim().is_empty())
                 .collect(),
-            premiere: blank(dto.premiere_date),
-            date_created: blank(dto.date_created),
-            end_date: blank(dto.end_date),
+            premiere: calendar_day(dto.premiere_date),
+            date_created: calendar_day(dto.date_created),
+            end_date: calendar_day(dto.end_date),
         },
         artwork: ItemArtwork {
             primary: tag(image_tags.primary),
@@ -184,8 +185,8 @@ pub(crate) fn stream_from_dto(dto: MediaStreamDto) -> Result<MediaStream, Jellyf
             codec: blank(dto.codec),
             title: blank(dto.title),
             language: blank(dto.language),
-            width: optional_u32(dto.width),
-            height: optional_u32(dto.height),
+            width: optional_dimension(dto.width),
+            height: optional_dimension(dto.height),
             range: dynamic_range(dto.video_range.as_deref(), dto.video_range_type.as_deref()),
             bit_depth: optional_u32(dto.bit_depth),
             frame_rate: frame_rate(dto.average_frame_rate, dto.real_frame_rate),
@@ -231,11 +232,7 @@ fn user_state(dto: Option<UserDataDto>) -> Result<UserItemState, JellyfinError> 
     let Some(dto) = dto else {
         return Ok(UserItemState::default());
     };
-    let percentage = match dto.played_percentage {
-        Some(value) if value.is_finite() => Some(value as f32),
-        Some(_) => return Err(JellyfinError::malformed("played percentage")),
-        None => None,
-    };
+    let percentage = optional_percentage(dto.played_percentage);
     Ok(UserItemState::from_parts(
         optional_ticks(dto.playback_position_ticks.as_ref())?,
         percentage,
@@ -328,15 +325,24 @@ fn optional_u64(value: Option<i64>) -> Option<u64> {
 fn frame_rate(average: Option<f64>, real: Option<f64>) -> Option<f64> {
     average
         .or(real)
-        .filter(|value| value.is_finite() && *value > 0.0)
+        .filter(|value| value.is_finite() && *value > 0.0 && *value <= 480.0)
 }
 
-fn finite(value: Option<f64>) -> Result<Option<f64>, JellyfinError> {
-    match value {
-        Some(value) if value.is_finite() => Ok(Some(value)),
-        Some(_) => Err(JellyfinError::malformed("rating")),
-        None => Ok(None),
-    }
+fn optional_rating(value: Option<f64>, max: f64) -> Option<f64> {
+    value.filter(|value| value.is_finite() && *value >= 0.0 && *value <= max)
+}
+
+fn optional_percentage(value: Option<f64>) -> Option<f32> {
+    let value = value.filter(|value| value.is_finite() && *value >= 0.0)?;
+    Some(value.min(100.0) as f32)
+}
+
+fn optional_dimension(value: Option<i32>) -> Option<u32> {
+    optional_u32(value).filter(|value| *value <= 16_384)
+}
+
+fn calendar_day(value: Option<String>) -> Option<CalendarDate> {
+    value.as_deref().and_then(CalendarDate::parse)
 }
 
 fn strings(values: Option<Vec<String>>) -> Vec<String> {
@@ -523,5 +529,49 @@ mod tests {
             r#"{"Id":"movie-1","Name":"Big","Type":"Movie","RunTimeTicks":18446744073709551615}"#;
         let error = parse_item(overflow).unwrap_err();
         assert_eq!(error.context(), Some("ticks overflow"));
+    }
+
+    #[test]
+    fn weird_metadata_does_not_drop_the_title() {
+        let mut dto: ItemDto = serde_json::from_str(
+            r#"{
+                "Id":"movie-1",
+                "Name":"Still Here",
+                "Type":"Movie",
+                "PremiereDate":"not-a-date",
+                "DateCreated":"2024-05-01T03:04:05Z",
+                "EndDate":"2023-02-29",
+                "CommunityRating":80,
+                "CriticRating":-4,
+                "UserData":{"PlayedPercentage":140},
+                "MediaSources":[{
+                    "Id":"source-1",
+                    "MediaStreams":[{
+                        "Index":0,
+                        "Type":"Video",
+                        "Width":0,
+                        "Height":999999,
+                        "AverageFrameRate":9000
+                    }]
+                }]
+            }"#,
+        )
+        .unwrap();
+        dto.community_rating = Some(f64::NAN);
+        let movie = item_from_dto(dto).unwrap();
+        assert_eq!(movie.name(), "Still Here");
+        assert!(movie.metadata.premiere.is_none());
+        assert!(movie.metadata.end_date.is_none());
+        assert!(movie.metadata.community_rating.is_none());
+        assert!(movie.metadata.critic_rating.is_none());
+        assert_eq!(
+            movie.metadata.date_created,
+            CalendarDate::parse("2024-05-01")
+        );
+        assert!(movie.user.viewing_progress().is_some());
+        let video = movie.media.primary_video().unwrap();
+        assert!(video.width.is_none());
+        assert!(video.height.is_none());
+        assert!(video.frame_rate.is_none());
     }
 }

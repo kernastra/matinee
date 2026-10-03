@@ -9,7 +9,6 @@ publish.workspace = true
 
 [dependencies]
 libloading = "0.8"
-serde_json = "1"
 
 # The workspace forbids `unsafe_code`. This crate is the one exception: the
 # libmpv client API is C. Cargo cannot inherit workspace lints and override a
