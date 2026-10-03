@@ -68,7 +68,21 @@ crates. Its edition stays 2021.
 
 ## Known build note
 
-`src-tauri` declares `rust-version = "1.90"` because the shared service crates
-do. The lockfile already needed Rust ≥ 1.85 (`idna_adapter` 1.2.2) before
-Phase 2B. Linux builds of `keyring` need `libdbus-1-dev` at compile time.
-Unit tests do not start a Secret Service daemon.
+`src-tauri` declares `rust-version = "1.90"` because it compiles the shared
+service crates. Those crates are edition 2024, which Rust 1.77 cannot parse.
+Rust 1.90 is required for the shipping adapter and for the workspace. The
+previous `rust-version = "1.77.2"` does not build this tree. The services are
+not forked to keep the old compiler. The lockfile already needed Rust ≥ 1.85
+(`idna_adapter` 1.2.2) before Phase 2B. CI installs Rust 1.90.0 for the
+workspace and for `src-tauri`. There is still no root `rust-toolchain.toml`;
+use `cargo +1.90.0` in `src-tauri` the same way as the workspace. Linux
+builds of `keyring` need `libdbus-1-dev` at compile time. Unit tests do not
+start a Secret Service daemon. Linux CI compiles and tests the adapter.
+macOS and Windows CI compile `src-tauri` (`cargo check --locked`) and do not
+launch Tauri or write to Keychain or Credential Manager.
+
+The security workflow already failed on `main` before this phase. The pins
+that restore it are separate from the service split: `rustls` 0.23.45 in
+`src-tauri` (RUSTSEC-2026-0285), Vitest 4.1.11, Vite 7.3.6, and a
+`pnpm-workspace.yaml` override for `nanoid` 3.3.18. They are not a general
+dependency upgrade.

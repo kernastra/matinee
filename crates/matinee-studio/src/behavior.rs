@@ -175,6 +175,22 @@ fn prompt_and_higgsfield_limits_match_shipping_copy() {
     let too_long =
         runtime().block_on(studio.generate(&scratch.paths, request(ImageProvider::Fal, long)));
     assert!(matches!(too_long, Err(StudioError::PromptTooLong)));
+    assert!(!ImageProvider::Higgsfield.generation_implemented());
+    assert!(ImageProvider::Codex.generation_implemented());
+    assert!(ImageProvider::Fal.generation_implemented());
+    let saved = studio
+        .save_provider_key(
+            ImageProvider::Higgsfield,
+            Secret::new("higgsfield-key-value"),
+        )
+        .unwrap();
+    assert!(saved.configured);
+    assert!(
+        studio
+            .provider_key_status(ImageProvider::Higgsfield)
+            .unwrap()
+            .configured
+    );
     let higgsfield = runtime()
         .block_on(studio.generate(&scratch.paths, request(ImageProvider::Higgsfield, prompt())));
     let Err(error) = higgsfield else {
@@ -471,6 +487,131 @@ fn oversized_manifests_are_rejected_before_parsing() {
         .load_manifest(&scratch.paths, movie.to_str().unwrap())
         .unwrap_err();
     assert!(error.to_string().contains("2 MB"));
+    assert!(!error.to_string().contains("schema"));
+    std::fs::write(&manifest, b"{").unwrap();
+    let malformed = studio
+        .load_manifest(&scratch.paths, movie.to_str().unwrap())
+        .unwrap_err();
+    assert!(malformed.to_string().contains("schema"));
+}
+
+#[test]
+fn provider_redirects_are_checked_on_every_hop() {
+    let scratch = Scratch::new();
+    let secrets = MemoryStore::new();
+    secrets
+        .set(
+            &matinee_secrets::CredentialNamespace::image_generation(),
+            &matinee_secrets::CredentialKey::new("fal").unwrap(),
+            &Secret::new("fal-live-key-99"),
+        )
+        .unwrap();
+    let http = ScriptHttp::new(vec![
+        Ok(fal_json(
+            "https://v3.fal.media/files/a.png?token=signed-secret",
+        )),
+        Ok(redirect("/files/b.png")),
+        Ok(png_response()),
+    ]);
+    let seen = http.seen();
+    let studio = Studio::new(secrets, http, idle_process());
+    let image = runtime()
+        .block_on(studio.generate(&scratch.paths, request(ImageProvider::Fal, prompt())))
+        .unwrap();
+    assert!(image.local_path.contains("fal-"));
+    let seen = seen.lock().expect("seen").clone();
+    assert_eq!(
+        seen[1].url,
+        "https://v3.fal.media/files/a.png?token=signed-secret"
+    );
+    assert_eq!(seen[2].url, "https://v3.fal.media/files/b.png");
+    assert!(!format!("{:?}", seen[1]).contains("signed-secret"));
+
+    let refused = [
+        "http://127.0.0.1/poster.png",
+        "http://10.1.2.3/poster.png",
+        "http://[::1]/poster.png",
+        "http://169.254.169.254/latest",
+        "file:///etc/passwd",
+        "ftp://cdn.example/poster.png",
+        "https://user:secret@cdn.example/a.png",
+    ];
+    for url in refused {
+        let error = generate_from(url, vec![]);
+        assert!(error.is_err(), "{url}");
+    }
+    assert!(
+        generate_from(
+            "https://v3.fal.media/files/a.png",
+            vec![redirect("http://cdn.example/poster.png")]
+        )
+        .is_err()
+    );
+    assert!(generate_from("https://v3.fal.media/files/a.png", vec![redirect("")]).is_err());
+    assert!(
+        generate_from(
+            "https://v3.fal.media/files/a.png",
+            vec![redirect("http://[")]
+        )
+        .is_err()
+    );
+    assert!(
+        generate_from(
+            "https://v3.fal.media/files/a.png",
+            vec![
+                redirect("https://v3.fal.media/files/a.png"),
+                redirect("https://v3.fal.media/files/a.png"),
+                redirect("https://v3.fal.media/files/a.png"),
+            ]
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("too many times")
+    );
+}
+
+fn generate_from(
+    url: &str,
+    hops: Vec<StudioResponse>,
+) -> Result<crate::model::GeneratedImage, StudioError> {
+    let scratch = Scratch::new();
+    let secrets = MemoryStore::new();
+    secrets
+        .set(
+            &matinee_secrets::CredentialNamespace::image_generation(),
+            &matinee_secrets::CredentialKey::new("fal").unwrap(),
+            &Secret::new("fal-live-key-99"),
+        )
+        .unwrap();
+    let mut responses = vec![Ok(fal_json(url))];
+    responses.extend(hops.into_iter().map(Ok));
+    let studio = Studio::new(secrets, ScriptHttp::new(responses), idle_process());
+    runtime().block_on(studio.generate(&scratch.paths, request(ImageProvider::Fal, prompt())))
+}
+
+fn fal_json(url: &str) -> StudioResponse {
+    StudioResponse {
+        status: 200,
+        headers: Vec::new(),
+        body: format!(r#"{{"images":[{{"url":"{url}","content_type":"image/png"}}]}}"#)
+            .into_bytes(),
+    }
+}
+
+fn redirect(location: &str) -> StudioResponse {
+    StudioResponse {
+        status: 302,
+        headers: vec![("location".into(), location.into())],
+        body: Vec::new(),
+    }
+}
+
+fn png_response() -> StudioResponse {
+    StudioResponse {
+        status: 200,
+        headers: vec![("content-type".into(), "image/png".into())],
+        body: TINY_PNG.to_vec(),
+    }
 }
 
 fn idle_process() -> ScriptProcess {

@@ -117,7 +117,7 @@ impl Transport for ReqwestTransport {
         log::debug!(
             "integration {method} {url} -> {status}",
             method = request.method,
-            url = request.url
+            url = crate::redact::log_target(&request.url)
         );
         Ok(IntegrationResponse {
             status,

@@ -82,7 +82,7 @@ pub(crate) fn authorization_header(token: Option<&str>) -> Result<String, Jellyf
 }
 
 pub(crate) fn validate_token(token: &str) -> Result<(), JellyfinError> {
-    if token.is_empty()
+    if token.trim().is_empty()
         || token.len() > 4096
         || token
             .chars()

@@ -108,7 +108,10 @@ forbid_deps crates/matinee-integrations/Cargo.toml gpui atelier-ui atelier-app m
 if ! depends_on crates/matinee-integrations/Cargo.toml matinee-secrets; then
   fail "matinee-integrations must depend on matinee-secrets"
 fi
-forbid_deps crates/matinee-studio/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player matinee-jellyfin tauri
+forbid_deps crates/matinee-studio/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player matinee-jellyfin matinee-integrations matinee-core tauri
+if grep -qE '^[[:space:]]*keyring([[:space:]]|\.)' src-tauri/Cargo.toml; then
+  fail "src-tauri must not depend on keyring; credentials go through matinee-secrets"
+fi
 if ! depends_on crates/matinee-studio/Cargo.toml matinee-secrets; then
   fail "matinee-studio must depend on matinee-secrets"
 fi

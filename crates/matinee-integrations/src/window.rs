@@ -49,6 +49,20 @@ mod tests {
     }
 
     #[test]
+    fn the_same_civil_day_uses_the_offset_the_caller_supplies() {
+        let daylight = FixedOffset::west_opt(4 * 3600).unwrap();
+        let standard = FixedOffset::west_opt(5 * 3600).unwrap();
+        let summer = daylight.with_ymd_and_hms(2026, 3, 8, 12, 0, 0).unwrap();
+        let winter = standard.with_ymd_and_hms(2026, 11, 1, 12, 0, 0).unwrap();
+        let (summer_start, summer_end) = upcoming_window(summer, 1).unwrap();
+        let (winter_start, winter_end) = upcoming_window(winter, 1).unwrap();
+        assert_eq!(summer_start.to_rfc3339(), "2026-03-08T04:00:00+00:00");
+        assert_eq!(summer_end.to_rfc3339(), "2026-03-09T04:00:00+00:00");
+        assert_eq!(winter_start.to_rfc3339(), "2026-11-01T05:00:00+00:00");
+        assert_eq!(winter_end.to_rfc3339(), "2026-11-02T05:00:00+00:00");
+    }
+
+    #[test]
     fn default_span_is_one_hundred_twenty_local_days() {
         let zone = FixedOffset::east_opt(0).unwrap();
         let from = zone.with_ymd_and_hms(2026, 1, 1, 0, 30, 0).unwrap();

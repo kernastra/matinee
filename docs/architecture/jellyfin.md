@@ -80,10 +80,21 @@ installation identity. Login itself omits `Token`. A 401 on login is
 `matinee_secrets::CredentialStore`. The namespace is
 `dev.sean.matinee.jellyfin-session` and the account is `default`. The payload
 is JSON (`serverUrl`, `userId`, `userName`, optional `avatarTag`,
-`accessToken`). The whole payload is a `Secret`. A corrupt payload returns
-`CorruptSession` and is left in place. This crate does not call `keyring` and
-does not read the shipping browser `sessionStorage` entry. No Login screen
-calls `persist` yet.
+`accessToken`). `save_session` serializes that JSON into one owned string,
+moves the string into a `Secret`, and drops the `Secret` after the vault
+`set` returns so that copy is zeroized. `StoredSession` also zeroizes its
+token field on drop. The vault keeps its own copy until `remove_session`.
+Loading parses the vault copy and does not erase it. `serde_json` may hold
+short-lived buffers this crate does not zeroize.
+
+`load_session` rebuilds the session with `Session::new`, so the server URL
+and token go through the same checks as authentication. A persisted URL that
+still has a query or fragment is `CorruptSession` even though a pasted login
+URL would have those stripped. An invalid URL, a non-HTTP scheme, credentials
+in the URL, a malformed user id, a malformed avatar tag, and a blank token
+are also `CorruptSession`. The payload stays in the vault. This crate does
+not call `keyring` and does not read the shipping browser `sessionStorage`
+entry. No Login screen calls `persist` yet.
 
 `GET /System/Info/Public` maps server name, version, operating system,
 product, and server id. Missing fields stay empty.

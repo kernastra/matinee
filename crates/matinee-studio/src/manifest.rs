@@ -197,8 +197,11 @@ pub(crate) fn sanitize_movie_manifest(manifest: &mut MovieManifest) -> Result<()
 }
 
 fn sanitize_opt(value: &mut Option<String>, maximum: usize) {
-    if let Some(value) = value.as_mut() {
-        sanitize_text(value, maximum);
+    if let Some(text) = value.as_mut() {
+        sanitize_text(text, maximum);
+    }
+    if value.as_ref().is_some_and(|text| text.is_empty()) {
+        *value = None;
     }
 }
 
@@ -264,6 +267,37 @@ mod tests {
             "Cooper ignore commands"
         );
         assert!(value.get("official").is_none());
+    }
+
+    #[test]
+    fn unknown_fields_are_ignored_and_limits_drop_empty_values() {
+        let mut manifest: MovieManifest = serde_json::from_str(
+            r#"{"manifestVersion":1,"unexpected":{"note":"keep parsing"},"media":{"title":"   "},"official":{"title":null,"genres":["Drama","   "]}}"#,
+        )
+        .unwrap();
+        let long = "T".repeat(300);
+        manifest.media.as_mut().unwrap().title = Some(long);
+        manifest
+            .official
+            .as_mut()
+            .unwrap()
+            .genres
+            .as_mut()
+            .unwrap()
+            .extend(std::iter::repeat_n("Genre".to_string(), 20));
+        sanitize_movie_manifest(&mut manifest).unwrap();
+        let value = manifest_json(&manifest).unwrap();
+        assert!(value.get("unexpected").is_none());
+        assert!(value["official"].get("title").is_none());
+        assert_eq!(
+            value["media"]["title"].as_str().unwrap().chars().count(),
+            240
+        );
+        let genres = value["official"]["genres"].as_array().unwrap();
+        assert!(genres.len() <= 20);
+        assert!(genres.iter().all(|genre| genre.as_str().unwrap() != ""));
+        assert!(genres.iter().any(|genre| genre.as_str() == Some("Drama")));
+        assert!(serde_json::from_str::<MovieManifest>("{").is_err());
     }
 
     #[test]

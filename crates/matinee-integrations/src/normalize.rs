@@ -426,4 +426,97 @@ mod tests {
             Some("https://img.example/fan.jpg")
         );
     }
+
+    #[test]
+    fn parity_fixture_covers_milestones_text_and_image_priority() {
+        let (start, end) = bounds();
+        let movies = normalize_calendar(
+            IntegrationProvider::Radarr,
+            &serde_json::json!([{
+                "id": 9,
+                "title": "Window Piece",
+                "overview": "A quiet overview",
+                "monitored": true,
+                "hasFile": false,
+                "genres": ["Drama", "Mystery"],
+                "inCinemas": "2026-08-20T00:00:00Z",
+                "digitalRelease": "2026-09-12T00:00:00Z",
+                "physicalRelease": "2026-10-02T00:00:00Z",
+                "images": [
+                    { "coverType": "fanart", "remoteUrl": "https://image.example/fan.jpg" },
+                    { "coverType": "poster", "remoteUrl": "https://image.example/poster.jpg" }
+                ]
+            }, {
+                "id": 10,
+                "title": "On the end",
+                "inCinemas": "2026-12-03T00:00:00Z"
+            }]),
+            start,
+            end,
+        );
+        assert_eq!(
+            movies
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "radarr-9-theatrical",
+                "radarr-9-digital",
+                "radarr-9-physical"
+            ]
+        );
+        assert_eq!(movies[0].title, "Window Piece");
+        assert_eq!(movies[0].overview.as_deref(), Some("A quiet overview"));
+        assert_eq!(
+            movies[0].genres,
+            vec!["Drama".to_string(), "Mystery".to_string()]
+        );
+        assert!(!movies[0].downloaded);
+        assert_eq!(movies[2].release_kind, ReleaseKind::Physical);
+        assert_eq!(
+            movies[0].image_url.as_deref(),
+            Some("https://image.example/poster.jpg")
+        );
+        let episodes = normalize_calendar(
+            IntegrationProvider::Sonarr,
+            &serde_json::json!([{
+                "id": 30,
+                "title": "Cold Open",
+                "overview": "Episode text",
+                "airDateUtc": "2026-08-18T01:00:00Z",
+                "monitored": true,
+                "hasFile": false,
+                "seriesId": 11,
+                "seasonNumber": 1,
+                "episodeNumber": 4,
+                "images": [{ "coverType": "screenshot", "url": "https://img.example/shot.jpg" }],
+                "series": {
+                    "id": 11,
+                    "title": "Night Desk",
+                    "overview": "Series text",
+                    "monitored": true,
+                    "genres": ["Crime"],
+                    "images": [
+                        { "coverType": "poster", "remoteUrl": "https://img.example/poster.jpg" },
+                        { "coverType": "fanart", "remoteUrl": "https://img.example/fan.jpg" }
+                    ]
+                }
+            }]),
+            start,
+            end,
+        );
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].title, "Night Desk");
+        assert_eq!(episodes[0].subtitle.as_deref(), Some("S01E04 · Cold Open"));
+        assert_eq!(episodes[0].overview.as_deref(), Some("Series text"));
+        assert_eq!(episodes[0].genres, vec!["Crime".to_string()]);
+        assert_eq!(episodes[0].series_id, Some(11));
+        assert_eq!(episodes[0].season_number, Some(1));
+        assert_eq!(episodes[0].episode_number, Some(4));
+        assert!(!episodes[0].downloaded);
+        assert_eq!(
+            episodes[0].image_url.as_deref(),
+            Some("https://img.example/shot.jpg")
+        );
+    }
 }

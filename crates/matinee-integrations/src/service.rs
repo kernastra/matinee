@@ -28,7 +28,6 @@ use crate::model::{
 };
 use crate::normalize::normalize_calendar;
 use crate::provider::IntegrationProvider;
-use crate::redact::redact;
 use crate::time::{in_window, parse_instant};
 use crate::transport::{IntegrationRequest, Transport};
 use crate::url::normalize_server_url;
@@ -443,9 +442,7 @@ fn decode_json(
     body: &[u8],
 ) -> Result<Value, IntegrationError> {
     if !(200..300).contains(&status) {
-        let detail = String::from_utf8_lossy(body);
-        let detail = redact(detail.trim());
-        return Err(IntegrationError::server(provider, status, detail));
+        return Err(IntegrationError::server(provider, status));
     }
     serde_json::from_slice(body).map_err(|_| IntegrationError::MalformedResponse { provider })
 }

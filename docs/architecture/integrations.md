@@ -9,8 +9,13 @@ and does not depend on `matinee-core`. A calendar instant is not a domain
 
 `ReqwestTransport` uses a 20-second timeout and does not follow redirects. A
 3xx response is a failed status. The API key is the `X-Api-Key` header.
-Requests are not logged with that header. Error bodies are passed through
-`redact` and truncated.
+Requests are not logged with that header. The log line is scheme, host,
+port, and path, without the query or fragment. A non-2xx provider response
+becomes `HTTP {status}` only. The body is not stored on the error, so
+`Display` and `Debug` cannot repeat an API key, an `Authorization` value, a
+password, HTML that echoes a secret, or a control character. A transport
+failure keeps a short redacted message with query strings removed. Status
+401, 403, 404, and 500 stay visible.
 
 The crate does not create a Tokio runtime. The shipping Tauri command
 runtime polls `ReqwestTransport`. Tests use a scripted `Transport` and
@@ -49,27 +54,35 @@ episode. An empty `airDateUtc` falls back to `airDate`. Season, episode,
 series id, titles, overview, genres, `hasFile`, and screenshot-then-poster-or-fanart
 are preserved. A series id of `0` is treated as missing.
 
-Dates are parsed as RFC3339, as `YYYY-MM-DD` at UTC midnight, or as a
-zone-less date-time treated as UTC. The original server string is kept for
-display. A bad date on one item is skipped. A bad response for one provider
+Dates are parsed as RFC3339 (including an explicit numeric offset, converted
+to UTC), as `YYYY-MM-DD` at UTC midnight, or as a zone-less date-time treated
+as UTC. The original server string is kept for display. A bad date on one
+item is skipped. Tests use `FixedOffset` and UTC only, so they do not depend
+on the machine zone. A daylight-saving change is the offset the caller
+supplies: the same civil day under UTC−4 and UTC−5 produces different UTC
+midnights. There is no timezone database. A bad response for one provider
 does not drop the other provider: `UpcomingResult.errors` is keyed by
-`radarr` or `sonarr`, and `events` holds the successes.
+`radarr` or `sonarr`, and `events` holds the successes. A partial result is
+what the cache stores.
 
-The window is inclusive at the start and exclusive at the end.
-`upcoming_window` starts at local midnight and adds N civil days. A missing
-or ambiguous midnight uses the earliest offset and returns `None` when the
-local day does not exist. The shipping UI still builds the window with
-`upcomingWindow` in TypeScript and sends those ISO strings. The Rust helper
-is the contract for a native caller.
+The window is inclusive at the start and exclusive at the end, including
+midnight and the exact end instant. `upcoming_window` starts at local
+midnight and adds N civil days. A missing or ambiguous midnight uses the
+earliest offset and returns `None` when the local day does not exist. The
+shipping UI still builds the window with `upcomingWindow` in TypeScript and
+sends those ISO strings. The Rust helper is the contract for a native caller.
 
 ## Cache and Home
 
-`Integrations::upcoming` caches for five minutes. The key is the configured
-Radarr URL, Sonarr URL, and the range. The request itself uses the server
-URL stored with the key. Concurrent identical calls share one future. The
-cache holds that work with a weak reference, so dropping every waiter does
-not leave the fetch running. `test_and_save`, `remove`, and
-`invalidate_cache` bump a generation and discard a late store.
+`Integrations::upcoming` caches for five minutes. The key is the Radarr URL,
+Sonarr URL, and range on the query. A different range or a different provider
+URL does not share an entry. The request itself uses the server URL stored
+with the key. Concurrent identical calls share one future. The cache holds
+that work with a weak reference, so dropping every waiter does not leave the
+fetch running. `test_and_save`, `remove`, and `invalidate_cache` bump a
+generation. A fetch that finishes after that bump is not stored, and the
+next call fetches again. TTL uses the injected clock. A partial provider
+failure is cached with the successes.
 
 `home` on the result excludes downloaded items, keeps one Radarr event per
 movie (Digital or Physical over Theatrical), keeps one Sonarr episode per

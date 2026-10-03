@@ -61,26 +61,66 @@ fn redact_backend(detail: &str) -> String {
 fn redact_assignment(value: &str, key: &str) -> String {
     let mut rest = value;
     let mut out = String::new();
-    let needle = key.to_ascii_lowercase();
     loop {
-        let lower = rest.to_ascii_lowercase();
-        let Some(index) = lower.find(&needle) else {
+        let Some(index) = find_assignment_key(rest, key) else {
             out.push_str(rest);
             break;
         };
         out.push_str(&rest[..index]);
         out.push_str("[redacted]");
-        rest = &rest[index + key.len()..];
-        rest = rest.trim_start_matches([' ', '=', ':', '"', '\'']);
-        if let Some(end) = rest.find(|character: char| {
-            character.is_whitespace() || matches!(character, ',' | '&' | '"' | '\'')
-        }) {
-            rest = &rest[end..];
-        } else {
-            rest = "";
-        }
+        rest = consume_assigned_value(&rest[index + key.len()..]);
     }
     out
+}
+
+fn find_assignment_key(haystack: &str, key: &str) -> Option<usize> {
+    let lower = haystack.to_ascii_lowercase();
+    let needle = key.to_ascii_lowercase();
+    let mut offset = 0;
+    while let Some(index) = lower[offset..].find(&needle) {
+        let absolute = offset + index;
+        let before =
+            absolute == 0 || !is_name_char(lower[..absolute].chars().next_back().unwrap_or(' '));
+        let after_index = absolute + needle.len();
+        let after = after_index >= lower.len()
+            || !is_name_char(lower[after_index..].chars().next().unwrap_or(' '));
+        if before && after {
+            return Some(absolute);
+        }
+        offset = after_index;
+        if offset >= lower.len() {
+            break;
+        }
+    }
+    None
+}
+
+fn is_name_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
+fn consume_assigned_value(value: &str) -> &str {
+    let value = value.trim_start_matches([' ', '\t', '=', ':', '"', '\'']);
+    let (token, after) = split_token(value);
+    if token.eq_ignore_ascii_case("bearer") {
+        let after = after.trim_start_matches([' ', '\t', '=', ':', '"', '\'']);
+        split_token(after).1
+    } else {
+        after
+    }
+}
+
+fn split_token(value: &str) -> (&str, &str) {
+    match value.find(|character: char| {
+        character.is_whitespace()
+            || matches!(
+                character,
+                ',' | '&' | '"' | '\'' | '<' | '>' | ';' | '(' | ')'
+            )
+    }) {
+        Some(end) => (&value[..end], &value[end..]),
+        None => (value, ""),
+    }
 }
 
 #[cfg(test)]
@@ -88,10 +128,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn display_and_debug_omit_a_planted_secret() {
-        let error = CredentialError::backend("password=super-secret-value\nline");
-        let rendered = format!("{error} {error:?}");
-        assert!(!rendered.contains("super-secret-value"));
-        assert!(!format!("{error:?}").contains('\n'));
+    fn display_debug_and_source_omit_credential_assignments() {
+        let planted = "password=super-secret token=token-secret api_key=key-secret authorization=Bearer bearer-secret <b>password=html-secret</b>\u{0001} tokenizer=keep-me";
+        let error = CredentialError::backend(planted);
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        assert!(display.contains("could not complete"));
+        assert!(!display.contains('='));
+        for secret in [
+            "super-secret",
+            "token-secret",
+            "key-secret",
+            "bearer-secret",
+            "html-secret",
+        ] {
+            assert!(!display.contains(secret), "{secret} in display");
+            assert!(!debug.contains(secret), "{secret} in debug");
+        }
+        assert!(!debug.contains('\u{0001}'));
+        assert!(debug.contains("keep-me"));
+        assert!(std::error::Error::source(&error).is_none());
     }
 }

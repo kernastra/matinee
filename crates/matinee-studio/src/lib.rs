@@ -22,7 +22,8 @@
 //! # Generation
 //!
 //! One Codex job is active per [`Studio`] value. Dropping the generation
-//! future kills the child (`kill_on_drop`). The 12-minute timeout is the other
+//! future kills the child (`kill_on_drop`) and a reap thread waits for it.
+//! The 12-minute timeout is the other
 //! cancellation path. There is no separate cancel method. Higgsfield can be
 //! discovered and can store a key; generation returns the shipping
 //! "not available yet" error.

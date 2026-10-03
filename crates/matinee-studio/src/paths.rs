@@ -161,6 +161,20 @@ mod tests {
         fs::write(&mapped, b"video").unwrap();
         let container = resolve_media_file(&paths, "/movies/Film.mkv").unwrap();
         assert_eq!(container, mapped.canonicalize().unwrap());
+        for (container, relative) in [
+            ("/tv/Show.mkv", "tv/Show.mkv"),
+            ("/shows/Show.mkv", "shows/Show.mkv"),
+            ("/media/movies/Film.mkv", "movies/Film.mkv"),
+        ] {
+            let mapped = home.join("media-data/media").join(relative);
+            fs::create_dir_all(mapped.parent().unwrap()).unwrap();
+            fs::write(&mapped, b"video").unwrap();
+            assert_eq!(
+                resolve_media_file(&paths, container).unwrap(),
+                mapped.canonicalize().unwrap()
+            );
+        }
+        assert!(resolve_media_file(&paths, media.join("missing.mkv").to_str().unwrap()).is_err());
         let _ = fs::remove_dir_all(&root);
     }
 }

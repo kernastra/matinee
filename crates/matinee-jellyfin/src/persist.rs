@@ -8,6 +8,13 @@
 //! The namespace is `dev.sean.matinee.jellyfin-session` and the account is
 //! `default`. Shipping v0.5.6 does not write this entry. The browser session
 //! in `sessionStorage` is a separate store and is not migrated here.
+//!
+//! `save_session` serializes the payload into one owned `String`, moves that
+//! string into a [`Secret`], and zeroizes the `Secret` after `set` returns.
+//! `StoredSession` zeroizes its token field when it drops. The vault keeps its
+//! own copy until [`remove_session`]. `load_session` parses into a
+//! `StoredSession` and does not wipe the vault entry. `serde_json` may use
+//! short-lived buffers this crate cannot zeroize.
 
 use std::fmt;
 
@@ -66,10 +73,12 @@ pub fn save_session(store: &impl CredentialStore, session: &Session) -> Result<(
             .map(|tag| tag.as_str().to_string()),
         access_token: session.access_token().to_string(),
     };
-    let payload = serde_json::to_string(&stored).map_err(|_| JellyfinError::CorruptSession)?;
-    store
-        .set(&namespace()?, &account()?, &Secret::new(payload))
-        .map_err(|_| JellyfinError::CredentialFailure)
+    let mut payload = serde_json::to_string(&stored).map_err(|_| JellyfinError::CorruptSession)?;
+    let secret = Secret::new(std::mem::take(&mut payload));
+    payload.zeroize();
+    let saved = store.set(&namespace()?, &account()?, &secret);
+    drop(secret);
+    saved.map_err(|_| JellyfinError::CredentialFailure)
 }
 
 /// Read a session previously written by [`save_session`].
@@ -96,6 +105,9 @@ pub fn remove_session(store: &impl CredentialStore) -> Result<(), JellyfinError>
 }
 
 fn session_from_stored(mut stored: StoredSession) -> Result<Session, JellyfinError> {
+    if persisted_server_url_is_unsafe(&stored.server_url) {
+        return Err(JellyfinError::CorruptSession);
+    }
     let user_id = UserId::parse(&stored.user_id).map_err(|_| JellyfinError::CorruptSession)?;
     let avatar = match stored.avatar_tag.as_deref() {
         None => None,
@@ -107,6 +119,10 @@ fn session_from_stored(mut stored: StoredSession) -> Result<Session, JellyfinErr
     let access_token = std::mem::take(&mut stored.access_token);
     let user = User::new(user_id, user_name, avatar);
     Session::new(server_url, access_token, user).map_err(|_| JellyfinError::CorruptSession)
+}
+
+fn persisted_server_url_is_unsafe(value: &str) -> bool {
+    url::Url::parse(value).is_ok_and(|url| url.query().is_some() || url.fragment().is_some())
 }
 
 fn namespace() -> Result<CredentialNamespace, JellyfinError> {
@@ -172,5 +188,81 @@ mod tests {
             .unwrap();
         assert!(still.expose().contains("still-secret"));
         assert!(!format!("{still:?}").contains("still-secret"));
+    }
+
+    #[test]
+    fn unsafe_payloads_are_corrupt_and_stay_stored() {
+        let cases = [
+            payload("not a url", "user-1", "token-value", None),
+            payload("ftp://files.example/library", "user-1", "token-value", None),
+            payload(
+                "http://user:pass@jellyfin.local:8096",
+                "user-1",
+                "token-value",
+                None,
+            ),
+            payload(
+                "http://jellyfin.local:8096/?api_key=secret",
+                "user-1",
+                "token-value",
+                None,
+            ),
+            payload(
+                "http://jellyfin.local:8096/#fragment",
+                "user-1",
+                "token-value",
+                None,
+            ),
+            payload("http://jellyfin.local:8096", "bad id", "token-value", None),
+            payload(
+                "http://jellyfin.local:8096",
+                "user-1",
+                "token-value",
+                Some("bad\ntag"),
+            ),
+            payload(
+                "http://jellyfin.local:8096",
+                "user-1",
+                "token-value",
+                Some(&"a".repeat(513)),
+            ),
+            payload("http://jellyfin.local:8096", "user-1", "   ", None),
+            payload("http://jellyfin.local:8096", "user-1", "", None),
+        ];
+        for body in cases {
+            let store = MemoryStore::new();
+            store
+                .set(
+                    &CredentialNamespace::new(SESSION_NAMESPACE).unwrap(),
+                    &CredentialKey::new(SESSION_ACCOUNT).unwrap(),
+                    &Secret::new(body.clone()),
+                )
+                .unwrap();
+            assert!(
+                matches!(load_session(&store), Err(JellyfinError::CorruptSession)),
+                "{body}"
+            );
+            let still = store
+                .get(
+                    &CredentialNamespace::new(SESSION_NAMESPACE).unwrap(),
+                    &CredentialKey::new(SESSION_ACCOUNT).unwrap(),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(still.expose(), body);
+        }
+    }
+
+    fn payload(server: &str, user: &str, token: &str, avatar: Option<&str>) -> String {
+        let mut value = serde_json::json!({
+            "serverUrl": server,
+            "userId": user,
+            "userName": "Ada",
+            "accessToken": token,
+        });
+        if let Some(avatar) = avatar {
+            value["avatarTag"] = serde_json::json!(avatar);
+        }
+        value.to_string()
     }
 }

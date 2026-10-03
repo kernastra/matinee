@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::channel::oneshot;
-use futures::executor::block_on;
+use futures::executor::{LocalPool, block_on};
+use futures::task::LocalSpawnExt;
 use matinee_secrets::{CredentialKey, CredentialNamespace, CredentialStore, MemoryStore, Secret};
 use serde_json::{Value, json};
 
@@ -384,19 +384,249 @@ fn concurrent_upcoming_requests_share_one_fetch() {
     let left = Arc::clone(&integrations);
     let right = Arc::clone(&integrations);
     let left_query = query.clone();
-    let first = thread::spawn(move || block_on(left.upcoming(left_query)));
+    let mut pool = LocalPool::new();
+    let spawner = pool.spawner();
+    spawner
+        .spawn_local(async move {
+            left.upcoming(left_query).await;
+        })
+        .unwrap();
     let started = Instant::now();
     while hits.load(Ordering::SeqCst) == 0 {
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < Duration::from_secs(2),
             "calendar fetch did not start"
         );
-        thread::sleep(Duration::from_millis(10));
+        pool.run_until_stalled();
     }
-    let second = thread::spawn(move || block_on(right.upcoming(query)));
-    thread::sleep(Duration::from_millis(50));
-    sender.send(()).unwrap();
-    first.join().unwrap();
-    second.join().unwrap();
+    spawner
+        .spawn_local(async move {
+            right.upcoming(query).await;
+        })
+        .unwrap();
+    pool.run_until_stalled();
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+    sender.send(()).unwrap();
+    pool.run();
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cache_keys_and_invalidation_do_not_reuse_the_wrong_result() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&hits);
+    let script = Script::new(move |request| {
+        if let Some(response) = status_body(request) {
+            return Ok(response);
+        }
+        counted.fetch_add(1, Ordering::SeqCst);
+        if request.url.contains("7878") {
+            return Err(TransportError {
+                detail: "connection refused apikey=echoed-secret".into(),
+            });
+        }
+        Ok(json_response(200, json!([])))
+    });
+    let clock = ManualClock::new();
+    let integrations = Integrations::with_clock(
+        MemoryStore::new(),
+        script,
+        clock.clone(),
+        Duration::from_secs(300),
+    );
+    block_on(integrations.test_and_save(
+        IntegrationProvider::Radarr,
+        "http://radarr.local:7878",
+        Some(Secret::new("radarr-key-123")),
+    ))
+    .unwrap();
+    block_on(integrations.test_and_save(
+        IntegrationProvider::Sonarr,
+        "http://sonarr.local:8989",
+        Some(Secret::new("sonarr-key-123")),
+    ))
+    .unwrap();
+    let query = UpcomingQuery::new(
+        "http://radarr.local:7878",
+        "http://sonarr.local:8989",
+        "2026-08-05T00:00:00Z",
+        "2026-12-03T00:00:00Z",
+    );
+    let first = block_on(integrations.upcoming(query.clone()));
+    let after_first = hits.load(Ordering::SeqCst);
+    assert!(after_first >= 2);
+    assert!(first.error_message(IntegrationProvider::Radarr).is_some());
+    assert!(
+        !first
+            .error_message(IntegrationProvider::Radarr)
+            .unwrap()
+            .contains("echoed-secret")
+    );
+    let second = block_on(integrations.upcoming(query.clone()));
+    assert_eq!(hits.load(Ordering::SeqCst), after_first);
+    assert_eq!(
+        second.error_message(IntegrationProvider::Radarr),
+        first.error_message(IntegrationProvider::Radarr)
+    );
+
+    let other_range = UpcomingQuery::new(
+        "http://radarr.local:7878",
+        "http://sonarr.local:8989",
+        "2026-08-05T00:00:00Z",
+        "2026-09-01T00:00:00Z",
+    );
+    let _ = block_on(integrations.upcoming(other_range));
+    assert!(hits.load(Ordering::SeqCst) > after_first);
+    let after_range = hits.load(Ordering::SeqCst);
+
+    let other_radarr = UpcomingQuery::new(
+        "http://other-radarr.local:7878",
+        "http://sonarr.local:8989",
+        "2026-08-05T00:00:00Z",
+        "2026-12-03T00:00:00Z",
+    );
+    let _ = block_on(integrations.upcoming(other_radarr));
+    assert!(hits.load(Ordering::SeqCst) > after_range);
+    let after_radarr = hits.load(Ordering::SeqCst);
+
+    let other_sonarr = UpcomingQuery::new(
+        "http://radarr.local:7878",
+        "http://other-sonarr.local:8989",
+        "2026-08-05T00:00:00Z",
+        "2026-12-03T00:00:00Z",
+    );
+    let _ = block_on(integrations.upcoming(other_sonarr));
+    assert!(hits.load(Ordering::SeqCst) > after_radarr);
+    let after_sonarr = hits.load(Ordering::SeqCst);
+
+    integrations.remove(IntegrationProvider::Radarr).unwrap();
+    let _ = block_on(integrations.upcoming(query.clone()));
+    assert!(hits.load(Ordering::SeqCst) > after_sonarr);
+    let after_remove = hits.load(Ordering::SeqCst);
+
+    block_on(integrations.test_and_save(
+        IntegrationProvider::Sonarr,
+        "http://sonarr.local:8989",
+        Some(Secret::new("sonarr-key-123")),
+    ))
+    .unwrap();
+    let _ = block_on(integrations.upcoming(query.clone()));
+    assert!(hits.load(Ordering::SeqCst) > after_remove);
+    let after_save = hits.load(Ordering::SeqCst);
+
+    integrations.invalidate_cache();
+    let _ = block_on(integrations.upcoming(query.clone()));
+    assert!(hits.load(Ordering::SeqCst) > after_save);
+    let after_clear = hits.load(Ordering::SeqCst);
+
+    clock.advance(Duration::from_secs(301));
+    let _ = block_on(integrations.upcoming(query));
+    assert!(hits.load(Ordering::SeqCst) > after_clear);
+}
+
+#[test]
+fn a_stale_request_does_not_repopulate_the_cache() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let (sender, receiver) = oneshot::channel::<()>();
+    let integrations = Arc::new(Integrations::new(
+        MemoryStore::new(),
+        Gate {
+            hits: Arc::clone(&hits),
+            receiver: Mutex::new(Some(receiver)),
+        },
+    ));
+    block_on(integrations.test_and_save(
+        IntegrationProvider::Sonarr,
+        "http://localhost:8989",
+        Some(Secret::new("sonarr-key-123")),
+    ))
+    .unwrap();
+    let query = UpcomingQuery::new(
+        "",
+        "http://localhost:8989",
+        "2026-08-05T00:00:00Z",
+        "2026-12-03T00:00:00Z",
+    );
+    let mut pool = LocalPool::new();
+    let spawner = pool.spawner();
+    let waiting = Arc::clone(&integrations);
+    let waiting_query = query.clone();
+    spawner
+        .spawn_local(async move {
+            waiting.upcoming(waiting_query).await;
+        })
+        .unwrap();
+    let started = Instant::now();
+    while hits.load(Ordering::SeqCst) == 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "calendar fetch did not start"
+        );
+        pool.run_until_stalled();
+    }
+    integrations.invalidate_cache();
+    sender.send(()).unwrap();
+    pool.run();
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let _ = block_on(integrations.upcoming(query));
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn provider_status_errors_do_not_include_response_bodies() {
+    let script = Script::new(|request| {
+        let status = if request.url.contains("forbidden") {
+            403
+        } else if request.url.contains("missing") {
+            404
+        } else if request.url.contains("broken") {
+            500
+        } else {
+            401
+        };
+        Ok(json_response(
+            status,
+            json!(
+                "<html>api_key=echoed-secret authorization=Bearer bearer-secret password=hunter2 token=abc\u{0001}</html>"
+            ),
+        ))
+    });
+    let integrations = Integrations::new(MemoryStore::new(), script);
+    for (address, status) in [
+        ("http://radarr.local:7878", "401"),
+        ("http://forbidden.local:7878", "403"),
+        ("http://missing.local:7878", "404"),
+        ("http://broken.local:7878", "500"),
+    ] {
+        let error = block_on(integrations.test_and_save(
+            IntegrationProvider::Radarr,
+            address,
+            Some(Secret::new("radarr-key-123")),
+        ))
+        .unwrap_err();
+        let rendered = format!("{error} {error:?}");
+        assert!(rendered.contains(status), "{rendered}");
+        for secret in ["echoed-secret", "bearer-secret", "hunter2", "abc"] {
+            assert!(!rendered.contains(secret), "{rendered}");
+        }
+        assert!(!rendered.contains('\u{0001}'));
+        assert!(std::error::Error::source(&error).is_none());
+    }
+    let unreachable = Integrations::new(
+        MemoryStore::new(),
+        Script::new(|_| {
+            Err(TransportError {
+                detail: "error for url (http://radarr.local/api?apikey=query-secret)".into(),
+            })
+        }),
+    );
+    let error = block_on(unreachable.test_and_save(
+        IntegrationProvider::Radarr,
+        "http://radarr.local:7878",
+        Some(Secret::new("radarr-key-123")),
+    ))
+    .unwrap_err();
+    let rendered = format!("{error} {error:?}");
+    assert!(!rendered.contains("query-secret"));
+    assert!(rendered.contains("could not reach"));
 }

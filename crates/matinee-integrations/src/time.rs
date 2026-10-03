@@ -55,4 +55,27 @@ mod tests {
         assert!(parse_instant("").is_none());
         assert!(parse_instant("2026-13-40").is_none());
     }
+
+    #[test]
+    fn timezone_contract_is_independent_of_the_machine_zone() {
+        assert_eq!(
+            parse_instant("2026-08-20T15:04:05Z").unwrap().to_rfc3339(),
+            "2026-08-20T15:04:05+00:00"
+        );
+        assert_eq!(
+            parse_instant("2026-08-20T15:04:05-04:00")
+                .unwrap()
+                .to_rfc3339(),
+            "2026-08-20T19:04:05+00:00"
+        );
+        assert_eq!(
+            parse_instant("2026-08-20").unwrap().to_rfc3339(),
+            "2026-08-20T00:00:00+00:00"
+        );
+        let start = parse_instant("2026-08-20T00:00:00Z").unwrap();
+        let end = parse_instant("2026-08-21T00:00:00Z").unwrap();
+        assert!(in_window(start, start, end));
+        assert!(!in_window(end, start, end));
+        assert!(parse_instant("2026-02-31").is_none());
+    }
 }

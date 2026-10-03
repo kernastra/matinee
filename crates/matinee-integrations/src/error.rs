@@ -63,19 +63,17 @@ impl IntegrationError {
         }
     }
 
-    pub(crate) fn server(
-        provider: IntegrationProvider,
-        status: u16,
-        detail: impl Into<String>,
-    ) -> Self {
-        let detail = redact(&detail.into());
+    pub(crate) fn server(provider: IntegrationProvider, status: u16) -> Self {
         if status == 401 {
-            Self::AuthenticationRejected { provider, detail }
+            Self::AuthenticationRejected {
+                provider,
+                detail: String::new(),
+            }
         } else {
             Self::Server {
                 provider,
                 status,
-                detail,
+                detail: String::new(),
             }
         }
     }
@@ -89,16 +87,9 @@ impl fmt::Display for IntegrationError {
             Self::NotConfigured { provider } => {
                 write!(f, "No {provider} integration is configured.")
             }
-            Self::AuthenticationRejected { provider, detail }
-            | Self::Server {
-                provider, detail, ..
-            } => {
+            Self::AuthenticationRejected { provider, .. } | Self::Server { provider, .. } => {
                 let status = self.status_code().unwrap_or(401);
-                if detail.is_empty() {
-                    write!(f, "{provider} returned HTTP {status}.")
-                } else {
-                    write!(f, "{provider} returned HTTP {status}. {detail}")
-                }
+                write!(f, "{provider} returned HTTP {status}.")
             }
             Self::WrongProvider { provider } => {
                 write!(

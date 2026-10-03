@@ -44,11 +44,18 @@ The executable name uses `cfg!(windows)` for the `.exe` suffix. That check
 lives here because it is the program name, not a UI platform branch.
 
 One Codex job is active per `Studio` value. A second call returns the
-shipping busy sentence. Dropping the future kills the child
-(`kill_on_drop`). The 12-minute timeout is the other stop. There is no
-separate cancel method. Login status uses a 12-second timeout. Job
-directories older than seven days are removed. Logs kept for a failure are
-bounded.
+shipping busy sentence. Shipping Tauri creates that value once:
+`services::install` passes one `PosterService` to `app.manage`. A future
+native app should own one `Studio` the same way. There is no process-global
+static.
+
+The `Child` stays owned by `TokioProcess::run`. Dropping the future still
+kills it (`kill_on_drop`), including the piped `codex login status` path.
+A timeout kills and reaps the child on both the file-backed path and the
+piped path. There is no shell and no process manager. The 12-minute
+generation timeout is the other stop. There is no separate cancel method.
+Login status uses a 12-second timeout. Job directories older than seven
+days are removed. Logs kept for a failure are bounded.
 
 ## fal and untrusted URLs
 
@@ -57,13 +64,31 @@ Models are `fal-ai/flux/dev` and, when references are present,
 `Key {secret}` and is redacted in `Debug`.
 
 Reference downloads do not follow redirects, must share the Jellyfin
-server's origin, and stop at 12 MiB. Generated images are fetched from the
-provider URL for at most three validated hops. Each hop must be HTTP or
-HTTPS with no userinfo. The body stops at 32 MiB. Magic bytes must match
-the declared type. `application/octet-stream` or a missing type is accepted
-when the bytes sniff as JPEG, PNG, or WebP. This is stricter than the
-shipping app, which trusted `Content-Type` and followed image redirects
-with the default client.
+server's origin, and stop at 12 MiB. Those origins may be localhost, a LAN
+address, `.local`, or HTTP. That exception is only for the configured
+Jellyfin server.
+
+Generated-image URLs use a public-network-only policy. fal returns
+`*.fal.media` and then signed object-storage URLs, so a host allowlist would
+break the next host. Each URL must be HTTP or HTTPS, must have a host, and
+must not carry userinfo. IP literals must be public. Rust 1.90 still marks
+`IpAddr::is_global` unstable, so the check lists loopback, private,
+link-local, shared (CGNAT), documentation, multicast, reserved, and IPv6
+unique-local ranges, and unwraps IPv4-mapped IPv6 first. `localhost`,
+`*.localhost`, `*.local`,
+`metadata.google.internal`, and `metadata.google` are rejected before DNS.
+For a domain, `ReqwestStudio::send_public` resolves the name and refuses the
+request when any answer is missing or non-public, then pins those addresses
+with reqwest `resolve` so a later lookup cannot rebind. At most three hops
+are followed. Every hop is checked again. A relative `Location` stays on the
+current URL. HTTPS may not redirect to HTTP. HTTP may redirect to HTTPS.
+The body stops at 32 MiB. Magic bytes must match the declared type.
+`application/octet-stream` or a missing type is accepted when the bytes
+sniff as JPEG, PNG, or WebP.
+
+Logs record scheme, host, port, and path. Query strings and fragments stay
+out, because signed download URLs carry the credential there. Non-2xx fal
+responses keep the status and drop the body.
 
 ## Files
 
@@ -78,6 +103,9 @@ to a safe file stem. `export_poster_to_media_folder` writes `poster.jpg`
 (JPEG quality 92) beside a recognized video file. If that file exists and
 `overwrite` is false, the error string is exactly `POSTER_EXISTS`.
 
-`movie.mf.json` must be version 1 and at most 2 MB. Sanitization removes
-control characters, collapses whitespace, caps lists, and drops empty
-strings. `manifest_json` removes nulls for the invoke payload.
+`movie.mf.json` must be version 1 and at most 2 MB. The size is checked
+before the file is read. Sanitization removes control characters, collapses
+whitespace, caps lists at 20 and text fields at their existing limits, and
+drops empty strings. `manifest_json` removes nulls for the invoke payload.
+Unknown JSON fields are ignored so an extra key does not fail a version-1
+file. The schema is unchanged.

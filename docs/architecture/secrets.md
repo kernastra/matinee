@@ -41,10 +41,17 @@ store and is not migrated.
 not wipe:
 
 - the `String` returned by the `keyring` crate before it is wrapped
-- the JSON string `serde_json` builds when a caller stores a payload
+- the vault entry (`MemoryStore` or the OS keyring) until `remove`
 - header bytes an HTTP client copies for one request
-- the `MemoryStore` entry until `remove`
+- short-lived buffers inside `serde_json`
 
-Backend error text is truncated to 180 characters, control characters are
-stripped, and assignments such as `password=` are replaced before the text
-is stored on `CredentialError`. `Display` does not include that detail.
+`matinee-jellyfin` moves the serialized session JSON into a `Secret` and
+drops that `Secret` after `set` returns, which zeroizes that owned copy.
+The vault copy remains. `CredentialError` `Display` does not include backend
+text. `Debug` keeps a redacted detail: assignments such as `password=`,
+`token=`, `api_key=`, and `authorization=Bearer …` are removed, including a
+second token after `Bearer`, and the match is a whole word so `tokenizer=`
+is left alone. Control characters are stripped. `source` is empty. The real
+Secret Service daemon, Keychain, and Credential Manager are not exercised by
+tests or CI. Linux CI compiles the Secret Service backend. macOS CI compiles
+Keychain. Windows CI compiles Credential Manager.

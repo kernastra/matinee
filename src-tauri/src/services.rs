@@ -1,5 +1,10 @@
 //! Process-wide service objects. Commands translate invoke arguments and call
 //! these. Business rules live in the shared crates.
+//!
+//! [`install`] stores exactly one [`CalendarService`] and one [`PosterService`]
+//! on the Tauri app handle. Codex concurrency is per `Studio` value, so a
+//! future native app should own one studio the same way. There is no
+//! process-global static.
 
 use matinee_integrations::{Integrations, ReqwestTransport};
 use matinee_secrets::KeyringStore;

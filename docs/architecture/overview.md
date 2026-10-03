@@ -119,9 +119,11 @@ spikes/               Standalone experiments with their own [workspace] (e.g. na
   compiler used for `src-tauri`. Use `cargo +1.90.0 …` or
   `rustup override set 1.90.0` locally. (Standalone spikes may pin their own
   toolchain inside `spikes/<name>/`.)
-- `src-tauri` now declares `rust-version = "1.90"` because it compiles the
-  shared crates. Edition stays 2021. The lockfile already needed Rust ≥ 1.85
-  before this phase (`idna_adapter` 1.2.2).
+- `src-tauri` declares `rust-version = "1.90"` because the shared crates are
+  edition 2024. Edition of `src-tauri` stays 2021. Rust 1.77 cannot compile
+  this tree. The lockfile already needed Rust ≥ 1.85 before this phase
+  (`idna_adapter` 1.2.2). CI compiles the adapter on Linux, macOS, and
+  Windows; only Linux runs `cargo test` for it.
 
 ## Building and running
 

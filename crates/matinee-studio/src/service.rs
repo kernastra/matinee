@@ -19,8 +19,8 @@ use crate::codex::{
 use crate::error::StudioError;
 use crate::http::{StudioHttp, StudioRequest, StudioResponse};
 use crate::images::{
-    content_type_matches, extension_content_type, same_http_origin, sniff_image,
-    validate_provider_image_url,
+    content_type_matches, extension_content_type, follow_provider_redirect, same_http_origin,
+    sniff_image, validate_provider_image_url,
 };
 use crate::manifest::{self, MovieManifest};
 use crate::model::{
@@ -525,9 +525,8 @@ where
             .await?;
         if !(200..300).contains(&response.status) {
             return Err(StudioError::provider(format!(
-                "fal.ai returned {}: {}",
-                response.status,
-                String::from_utf8_lossy(&response.body)
+                "fal.ai returned {}.",
+                response.status
             )));
         }
         let result: FalResponse = serde_json::from_slice(&response.body)
@@ -675,7 +674,7 @@ async fn download_provider_image<H: StudioHttp>(
     let mut current = validate_provider_image_url(url)?;
     for _ in 0..3 {
         let response = http
-            .send(StudioRequest {
+            .send_public(StudioRequest {
                 method: "GET",
                 url: current.to_string(),
                 headers: Vec::new(),
@@ -685,13 +684,8 @@ async fn download_provider_image<H: StudioHttp>(
             })
             .await?;
         if (300..400).contains(&response.status) {
-            let location = header_value(&response, "location").ok_or_else(|| {
-                StudioError::provider("The image provider redirected without a destination.")
-            })?;
-            let next = current.join(&location).map_err(|_| {
-                StudioError::provider("The image provider returned an unusable redirect.")
-            })?;
-            current = validate_provider_image_url(next.as_str())?;
+            let location = header_value(&response, "location").unwrap_or_default();
+            current = follow_provider_redirect(&current, &location)?;
             continue;
         }
         if !(200..300).contains(&response.status) {
@@ -857,8 +851,11 @@ mod tests {
         assert_eq!(safe_file_stem("../../etc/passwd"), "etc_passwd");
         assert_eq!(safe_file_stem("   "), "matinee-poster");
         assert!(!valid_item_id("../evil"));
+        assert!(!valid_item_id("id/../x"));
         assert!(!valid_item_id(""));
+        assert!(!valid_item_id(&"a".repeat(129)));
         assert!(valid_item_id("item_1"));
+        assert!(valid_item_id(&"a".repeat(128)));
     }
 
     #[test]
