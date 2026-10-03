@@ -145,8 +145,8 @@ export default function Calendar({ session, settings, onNavigate, onSearch, onSi
   const todayKey = dateKey(new Date());
   const errorMessages = Object.values(errors).filter((message): message is string => Boolean(message));
 
-  function refreshCalendar() {
-    clearUpcomingCache();
+  async function refreshCalendar() {
+    await clearUpcomingCache();
     setRefreshVersion((current) => current + 1);
   }
 

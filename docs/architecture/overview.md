@@ -1,9 +1,9 @@
 # Matinee Next — Architecture Overview
 
-Status: **Phase 2A (domain and Jellyfin client) on the Phase 1D player**. The shipping app is still the Tauri + React
-app in `src/` and `src-tauri/`; it remains the reference implementation and is
-not modified by this work. The Rust + GPUI workspace described here is being
-built *alongside* it.
+Status: **Phase 2B (native services) on the Phase 2A domain and Jellyfin client**. The shipping app is still the Tauri + React
+app in `src/` and `src-tauri/`. It remains the reference implementation. Its
+calendar and Poster Studio commands are thin adapters over the shared crates.
+No native screen is built yet.
 
 Related documents:
 
@@ -12,6 +12,9 @@ Related documents:
 - [playback.md](playback.md) — native playback engine, frame surface, and licensing (all playback findings live there)
 - [domain.md](domain.md) — `matinee-core` types
 - [jellyfin.md](jellyfin.md) — Jellyfin client, session, and playback negotiation
+- [secrets.md](secrets.md) — OS credential vault
+- [integrations.md](integrations.md) — Radarr and Sonarr
+- [studio.md](studio.md) — Poster Studio services
 - [../migration/current-matinee.md](../migration/current-matinee.md) — inventory of the shipping app
 - [../migration/roadmap.md](../migration/roadmap.md) — phased migration plan
 
@@ -25,7 +28,7 @@ this list.
 | 1. Reusable UI framework | `crates/atelier-ui` | Semantic tokens, themes, generic components, GPUI |
 | 2. Reusable desktop infrastructure | `crates/atelier-app` | App lifecycle, windows, commands/shortcuts, menus, platform conventions |
 | 3. Matinee presentation | `crates/matinee-ui` | Matinee brand palette, bundled fonts, and type, mapped onto layer-1 tokens; later Matinee-specific components |
-| 4. Matinee domain | `crates/matinee-core`, `crates/matinee-jellyfin`, `crates/matinee-player` | Items and progress, the Jellyfin client, and playback. Integrations and Poster Studio are later. |
+| 4. Matinee domain and services | `crates/matinee-core`, `crates/matinee-jellyfin`, `crates/matinee-player`, `crates/matinee-secrets`, `crates/matinee-integrations`, `crates/matinee-studio` | Items, the Jellyfin client, playback, the credential vault, Radarr/Sonarr, and Poster Studio. No GPUI. |
 
 Applications live in `apps/`:
 
@@ -44,10 +47,14 @@ apps/matinee-next ────┬─> atelier-app
                       ├─> matinee-ui
                       └─> matinee-core
 matinee-jellyfin ──────────> matinee-core
+                       └──> matinee-secrets     (session save/load only)
+matinee-integrations ──────> matinee-secrets
+matinee-studio ────────────> matinee-secrets
 apps/matinee-playback-lab ─┬─> atelier-app
                            ├─> matinee-ui
                            └─> matinee-player   (libmpv at runtime, no GPUI)
 matinee-player             (no GPUI, Atelier, domain, or Jellyfin dependency)
+src-tauri ─────────────────> matinee-secrets, matinee-integrations, matinee-studio
 ```
 
 The rules are enforced by `scripts/check-architecture.sh` (run in CI):
@@ -67,22 +74,26 @@ crates/
   matinee-core/       Domain types (no HTTP, no GPUI, no player)
   matinee-jellyfin/   Jellyfin client; converts into matinee-core
   matinee-player/     Playback engine (runtime-loaded libmpv, no GPUI)
+  matinee-secrets/    OS credential vault (keyring) and an in-memory test store
+  matinee-integrations/ Radarr and Sonarr calendar
+  matinee-studio/     Poster Studio providers, manifests, and media-folder artwork
 apps/
   atelier-gallery/    story registry + stories/
   atelier-window-lab/ native window harness
   matinee-playback-lab/ playback harness (not the Player screen)
   matinee-next/       themed shell, still featureless
 scripts/check-architecture.sh
-src/, src-tauri/      Shipping Tauri + React app (unchanged; src-tauri has its own Cargo.lock)
+src/, src-tauri/      Shipping Tauri + React app (adapters call the shared crates; own Cargo.lock)
 spikes/               Standalone experiments with their own [workspace] (e.g. native-playback)
 ```
 
 ### Coexistence with the shipping app
 
 - `src-tauri` and `spikes` are listed in the root workspace's `exclude`, so
-  Cargo treats each as its own workspace root. `src-tauri/Cargo.lock` is
-  untouched and the Tauri build, `pnpm` scripts, and the existing security
-  workflow behave exactly as before.
+  Cargo treats each as its own workspace root. `src-tauri` path-depends on
+  `matinee-secrets`, `matinee-integrations`, and `matinee-studio`. Those
+  crates declare `rust-version = "1.90"`, so `src-tauri` does too. Its
+  edition stays 2021. There is still no root `rust-toolchain.toml`.
 - Workspace build output goes to the root `target/` (git-ignored); the Tauri
   app keeps `src-tauri/target/`.
 - The new workspace's CI (`.github/workflows/rust-workspace.yml`) is
@@ -93,7 +104,7 @@ spikes/               Standalone experiments with their own [workspace] (e.g. na
 | Proposed | Decision | Why |
 |---|---|---|
 | `matinee-core`, `matinee-jellyfin` | Created in Phase 2A | Domain types and the Jellyfin client. See [domain.md](domain.md) and [jellyfin.md](jellyfin.md). |
-| `matinee-integrations`, `matinee-studio` | Not created | No current consumer. An empty crate would be a speculative boundary. |
+| `matinee-secrets`, `matinee-integrations`, `matinee-studio` | Created in Phase 2B | Credential vault, Radarr/Sonarr, and Poster Studio. The shipping Tauri commands call them. See [secrets.md](secrets.md), [integrations.md](integrations.md), and [studio.md](studio.md). |
 | — | Added `matinee-ui` | Layer 3 (Matinee-specific presentation) needs a home that is neither the generic framework nor domain logic. The Matinee theme lives here. |
 | `matinee-player` | Playback engine, still UI-agnostic | Phase 1D filled the Phase 0 boundary. The design is in [playback.md](playback.md). |
 | `apps/matinee-next` | Minimal shell only | Proves an app can boot on the framework with the Matinee theme without depending on GPUI directly. |
@@ -108,14 +119,17 @@ spikes/               Standalone experiments with their own [workspace] (e.g. na
   compiler used for `src-tauri`. Use `cargo +1.90.0 …` or
   `rustup override set 1.90.0` locally. (Standalone spikes may pin their own
   toolchain inside `spikes/<name>/`.)
-- Note: `src-tauri/Cargo.lock` already requires Rust ≥ 1.85 (it resolves
-  `idna_adapter 1.2.2`, an edition-2024 crate). That predates this work.
+- `src-tauri` declares `rust-version = "1.90"` because the shared crates are
+  edition 2024. Edition of `src-tauri` stays 2021. Rust 1.77 cannot compile
+  this tree. The lockfile already needed Rust ≥ 1.85 before this phase
+  (`idna_adapter` 1.2.2). CI compiles the adapter on Linux, macOS, and
+  Windows; only Linux runs `cargo test` for it.
 
 ## Building and running
 
 ```bash
 # Linux system libraries for GPUI (Debian/Ubuntu names; Fedora: *-devel)
-sudo apt-get install pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+sudo apt-get install pkg-config libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
   libvulkan-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev
 
 cargo +1.90.0 run -p atelier-gallery            # opens the Gallery

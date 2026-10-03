@@ -1,9 +1,9 @@
 //! In-memory Jellyfin session.
 //!
 //! The access token lives here for the process lifetime of this value. It is
-//! not written to a file. Persistent native login is still open; do not copy
-//! the shipping app's browser session or the Tauri credential vault into this
-//! crate.
+//! not written by [`Session::new`]. [`crate::persist`] can store one through
+//! an injected credential vault. Do not copy the shipping browser session
+//! into this type.
 
 use std::fmt;
 

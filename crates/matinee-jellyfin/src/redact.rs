@@ -127,12 +127,24 @@ pub(crate) fn describe_exchange(
     url: &str,
     status: Option<u16>,
 ) -> String {
-    let path = Url::parse(url)
-        .map(|parsed| parsed.path().to_string())
-        .unwrap_or_else(|_| redact_url(url));
+    let target = Url::parse(url)
+        .map(|parsed| {
+            let mut out = format!("{}://", parsed.scheme());
+            match parsed.host_str() {
+                Some(host) => out.push_str(host),
+                None => out.push_str("[no-host]"),
+            }
+            if let Some(port) = parsed.port() {
+                out.push(':');
+                out.push_str(&port.to_string());
+            }
+            out.push_str(parsed.path());
+            out
+        })
+        .unwrap_or_else(|_| "[unparsed-url]".to_string());
     match status {
-        Some(status) => format!("{category} {method} {path} status={status}"),
-        None => format!("{category} {method} {path}"),
+        Some(status) => format!("{category} {method} {target} status={status}"),
+        None => format!("{category} {method} {target}"),
     }
 }
 
@@ -155,6 +167,8 @@ mod tests {
         assert!(!line.contains("super-secret"));
         assert!(line.contains("status=200"));
         assert!(!line.contains("api_key"));
+        assert!(!line.contains('?'));
+        assert!(line.contains("http://jellyfin.local:8096/Videos/1/stream"));
     }
 
     #[test]
