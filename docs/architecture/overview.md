@@ -22,7 +22,7 @@ this list.
 |---|---|---|
 | 1. Reusable UI framework | `crates/atelier-ui` | Semantic tokens, themes, generic components, GPUI |
 | 2. Reusable desktop infrastructure | `crates/atelier-app` | App lifecycle, windows, commands/shortcuts, menus, platform conventions |
-| 3. Matinee presentation | `crates/matinee-ui` | Matinee brand palette and type, mapped onto layer-1 tokens; later Matinee-specific components |
+| 3. Matinee presentation | `crates/matinee-ui` | Matinee brand palette, bundled fonts, and type, mapped onto layer-1 tokens; later Matinee-specific components |
 | 4. Matinee domain | `crates/matinee-player` (boundary only); later `matinee-core`, `matinee-jellyfin`, … | Playback, Jellyfin, integrations, Poster Studio |
 
 Applications live in `apps/`:
@@ -53,7 +53,7 @@ Cargo.lock            Lockfile for the new workspace only
 crates/
   atelier-ui/         tokens/, theme.rs, components/, motion.rs, bridge.rs (GPUI conversions)
   atelier-app/        app.rs (bootstrap, windows), command.rs, platform.rs
-  matinee-ui/         Matinee theme
+  matinee-ui/         Matinee theme and bundled fonts
   matinee-player/     Playback boundary (no API yet)
 apps/
   atelier-gallery/    story registry + stories/

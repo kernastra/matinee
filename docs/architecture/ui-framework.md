@@ -19,8 +19,8 @@ the framework's semantic roles.
 - **Apps use framework APIs, not GPUI, where practical.** Apps import
   `atelier_ui::prelude::*`, a curated surface, and never list `gpui` in their
   manifests (CI-enforced).
-- **No speculative abstraction.** Phase 0 ships only what the Gallery and the
-  shell use.
+- **No speculative abstraction.** The framework ships only what the Gallery
+  and the shell use.
 
 ## Tokens (`atelier_ui::tokens`)
 
@@ -71,8 +71,12 @@ The Gallery's Color page shows the live result for the active theme.
 | Scale | 64/40/26/17/16/13/11 (`docs/design-spec.md`) |
 
 Theater Brown and Faded Teal are in `matinee_ui::palette` but have no
-semantic role yet; they get one only when a component needs it. The fonts are
-not bundled yet, so GPUI falls back to the platform UI font (see "Known gaps").
+semantic role yet; they get one only when a component needs it. `matinee-ui`
+owns the bundled faces and registers them with `load_bundled_fonts` before
+windows open: Fraunces SemiBold (optical size 72) for display, Manrope Regular
+and SemiBold for interface, and IBM Plex Mono Regular for metadata and
+captions. Neutral themes keep the platform UI font. GPUI 0.2.2 cannot apply
+variable axes, so the variable originals are not shipped (see "Known gaps").
 
 ## Components
 
@@ -130,8 +134,8 @@ Where GPUI is touched:
 - `atelier_ui::gpui`: full re-export as an escape hatch. Any use outside the
   framework crates is migration debt.
 
-Phase 0 doesn't fully hide GPUI's element model (`div()`, `Context<T>`,
-`Render`). Wrapping that now would be a speculative layout DSL. The boundary
+The framework does not fully hide GPUI's element model (`div()`, `Context<T>`,
+`Render`). Wrapping that would be a speculative layout DSL. The boundary
 instead guarantees that the GPUI *version* and its quirks are handled in two
 crates.
 
@@ -241,8 +245,8 @@ is off unless the caller asks for it.
   not UAX #29. Newlines are stripped (`shape_line` panics on them).
 - The caret does not blink. Marked text is underlined. Headless tests cover
   typing via `dispatch_keystroke`, not a real IME session. Blinking, native
-  word boundaries, and manual IME checks on macOS, Windows, and Linux are
-  roadmap follow-ups, not this phase.
+  word boundaries, and manual IME checks on macOS, Windows, and Linux remain
+  roadmap follow-ups.
 - `text.danger` is the error-text role (4.5:1 on canvas, panel, and elevated).
   `control.destructive` remains the invalid border and is too dark for small text.
 

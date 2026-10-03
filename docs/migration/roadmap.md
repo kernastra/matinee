@@ -5,7 +5,7 @@ The Tauri app stays the shipping product throughout. Each phase begins
 reference app and reach parity screen by screen; nothing in `src/` or
 `src-tauri/` is removed until a replacement is approved.
 
-## Phase 0: Foundation (this phase)
+## Phase 0: Foundation (landed)
 
 Done:
 
@@ -31,7 +31,7 @@ Done, without starting screen migration or playback:
 
 ### Interaction follow-ups (not started)
 
-These stay inside the interaction model. They are not permission to start screen migration, overlays, window chrome, or playback.
+These stay inside the interaction model. They are not permission to start screen migration, window chrome, or playback. Overlays landed separately in Phase 1B.
 
 - Blinking text caret. The caret is a solid 1px quad.
 - Word-boundary movement that follows platform segmentation. Movement today is whitespace-delimited, not UAX #29.
