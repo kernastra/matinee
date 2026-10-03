@@ -94,8 +94,10 @@ responses keep the status and drop the body.
 
 Media writes are limited to `~/media-data/media`, `~/media`, and `~/Videos`
 after canonicalization. Container paths `/media`, `/movies`, `/tv`, and
-`/shows` map onto those roots. `..`, a symlink that leaves a root, a
-non-file, and a path outside the roots are rejected.
+`/shows` map onto those roots. Poster reads compare the canonical candidate
+with the canonical generated or custom root, so an alias spelling of that
+root is accepted and a symlink that leaves it is not. `..`, a symlink that
+leaves a root, a non-file, and a path outside the roots are rejected.
 
 Generated and custom posters live under app data. Item ids are ASCII
 letters, digits, `-`, and `_`, at most 128 characters. Titles are reduced

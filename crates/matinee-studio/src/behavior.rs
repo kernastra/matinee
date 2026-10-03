@@ -2,7 +2,7 @@
 //! Nothing here talks to fal, Codex, or the OS keyring.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use matinee_secrets::{CredentialStore, MemoryStore, Secret};
@@ -79,16 +79,21 @@ struct Scratch {
     paths: StudioPaths,
 }
 
+fn unique_temp(label: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "matinee-studio-{label}-{}-{id}",
+        std::process::id()
+    ))
+}
+
 impl Scratch {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "matinee-studio-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        // Parallel tests in this process start together. A clock reading is
+        // not unique on every platform, and one shared directory lets the
+        // first Drop delete another test's poster.
+        let root = unique_temp("scratch");
         let home = root.join("home");
         let data = root.join("data");
         let pictures = root.join("pictures");
@@ -469,6 +474,74 @@ fn assignment_and_export_stay_inside_trusted_roots() {
             true,
         )
         .unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn aliased_poster_roots_resolve_and_escape_symlinks_stay_rejected() {
+    let base = unique_temp("alias");
+    let _ = std::fs::remove_dir_all(&base);
+    let real = base.join("real-root");
+    let alias = base.join("alias-root");
+    std::fs::create_dir_all(real.join("home/media/movies")).unwrap();
+    std::fs::create_dir_all(real.join("data")).unwrap();
+    std::fs::create_dir_all(real.join("pictures")).unwrap();
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+
+    let paths = StudioPaths::new(
+        alias.join("home"),
+        alias.join("data"),
+        Some(alias.join("pictures")),
+    );
+    let generated = alias.join("data/generated-posters");
+    std::fs::create_dir_all(&generated).unwrap();
+    let source = generated.join("fal-1.png");
+    std::fs::write(&source, TINY_PNG).unwrap();
+    let studio = Studio::new(
+        MemoryStore::new(),
+        ScriptHttp::new(Vec::new()),
+        idle_process(),
+    );
+    studio
+        .assign_generated_poster(&paths, "item_1", source.to_str().unwrap())
+        .unwrap();
+
+    let movie = alias.join("home/media/movies/Film.mkv");
+    std::fs::write(&movie, b"video").unwrap();
+    let alias_poster = alias.join("data/custom-posters/item_1.png");
+    let exported = studio
+        .export_poster_to_media_folder(
+            &paths,
+            alias_poster.to_str().unwrap(),
+            movie.to_str().unwrap(),
+            false,
+        )
+        .unwrap();
+    assert!(exported.ends_with("poster.jpg"));
+    let real_poster = real.join("data/custom-posters/item_1.png");
+    studio
+        .export_poster_to_media_folder(
+            &paths,
+            real_poster.to_str().unwrap(),
+            movie.to_str().unwrap(),
+            true,
+        )
+        .unwrap();
+
+    let outside = base.join("outside.png");
+    std::fs::write(&outside, TINY_PNG).unwrap();
+    let escape = alias.join("data/custom-posters/escape.png");
+    std::os::unix::fs::symlink(&outside, &escape).unwrap();
+    let rejected = studio
+        .export_poster_to_media_folder(
+            &paths,
+            escape.to_str().unwrap(),
+            movie.to_str().unwrap(),
+            true,
+        )
+        .unwrap_err();
+    assert!(rejected.to_string().contains("artwork it generated"));
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]

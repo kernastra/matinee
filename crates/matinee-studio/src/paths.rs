@@ -2,7 +2,9 @@
 //!
 //! Media writes are limited to three home directories. Container paths reported
 //! by Jellyfin are mapped onto those directories before the file is opened.
-//! Canonicalization is required, so a symlink that leaves a root is rejected.
+//! Both the candidate and the trusted root are canonicalized before comparison,
+//! so two spellings of one directory (for example `/var` and `/private/var`)
+//! are the same root. A symlink that resolves outside that root is rejected.
 
 use std::path::{Path, PathBuf};
 

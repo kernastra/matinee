@@ -724,6 +724,11 @@ fn custom_directory(paths: &StudioPaths) -> Result<PathBuf, StudioError> {
     Ok(directory)
 }
 
+/// A regular file inside the generated or custom poster root.
+///
+/// The candidate and the root are both canonicalized first. Two spellings of
+/// one directory stay inside the root. A symlink that resolves outside it does
+/// not, and a path that is not a regular file is rejected.
 fn validated_poster_source(
     paths: &StudioPaths,
     local_path: &str,
