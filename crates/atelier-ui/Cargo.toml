@@ -1,0 +1,19 @@
+[package]
+name = "atelier-ui"
+description = "Reusable design system and component layer over GPUI (working name: Atelier)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui.workspace = true
+unicode-segmentation = "1.13"
+
+[dev-dependencies]
+# Headless TestPlatform for component behavior tests (no GPU or display).
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

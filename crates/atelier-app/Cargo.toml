@@ -1,0 +1,15 @@
+[package]
+name = "atelier-app"
+description = "Reusable desktop application layer: lifecycle, windows, commands, platform adaptation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+atelier-ui.workspace = true
+gpui.workspace = true
+
+[lints]
+workspace = true

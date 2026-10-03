@@ -1,0 +1,14 @@
+[package]
+name = "matinee-ui"
+description = "Matinee's theme (brand palette mapped onto Atelier semantic tokens) and, later, Matinee-specific components."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+atelier-ui.workspace = true
+
+[lints]
+workspace = true

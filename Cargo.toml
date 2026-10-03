@@ -1,0 +1,44 @@
+# Matinee Next workspace (Rust + GPUI).
+#
+# The shipping Tauri app lives in `src-tauri/` and is intentionally *not* a
+# member: it keeps its own Cargo.lock and toolchain expectations. Feasibility
+# spikes under `spikes/` are standalone projects and are excluded as well.
+# See docs/architecture/overview.md.
+
+[workspace]
+resolver = "2"
+members = ["crates/*", "apps/*"]
+exclude = ["src-tauri", "spikes"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# GPUI is pinned to an exact crates.io release. Only `atelier-ui` and
+# `atelier-app` may depend on it directly; see docs/architecture/ui-framework.md
+# ("GPUI dependency policy") before changing this line.
+gpui = { version = "=0.2.2", default-features = true }
+
+# Framework crates. Renaming the framework means changing the package names
+# below plus the `atelier_*` paths in code; see docs/architecture/overview.md.
+atelier-ui = { path = "crates/atelier-ui" }
+atelier-app = { path = "crates/atelier-app" }
+
+# Matinee crates.
+matinee-ui = { path = "crates/matinee-ui" }
+matinee-player = { path = "crates/matinee-player" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# GPUI is large; optimizing dependencies keeps debug builds usable on
+# software renderers without slowing iteration on workspace crates.
+[profile.dev.package."*"]
+opt-level = 1
