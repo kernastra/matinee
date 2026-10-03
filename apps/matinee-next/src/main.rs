@@ -15,7 +15,7 @@ struct Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
         let row_height = if chrome.band_height > 0.0 {
