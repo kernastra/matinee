@@ -61,7 +61,47 @@ if matches=$(grep -RInE 'unsafe[[:space:]]*(impl|fn|extern|\{)' \
   echo "$matches" >&2
 fi
 
-# 7. The shipping app and spikes stay outside the workspace.
+# 7. Domain direction. Atelier stays free of Matinee crates. matinee-core
+#    does not speak HTTP or know the player. matinee-jellyfin may depend on
+#    matinee-core and must not depend on GPUI, Atelier, matinee-ui, or the
+#    player. matinee-player stays independent of Jellyfin and the domain.
+dependency_names() {
+  awk '
+    /^\[(dependencies|dev-dependencies|build-dependencies)\]/ { on = 1; next }
+    /^\[/ { on = 0 }
+    on && $0 ~ /^[A-Za-z0-9_-]+/ {
+      name = $1
+      sub(/\..*/, "", name)
+      print name
+    }
+  ' "$1"
+}
+
+depends_on() {
+  dependency_names "$1" | grep -qx "$2"
+}
+
+forbid_deps() {
+  local manifest="$1"
+  shift
+  local name
+  for name in "$@"; do
+    if depends_on "$manifest" "$name"; then
+      fail "$manifest must not depend on $name"
+    fi
+  done
+}
+
+forbid_deps crates/atelier-ui/Cargo.toml matinee-core matinee-jellyfin matinee-player matinee-ui
+forbid_deps crates/atelier-app/Cargo.toml matinee-core matinee-jellyfin matinee-player matinee-ui
+forbid_deps crates/matinee-core/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player matinee-jellyfin reqwest
+forbid_deps crates/matinee-jellyfin/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player
+if ! depends_on crates/matinee-jellyfin/Cargo.toml matinee-core; then
+  fail "matinee-jellyfin must depend on matinee-core"
+fi
+forbid_deps crates/matinee-player/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-jellyfin matinee-core
+
+# 8. The shipping app and spikes stay outside the workspace.
 for path in src-tauri spikes; do
   if ! grep -qE "exclude = \[.*\"$path\"" Cargo.toml; then
     fail "root Cargo.toml must exclude \"$path\" from the workspace"

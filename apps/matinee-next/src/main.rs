@@ -2,6 +2,8 @@
 //!
 //! Adopts Atelier's native window, theme, and a generic toolbar and sidebar.
 //! It has no product features: no library, no server, and no playback.
+//! The domain and Jellyfin crates are linked so the crate graph matches
+//! Phase 2A. This window does not call them.
 
 use atelier_app::{
     AppInfo, AtelierApp, ChromeIntent, Platform, WindowSpec, on_fullscreen_escape, open_window,
@@ -76,6 +78,11 @@ impl Render for Shell {
 }
 
 fn main() {
+    // Keep the domain and the Jellyfin client in this binary's crate graph.
+    let _direction = (
+        std::any::type_name::<matinee_core::MediaItem>(),
+        matinee_jellyfin::CLIENT_NAME,
+    );
     AtelierApp::new(AppInfo {
         name: "Matinee Next",
         app_id: "dev.sean.matinee.next",

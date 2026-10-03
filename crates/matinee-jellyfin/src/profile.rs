@@ -1,33 +1,21 @@
-//! Jellyfin device profile for the native engine.
+//! Jellyfin device profile posted by this client.
 //!
-//! This is a declaration of formats exercised with libmpv. It is not the
-//! shipping WebKit profile, and it does not list every codec libmpv can open.
-//! `matinee-jellyfin` posts the same `Matinee Native` document to
-//! `PlaybackInfo`. The JSON is built there so this crate does not depend on
-//! the client and the client does not depend on the engine. Keep the two
-//! copies together. The engine plays whatever URL that response supplies.
-
-#![forbid(unsafe_code)]
+//! The document is negotiation policy. The same declaration lives in
+//! `matinee-player` as the engine's capability list (`native_device_profile`).
+//! The player crate does not depend on this one, and this one does not depend
+//! on the player, so the JSON is built here. The two copies are the Phase 1D
+//! `Matinee Native` profile and have to move together.
+//!
+//! It is not the shipping WebKit profile. WebKit direct-plays only MP4/H.264
+//! and asks Jellyfin to burn subtitles. This profile direct-plays the
+//! containers and codecs Phase 1D opened, and it asks for external or embedded
+//! SubRip rather than burn-in.
 
 use serde_json::{Value, json};
 
-/// Profile name sent to Jellyfin. Distinct from the WebKit player profile.
-pub const PROFILE_NAME: &str = "Matinee Native";
-
-/// Containers, codecs, and subtitle methods that Phase 1D validated.
-///
-/// Direct play:
-/// - Matroska and MP4 with H.264, HEVC Main 10, or AV1 video.
-/// - AAC, AC-3, E-AC-3, and Opus audio.
-/// - Embedded and external SubRip subtitles. The engine draws them. Jellyfin
-///   is not asked to burn them in.
-///
-/// Transcode fallback, when Jellyfin refuses direct play (for example a
-/// bitrate cap): fMP4 HLS, H.264, AAC, up to six channels. The engine plays
-/// that URL the same way it plays a direct URL.
-pub fn native_device_profile() -> Value {
+pub(crate) fn native_device_profile() -> Value {
     json!({
-        "Name": PROFILE_NAME,
+        "Name": "Matinee Native",
         "MaxStreamingBitrate": 120_000_000,
         "MaxStaticBitrate": 120_000_000,
         "DirectPlayProfiles": [
@@ -68,26 +56,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn profile_is_native_and_not_webkit() {
+    fn profile_is_the_native_one() {
         let profile = native_device_profile();
-        assert_eq!(profile["Name"], PROFILE_NAME);
+        assert_eq!(profile["Name"], "Matinee Native");
         assert_ne!(profile["Name"], "Matinee WebKit");
         let direct = &profile["DirectPlayProfiles"][0];
         let video = direct["VideoCodec"].as_str().unwrap();
-        assert!(video.contains("h264"));
-        assert!(video.contains("hevc"));
-        assert!(video.contains("av1"));
+        assert!(video.contains("h264") && video.contains("hevc") && video.contains("av1"));
         let audio = direct["AudioCodec"].as_str().unwrap();
         for codec in ["aac", "ac3", "eac3", "opus"] {
             assert!(audio.contains(codec), "{codec}");
         }
-        assert!(direct.get("MaxAudioChannels").is_none());
-        let subs = profile["SubtitleProfiles"].as_array().unwrap();
-        assert!(!subs.is_empty());
-        assert!(subs.iter().all(|entry| entry["Method"] != "Encode"));
         let transcode = &profile["TranscodingProfiles"][0];
         assert_eq!(transcode["Protocol"], "hls");
         assert_eq!(transcode["Container"], "mp4");
-        assert_ne!(transcode["MaxAudioChannels"], "2");
+        assert_eq!(transcode["MaxAudioChannels"], "6");
+        let subs = profile["SubtitleProfiles"].as_array().unwrap();
+        assert!(subs.iter().all(|entry| entry["Method"] != "Encode"));
     }
 }

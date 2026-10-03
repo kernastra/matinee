@@ -86,16 +86,27 @@ pinning once those binaries exist (the loader and the license rules are in
 place; no hash is published yet), and a GPUI path for frames larger than
 the software cap.
 
-## Phase 2: Domain extraction (proposed)
+## Phase 2: Domain extraction
 
-- `matinee-core`: domain types (items, libraries, progress, availability
-  language), shared by both apps where practical.
-- `matinee-jellyfin`: a Rust Jellyfin client mirroring `src/lib/jellyfin.ts`
-  behavior and its tests.
+**Phase 2A: Domain + Jellyfin foundation — landed.**
+
+- `matinee-core`: items, libraries, progress, artwork identity, technical
+  media, and playback plans. No HTTP and no GPUI.
+- `matinee-jellyfin`: Rust client for the shipping `src/lib/jellyfin.ts`
+  behaviors, converting into domain types. In-memory session only. The
+  Matinee Native profile is posted from this crate. The shipping static
+  stream fallback is a typed `NoCompatibleSource` error.
+
+**Phase 2B is not started.** Screens are not started.
+
+Still in Phase 2, not started:
+
 - `matinee-integrations`, `matinee-studio`: extract the existing Rust in
   `src-tauri` (calendar, image generation, credentials) into UI-agnostic
   crates. The Tauri app can depend on them, which removes duplication without
   changing its behavior.
+- Native persistent login. The Jellyfin client does not write tokens and does
+  not read the Tauri credential vault.
 
 ## Phase 3: Screens (proposed, screen by screen)
 

@@ -1,6 +1,6 @@
 # Matinee Next — Architecture Overview
 
-Status: **Phase 1D (native playback foundation) on the Phase 1C window**. The shipping app is still the Tauri + React
+Status: **Phase 2A (domain and Jellyfin client) on the Phase 1D player**. The shipping app is still the Tauri + React
 app in `src/` and `src-tauri/`; it remains the reference implementation and is
 not modified by this work. The Rust + GPUI workspace described here is being
 built *alongside* it.
@@ -10,6 +10,8 @@ Related documents:
 - [ui-framework.md](ui-framework.md) — design system, components, GPUI policy
 - [platform-strategy.md](platform-strategy.md) — macOS / Windows / Linux adaptation, windows, CI
 - [playback.md](playback.md) — native playback engine, frame surface, and licensing (all playback findings live there)
+- [domain.md](domain.md) — `matinee-core` types
+- [jellyfin.md](jellyfin.md) — Jellyfin client, session, and playback negotiation
 - [../migration/current-matinee.md](../migration/current-matinee.md) — inventory of the shipping app
 - [../migration/roadmap.md](../migration/roadmap.md) — phased migration plan
 
@@ -23,7 +25,7 @@ this list.
 | 1. Reusable UI framework | `crates/atelier-ui` | Semantic tokens, themes, generic components, GPUI |
 | 2. Reusable desktop infrastructure | `crates/atelier-app` | App lifecycle, windows, commands/shortcuts, menus, platform conventions |
 | 3. Matinee presentation | `crates/matinee-ui` | Matinee brand palette, bundled fonts, and type, mapped onto layer-1 tokens; later Matinee-specific components |
-| 4. Matinee domain | `crates/matinee-player`; later `matinee-core`, `matinee-jellyfin`, … | Playback and, later, Jellyfin, integrations, Poster Studio |
+| 4. Matinee domain | `crates/matinee-core`, `crates/matinee-jellyfin`, `crates/matinee-player` | Items and progress, the Jellyfin client, and playback. Integrations and Poster Studio are later. |
 
 Applications live in `apps/`:
 
@@ -31,7 +33,7 @@ Applications live in `apps/`:
 |---|---|
 | `apps/atelier-gallery` | The component catalog (Storybook / SwiftUI Previews equivalent). Product-neutral; Matinee's theme is an opt-in cargo feature (`matinee-theme`, on by default in this repo) so components can be previewed under it. |
 | `apps/atelier-window-lab` | Manual inspection of native window chrome, insets, fullscreen, and scale. Not a component story. |
-| `apps/matinee-next` | A featureless shell: Matinee theme, native window, generic toolbar and sidebar. No player. |
+| `apps/matinee-next` | A featureless shell: Matinee theme, native window, generic toolbar and sidebar. No player. It links the domain and Jellyfin crates and does not call them. |
 | `apps/matinee-playback-lab` | Load, transport, tracks, and an external frame. Not the Matinee Player screen. |
 
 ```
@@ -39,11 +41,13 @@ apps/atelier-gallery ─┬─> atelier-app ──> atelier-ui ──> gpui (=0.
                       └─> matinee-ui (optional) ──> atelier-ui
 apps/atelier-window-lab ──> atelier-app
 apps/matinee-next ────┬─> atelier-app
-                      └─> matinee-ui
+                      ├─> matinee-ui
+                      ├─> matinee-core
+                      └─> matinee-jellyfin ──> matinee-core
 apps/matinee-playback-lab ─┬─> atelier-app
                            ├─> matinee-ui
                            └─> matinee-player   (libmpv at runtime, no GPUI)
-matinee-player             (no GPUI or Atelier dependency)
+matinee-player             (no GPUI, Atelier, domain, or Jellyfin dependency)
 ```
 
 The rules are enforced by `scripts/check-architecture.sh` (run in CI):
@@ -60,6 +64,8 @@ crates/
   atelier-ui/         tokens/, theme.rs, components/, motion.rs, bridge.rs (GPUI conversions)
   atelier-app/        app.rs, window.rs, chrome.rs, geometry.rs, command.rs, platform.rs
   matinee-ui/         Matinee theme and bundled fonts
+  matinee-core/       Domain types (no HTTP, no GPUI, no player)
+  matinee-jellyfin/   Jellyfin client; converts into matinee-core
   matinee-player/     Playback engine (runtime-loaded libmpv, no GPUI)
 apps/
   atelier-gallery/    story registry + stories/
@@ -86,7 +92,8 @@ spikes/               Standalone experiments with their own [workspace] (e.g. na
 
 | Proposed | Decision | Why |
 |---|---|---|
-| `matinee-core`, `matinee-jellyfin`, `matinee-integrations`, `matinee-studio` | Not created | Phase 0 has no code for them; an empty crate would be a speculative boundary. They are scheduled in the roadmap. |
+| `matinee-core`, `matinee-jellyfin` | Created in Phase 2A | Domain types and the Jellyfin client. See [domain.md](domain.md) and [jellyfin.md](jellyfin.md). |
+| `matinee-integrations`, `matinee-studio` | Not created | No current consumer. An empty crate would be a speculative boundary. |
 | — | Added `matinee-ui` | Layer 3 (Matinee-specific presentation) needs a home that is neither the generic framework nor domain logic. The Matinee theme lives here. |
 | `matinee-player` | Playback engine, still UI-agnostic | Phase 1D filled the Phase 0 boundary. The design is in [playback.md](playback.md). |
 | `apps/matinee-next` | Minimal shell only | Proves an app can boot on the framework with the Matinee theme without depending on GPUI directly. |
