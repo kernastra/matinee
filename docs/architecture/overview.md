@@ -33,7 +33,7 @@ Applications live in `apps/`:
 |---|---|
 | `apps/atelier-gallery` | The component catalog (Storybook / SwiftUI Previews equivalent). Product-neutral; Matinee's theme is an opt-in cargo feature (`matinee-theme`, on by default in this repo) so components can be previewed under it. |
 | `apps/atelier-window-lab` | Manual inspection of native window chrome, insets, fullscreen, and scale. Not a component story. |
-| `apps/matinee-next` | A featureless shell: Matinee theme, native window, generic toolbar and sidebar. No player. It links the domain and Jellyfin crates and does not call them. |
+| `apps/matinee-next` | A featureless shell: Matinee theme, native window, generic toolbar and sidebar. No player. It links `matinee-core` and does not call it. |
 | `apps/matinee-playback-lab` | Load, transport, tracks, and an external frame. Not the Matinee Player screen. |
 
 ```
@@ -42,8 +42,8 @@ apps/atelier-gallery ─┬─> atelier-app ──> atelier-ui ──> gpui (=0.
 apps/atelier-window-lab ──> atelier-app
 apps/matinee-next ────┬─> atelier-app
                       ├─> matinee-ui
-                      ├─> matinee-core
-                      └─> matinee-jellyfin ──> matinee-core
+                      └─> matinee-core
+matinee-jellyfin ──────────> matinee-core
 apps/matinee-playback-lab ─┬─> atelier-app
                            ├─> matinee-ui
                            └─> matinee-player   (libmpv at runtime, no GPUI)

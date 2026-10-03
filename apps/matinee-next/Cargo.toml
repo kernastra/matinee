@@ -1,6 +1,6 @@
 [package]
 name = "matinee-next"
-description = "Featureless shell for the native Matinee app. Depends on the domain and Jellyfin client only to record that direction."
+description = "Featureless shell for the native Matinee app. Depends on the domain crate only to record that direction."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,6 @@ path = "src/main.rs"
 atelier-app.workspace = true
 atelier-ui.workspace = true
 matinee-core.workspace = true
-matinee-jellyfin.workspace = true
 matinee-ui.workspace = true
 
 [lints]

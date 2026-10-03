@@ -5,9 +5,11 @@
 depend on `Id`, `RunTimeTicks`, `UserData`, or `MediaSources`.
 
 The crate depends on `matinee-core`. It does not depend on GPUI, Atelier,
-`matinee-ui`, `matinee-player`, or Tauri. `apps/matinee-next` depends on both
-new crates only so the crate graph records that direction. The shell does not
-call them.
+`matinee-ui`, `matinee-player`, or Tauri. `apps/matinee-next` depends on
+`matinee-core` and does not link this crate. A featureless GPUI binary that
+also linked reqwest is large enough to crash the Linux linker during
+`cargo clippy --all-targets`. A future screen will depend on the client when
+it actually calls it.
 
 ## HTTP
 

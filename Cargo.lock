@@ -3200,7 +3200,6 @@ dependencies = [
  "atelier-app",
  "atelier-ui",
  "matinee-core",
- "matinee-jellyfin",
  "matinee-ui",
 ]
 
