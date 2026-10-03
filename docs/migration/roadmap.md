@@ -54,7 +54,7 @@ Done, without a frame surface, screen migration, or playback:
 - `WindowSpec` and per-platform chrome. macOS uses a unified titlebar and native traffic lights. Windows keeps the system caption. Linux keeps server-side decorations.
 - Titlebar insets, geometry restore with off-screen correction, generic fullscreen, macOS Hide / Hide Others / Edit menu.
 - Window Lab (`apps/atelier-window-lab`). `matinee-next` uses the window infrastructure and stays featureless.
-- Still open: macOS pointer-drag of the unified titlebar (no GPUI API), GNOME Wayland client-side decorations, an About panel.
+- Still open: a macOS client drag region (GPUI 0.2.2 cannot start one; the system titlebar still moves the window), GNOME Wayland client-side decorations, an About panel.
 
 ## Phase 1: Framework depth and playback core (remainder, not started)
 
@@ -63,7 +63,7 @@ Framework (`atelier-ui` / `atelier-app`):
 1. ~~Bundle Matinee fonts~~ and ~~OS reduced motion~~ (done in 1A).
 2. ~~Scroll, list, image, progress, tooltip, and overlays~~ (done in 1B).
    Still open inside this item: submenu menus, virtualized lists, an inspector pane on SplitView.
-3. ~~Window chrome~~ (done in 1C). Still open: GNOME Wayland client-side decorations, and macOS dragging of the unified titlebar.
+3. ~~Window chrome~~ (done in 1C). Still open: GNOME Wayland client-side decorations, and a macOS client drag region. The system titlebar remains the drag surface.
 4. Gallery preview axes still open: simulated platform. Scale factor cannot
    be overridden at runtime in GPUI 0.2.2 (the Gallery shows the live value).
    Focus-testing mode landed in 1A.

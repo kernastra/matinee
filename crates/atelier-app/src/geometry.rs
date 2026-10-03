@@ -2,9 +2,9 @@
 //!
 //! Placement, off-screen correction, and the on-disk frame are pure data so
 //! they can be tested without opening a window. GPUI has no maximum-size
-//! field, so a requested maximum is applied here at placement and when a
-//! normal (not maximized, not fullscreen) frame is saved. The operating
-//! system can still resize past that maximum during the session.
+//! field. `placement_max` clamps the frame used for placement, restoration,
+//! and the saved normal frame. A live resize past that size is kept on
+//! screen and is not snapped back; the oversized frame is left unsaved.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +39,8 @@ pub struct PlacementRequest {
     pub saved: Option<WindowGeometry>,
     pub default_size: (f32, f32),
     pub min_size: (f32, f32),
-    pub max_size: Option<(f32, f32)>,
+    /// Placement and restoration limit. Not a live window maximum.
+    pub placement_max: Option<(f32, f32)>,
     pub displays: Vec<LogicalRect>,
     /// When false, a saved origin is ignored and the window is centered.
     /// Wayland does not reliably restore positions.
@@ -117,7 +118,7 @@ pub fn place(request: &PlacementRequest) -> Placement {
         ),
         None => (request.default_size.0, request.default_size.1, None, false),
     };
-    let (width, height) = clamp_size(raw_w, raw_h, request.min_size, request.max_size);
+    let (width, height) = clamp_size(raw_w, raw_h, request.min_size, request.placement_max);
     let frame = match (
         saved_origin,
         request.restore_origin,
@@ -151,7 +152,7 @@ pub fn next_saved_geometry(
     maximized: bool,
     fullscreen: bool,
     min_size: (f32, f32),
-    max_size: Option<(f32, f32)>,
+    placement_max: Option<(f32, f32)>,
     displays: &[LogicalRect],
 ) -> WindowGeometry {
     if fullscreen || maximized {
@@ -161,12 +162,13 @@ pub fn next_saved_geometry(
         };
     }
     // A fullscreen transition can report the display size before
-    // `is_fullscreen` flips. A frame past the requested maximum is the same
-    // kind of transient. Neither replaces the normal frame.
-    if frame_is_transient(observed, max_size, displays) {
+    // `is_fullscreen` flips. A frame past `placement_max` is the same kind of
+    // transient. Neither replaces the normal frame, and neither resizes the
+    // live window.
+    if frame_is_transient(observed, placement_max, displays) {
         return previous;
     }
-    let (width, height) = clamp_size(observed.width, observed.height, min_size, max_size);
+    let (width, height) = clamp_size(observed.width, observed.height, min_size, placement_max);
     WindowGeometry {
         x: observed.x,
         y: observed.y,
@@ -178,10 +180,10 @@ pub fn next_saved_geometry(
 
 fn frame_is_transient(
     observed: LogicalRect,
-    max_size: Option<(f32, f32)>,
+    placement_max: Option<(f32, f32)>,
     displays: &[LogicalRect],
 ) -> bool {
-    if let Some((max_width, max_height)) = max_size
+    if let Some((max_width, max_height)) = placement_max
         && (observed.width > max_width + 1.0 || observed.height > max_height + 1.0)
     {
         return true;
@@ -324,7 +326,7 @@ mod tests {
             saved,
             default_size: (800.0, 600.0),
             min_size: (400.0, 300.0),
-            max_size: Some((1000.0, 800.0)),
+            placement_max: Some((1000.0, 800.0)),
             displays: desktop(),
             restore_origin,
         }

@@ -70,17 +70,23 @@ stand-in would use. The same commands and shortcuts still exist.
 
 ## Window architecture
 
-Applications pass a `WindowSpec` (title, size, min, optional max, resizable,
-restoration key, `ChromeIntent`). `open_window` maps that intent per
-platform. Views read `resolve_chrome` for the titlebar band and leading
+Applications pass a `WindowSpec` (title, size, min, optional `placement_max`,
+resizable, restoration key, `ChromeIntent`). `open_window` maps that intent
+per platform. Views read `resolve_chrome` for the titlebar band and leading
 inset. They do not embed traffic-light offsets. The Tauri app's frameless
 chrome is not recreated.
 
+`placement_max` is a placement and restoration constraint. It clamps the
+initial frame, a restored frame, and the normal frame written to disk. It is
+not a live operating-system maximum. A user can resize past it. Atelier does
+not snap that resize back. A frame larger than the constraint is left
+unsaved, so the next launch uses the last in-range normal frame. GPUI 0.2.2
+has no maximum-size field.
+
 `ChromeIntent::PlatformDefault` and `Unified` draw a unified titlebar on
 macOS only. Windows and Linux stay on the system frame even if an app asks
-for `Unified`. GPUI has no maximum-size field, so max size is applied when
-placing and when saving a normal frame. The OS can still resize past it
-during the session.
+for `Unified`. Occupying the titlebar band is not the same thing as a
+draggable client region. See the default macOS strategy below.
 
 GPUI 0.2.2 window APIs that this layer actually uses:
 
@@ -89,7 +95,8 @@ GPUI 0.2.2 window APIs that this layer actually uses:
 | Native frame | `WindowDecorations::Server` | Always. Client decorations are not requested. |
 | Unified macOS titlebar | `TitlebarOptions { appears_transparent, traffic_light_position }` | macOS unified only. Real traffic lights at (12, 12) in a 38px band; content starts after a 78px leading inset. |
 | Windows caption / Snap | default caption when `appears_transparent` is false | Kept. `window_control_area` is not used on Windows, because a custom caption would own hit-testing. |
-| Drag / double-click | `WindowControlArea::Drag` (Windows `WM_NCHITTEST` only), `start_window_move` (X11 and Wayland only), `titlebar_double_click` (macOS) | Wired on empty in-client titlebar regions. That path is live only for the macOS unified band. |
+| Client drag | `WindowControlArea::Drag` (Windows `WM_NCHITTEST` only), `start_window_move` (X11 and Wayland only) | Not installed. macOS implements neither. Windows and Linux can, and the system frame is the drag surface instead. |
+| Titlebar double-click | `Window::titlebar_double_click` (macOS only; reads `AppleActionOnDoubleClick`) | Forwarded from an empty unified-band region. Not a drag. The system titlebar also handles its own double-click. |
 | Fullscreen | `toggle_fullscreen`, `is_fullscreen`, `WindowBounds::Fullscreen` | F11 / ⌃⌘F. Escape exits when no dialog, menu, or search field consumed it. Fullscreen bounds are not written to the saved frame. |
 | Maximize | `is_maximized`, `WindowBounds::Maximized` | The saved file keeps the last windowed size and a maximized flag. |
 | Bounds and displays | `Window::bounds`, `App::displays`, `PlatformDisplay::bounds` | Logical pixels. Off-screen frames are moved so the top edge stays reachable. |
@@ -97,19 +104,27 @@ GPUI 0.2.2 window APIs that this layer actually uses:
 | Lifecycle | `on_window_closed`, `Application::on_reopen`, `hide`, `hide_other_apps` | Windows and Linux quit when the last window closes. macOS stays running and reopens on dock click. |
 | Linux app id | `WindowOptions::app_id` | `AppInfo::app_id`. |
 
-Not used, and not papered over: `WindowDecorations::Client`, `set_client_inset`, `show_window_menu`, `zoom_window`, `WindowBackgroundAppearance::Blurred`. GPUI's macOS `on_hit_test_window_control` is a no-op, and `start_window_move` is unimplemented on macOS, so a unified titlebar cannot be dragged by pointer. Double-click still calls `titlebar_double_click`, which honors `AppleActionOnDoubleClick`. Traffic lights cannot be moved while fullscreen (GPUI skips that; Zed issue 4712). There is no public titlebar height; the 38px band is Atelier's layout, not a measured AppKit value.
+Not used, and not papered over: `WindowDecorations::Client`, `set_client_inset`, `show_window_menu`, `zoom_window`, `WindowBackgroundAppearance::Blurred`. No private AppKit drag API. Traffic lights cannot be moved while fullscreen (GPUI skips that; Zed issue 4712). There is no public titlebar height; the 38px band is Atelier's layout, not a measured AppKit value.
 
-### macOS
+### Default macOS strategy
+
+`ChromeIntent::PlatformDefault` stays unified. A native titlebar would make the drag target more obvious, and it would not be better for day-to-day moving: the unified window is still a titled `NSWindow`.
+
+GPUI 0.2.2, when a titlebar is requested, always sets `NSTitledWindowMask` and calls `setMovable_` from `WindowOptions.is_movable` (the default is movable). `appears_transparent` adds `NSFullSizeContentViewWindowMask`, `setTitlebarAppearsTransparent`, and a hidden title, then repositions the real traffic lights. AppKit keeps that titlebar as the drag surface and applies `AppleActionOnDoubleClick` there. Atelier does not draw that drag and does not replace it.
+
+What Atelier cannot do is mark a client region as draggable. `PlatformWindow::start_window_move` is an empty default, and macOS does not override it. `on_hit_test_window_control` ignores its callback, so `WindowControlArea::Drag` does nothing. `ResolvedChrome.client_drag` is therefore false. Empty toolbar regions are not drag surfaces. Window Lab must not say that they are.
+
+`forwards_titlebar_double_click` is true only for that unified band. A double-click on an empty region calls `Window::titlebar_double_click`, which performs the system setting (zoom, minimize, or nothing). That call is not drag support. Buttons, the search field, and the split handle are not part of the region.
+
+`ChromeIntent::Native` keeps the opaque system titlebar outside the client, with a zero inset and no client double-click forwarding. Use it when the app wants the standard titlebar instead of content in the band. It is not the default, because the unified window remains movable through the system titlebar described above.
+
+### macOS appearance
 
 Unified titlebar with native traffic lights and a toolbar row in the band.
 Sidebar content starts under that band. No drawn stand-in for the traffic
 lights. Native menus are the App, Edit, and Window menus above. Fullscreen
 uses the system transition. On macOS 15.3+, GPUI temporarily turns the
 transparent titlebar off while fullscreen.
-
-Pointer-dragging the unified band does not move the window. That is a GPUI
-0.2.2 gap, not an Atelier drawing fallback. `ChromeIntent::Native` keeps the
-opaque system titlebar, which AppKit drags itself, and reports a zero inset.
 
 ### Windows
 
@@ -122,7 +137,10 @@ dragged between displays in this environment; `scale_factor` is the live value.
 
 GPUI compiles both Wayland and X11 and prefers Wayland when `WAYLAND_DISPLAY`
 is non-empty. Decorations are server-side. The toolbar is ordinary client
-content under the window-manager titlebar, so it is not a drag region.
+content under the window-manager titlebar, so the toolbar is not a drag region.
+The window manager's frame moves the window. GPUI can start a client move
+on X11 and Wayland, and this layer does not, because the server frame is
+already the drag surface.
 GNOME Wayland often has no SSD; GPUI can fall back to client decorations, and
 this layer still does not draw them. A CSD titlebar is required before that
 desktop is a supported target.
@@ -143,15 +161,18 @@ state directory (`~/Library/Application Support/Atelier`, `%APPDATA%/Atelier`,
 normal origin and size plus a maximized flag. A restored frame that does not
 leave its top edge on a display is moved onto the nearest display. Fullscreen
 does not overwrite that file. A bounds event that arrives before
-`is_fullscreen` flips, or a frame larger than the requested maximum, is
-treated as transient and left unsaved. A window that is exactly the display
-size is also left unsaved. This is not a settings database.
+`is_fullscreen` flips, or a frame larger than `placement_max`, is treated as
+transient and left unsaved. The live window is not resized to fit that
+constraint. A window that is exactly the display size is also left unsaved.
+This is not a settings database.
 
 ### Window Lab
 
 `apps/atelier-window-lab` is the manual window harness. It is not a Gallery
 story. It shows the resolved platform, insets, scale, frame, fullscreen, and
-a toolbar whose empty regions are drag surfaces only when the chrome says so.
+a toolbar that reports titlebar occupancy and client drag separately.
+Empty regions are drag surfaces only when `client_drag` is true. On the
+current strategies it is false.
 
 ## Reduced motion and other system preferences
 
@@ -198,7 +219,7 @@ packaging or signing (no distributable yet).
 - Windows reduced-motion detection still shells out to PowerShell. Replace it with a direct Win32 `SystemParametersInfo` call. See the roadmap.
 - macOS Full Keyboard Access semantics for Tab.
 - In-window menus for Windows/Linux. GNOME Wayland still needs a CSD titlebar; Phase 1C kept server decorations on purpose.
-- macOS unified-titlebar dragging, once GPUI exposes a drag path. About panel, once GPUI has an API for it.
+- A macOS client drag region, once GPUI can start one. The system titlebar already moves a unified window. About panel, once GPUI has an API for it.
 - `Platform` injection so the Gallery can preview other platforms' conventions.
 - Packaging per platform (bundle, signing/notarization, AppImage/Flatpak/RPM).
   Native playback adds libmpv packaging; see [playback.md](playback.md).

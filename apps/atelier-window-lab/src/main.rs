@@ -1,12 +1,12 @@
 //! Window Lab.
 //!
-//! A dedicated window for inspecting titlebar insets, dragging, minimum
-//! size, fullscreen, scale, and the resolved platform strategy. It is not a
-//! Gallery story and it has no product content.
+//! A dedicated window for inspecting titlebar occupancy, client drag,
+//! minimum size, fullscreen, scale, and the resolved platform strategy.
+//! It is not a Gallery story and it has no product content.
 
 use atelier_app::{
-    AppInfo, AtelierApp, ChromeIntent, Platform, WindowSpec, on_fullscreen_escape, open_window,
-    resolve_chrome, titlebar_leading, titlebar_spacer,
+    AppInfo, AtelierApp, ChromeIntent, Platform, ResolvedChrome, WindowSpec, on_fullscreen_escape,
+    open_window, resolve_chrome, titlebar_leading, titlebar_spacer,
 };
 use atelier_ui::prelude::*;
 
@@ -71,10 +71,7 @@ impl Render for Lab {
         let detail = if section == 0 {
             v_stack(Space::S3)
                 .child(Text::new("Window").role(TextRole::Title))
-                .child(fact(
-                    "Platform",
-                    platform.name(),
-                ))
+                .child(fact("Platform", platform.name()))
                 .child(fact(
                     "Decorations",
                     "Server-side. Linux and Windows keep the system frame.",
@@ -88,13 +85,26 @@ impl Render for Lab {
                     format!("{:.0} px", chrome.leading_inset),
                 ))
                 .child(fact(
-                    "Content drag",
-                    if chrome.content_drag { "yes" } else { "no" },
+                    "Titlebar content",
+                    if chrome.occupies_titlebar {
+                        "yes"
+                    } else {
+                        "no"
+                    },
                 ))
                 .child(fact(
-                    "Scale",
-                    format!("{:.2}×", window.scale_factor()),
+                    "Client drag",
+                    if chrome.client_drag { "yes" } else { "no" },
                 ))
+                .child(fact(
+                    "Double-click",
+                    if chrome.forwards_titlebar_double_click {
+                        "empty region, system action"
+                    } else {
+                        "system frame only"
+                    },
+                ))
+                .child(fact("Scale", format!("{:.2}×", window.scale_factor())))
                 .child(fact(
                     "Origin",
                     format!(
@@ -127,10 +137,7 @@ impl Render for Lab {
                     "Maximized",
                     if window.is_maximized() { "yes" } else { "no" },
                 ))
-                .child(fact(
-                    "Full screen",
-                    if fullscreen { "yes" } else { "no" },
-                ))
+                .child(fact("Full screen", if fullscreen { "yes" } else { "no" }))
                 .child(fact(
                     "Restore position",
                     if platform.restores_window_origin() {
@@ -139,12 +146,7 @@ impl Render for Lab {
                         "centered (Wayland)"
                     },
                 ))
-                .child(
-                    Text::new(
-                        "Empty regions of this toolbar drag when the platform draws an in-client titlebar. The search field and buttons do not. Escape leaves full screen when nothing else consumed it.",
-                    )
-                    .tone(TextTone::Secondary),
-                )
+                .child(Text::new(window_note(&chrome)).tone(TextTone::Secondary))
         } else {
             v_stack(Space::S3)
                 .child(Text::new("Layout").role(TextRole::Title))
@@ -168,8 +170,7 @@ impl Render for Lab {
             .child(titlebar(
                 &theme,
                 row_height,
-                chrome.leading_inset,
-                chrome.content_drag,
+                chrome,
                 fullscreen,
                 self.query.clone(),
                 cx,
@@ -193,11 +194,20 @@ impl Render for Lab {
     }
 }
 
+fn window_note(chrome: &ResolvedChrome) -> &'static str {
+    if chrome.client_drag {
+        "Empty toolbar regions move the window. The search field and buttons do not. Escape leaves full screen when nothing else consumed it."
+    } else if chrome.forwards_titlebar_double_click {
+        "The system titlebar moves this window. Empty toolbar regions do not. Double-click on an empty region uses the system titlebar action, which is not a drag. The search field and buttons do not. Escape leaves full screen when nothing else consumed it."
+    } else {
+        "The system frame moves this window. This toolbar is not a drag region. The search field and buttons do not move it. Escape leaves full screen when nothing else consumed it."
+    }
+}
+
 fn titlebar(
     theme: &Theme,
     height: f32,
-    leading: f32,
-    drag: bool,
+    chrome: ResolvedChrome,
     fullscreen: bool,
     query: SharedString,
     cx: &mut Context<Lab>,
@@ -211,11 +221,11 @@ fn titlebar(
         .bg(theme.colors.surface.panel)
         .border_b_1()
         .border_color(theme.colors.border.subtle)
-        .when(leading > 0.0, |row| {
-            row.child(titlebar_leading(leading, drag))
+        .when(chrome.leading_inset > 0.0, |row| {
+            row.child(titlebar_leading(chrome.leading_inset, chrome))
         })
         .child(Text::new("Window Lab").role(TextRole::Heading))
-        .child(titlebar_spacer(drag))
+        .child(titlebar_spacer(chrome))
         .child(
             div().w(px(180.0)).child(
                 SearchField::new("window-lab-search", query)
@@ -243,7 +253,7 @@ fn titlebar(
             .size(ButtonSize::Small)
             .on_click(|_, window, _| window.toggle_fullscreen()),
         )
-        .child(titlebar_spacer(drag))
+        .child(titlebar_spacer(chrome))
 }
 
 fn fact(label: &'static str, value: impl Into<SharedString>) -> impl IntoElement {
@@ -269,7 +279,7 @@ fn main() {
             cx,
             WindowSpec::new("Window Lab", (960.0, 640.0))
                 .min_size(MIN_SIZE)
-                .max_size((1600.0, 1000.0))
+                .placement_max((1600.0, 1000.0))
                 .restoration_key("window-lab"),
             |window, cx| {
                 cx.new(|cx| {

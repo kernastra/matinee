@@ -47,10 +47,10 @@ impl Render for Shell {
                     .border_b_1()
                     .border_color(theme.colors.border.subtle)
                     .when(chrome.leading_inset > 0.0, |row| {
-                        row.child(titlebar_leading(chrome.leading_inset, chrome.content_drag))
+                        row.child(titlebar_leading(chrome.leading_inset, chrome))
                     })
                     .child(Text::new("Matinee").role(TextRole::Heading))
-                    .child(titlebar_spacer(chrome.content_drag)),
+                    .child(titlebar_spacer(chrome)),
             )
             .child(
                 div().flex_1().min_h(px(0.0)).child(

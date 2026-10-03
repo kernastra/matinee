@@ -13,7 +13,10 @@ pub mod platform;
 mod window;
 
 pub use app::{AppInfo, AtelierApp, REDUCED_MOTION_ENV, set_motion_preference, set_theme};
-pub use chrome::{ChromeIntent, DecorationSource, ResolvedChrome, resolve_chrome};
+pub use chrome::{
+    ChromeIntent, ClientRegionCapabilities, DecorationSource, ResolvedChrome,
+    client_region_capabilities, resolve_chrome,
+};
 pub use command::{Command, Shortcut};
 pub use platform::Platform;
 pub use window::{

@@ -9,7 +9,7 @@ use atelier_ui::gpui::{
     point, px, size,
 };
 
-use crate::chrome::{ChromeIntent, DecorationSource, resolve_chrome};
+use crate::chrome::{ChromeIntent, DecorationSource, ResolvedChrome, resolve_chrome};
 use crate::geometry::{
     LogicalRect, PlacementRequest, WindowGeometry, decode_geometry, encode_geometry, geometry_path,
     next_saved_geometry, place,
@@ -22,7 +22,10 @@ pub struct WindowSpec {
     pub title: SharedString,
     pub size: (f32, f32),
     pub min_size: (f32, f32),
-    pub max_size: Option<(f32, f32)>,
+    /// Largest size applied when placing, restoring, and saving a normal frame.
+    /// Not a live maximum. The user can resize past it, and the window is not
+    /// snapped back.
+    pub placement_max: Option<(f32, f32)>,
     pub resizable: bool,
     /// Stable name for this window's saved frame. `None` does not persist.
     pub restoration_key: Option<SharedString>,
@@ -35,7 +38,7 @@ impl WindowSpec {
             title: title.into(),
             size,
             min_size: (320.0, 240.0),
-            max_size: None,
+            placement_max: None,
             resizable: true,
             restoration_key: None,
             chrome: ChromeIntent::PlatformDefault,
@@ -47,8 +50,11 @@ impl WindowSpec {
         self
     }
 
-    pub fn max_size(mut self, size: (f32, f32)) -> Self {
-        self.max_size = Some(size);
+    /// Constrains placement, restoration, and the saved normal frame.
+    /// Does not install an operating-system maximum and does not snap a
+    /// live resize back into range.
+    pub fn placement_max(mut self, size: (f32, f32)) -> Self {
+        self.placement_max = Some(size);
         self
     }
 
@@ -92,7 +98,7 @@ pub fn open_window<V: Render + 'static>(
         saved,
         default_size: spec.size,
         min_size: spec.min_size,
-        max_size: spec.max_size,
+        placement_max: spec.placement_max,
         displays: displays.clone(),
         restore_origin: platform.restores_window_origin(),
     });
@@ -125,7 +131,7 @@ pub fn open_window<V: Render + 'static>(
         DecorationSource::Server => WindowDecorations::Server,
     };
     let min_size = spec.min_size;
-    let max_size = spec.max_size;
+    let placement_max = spec.placement_max;
     let restoration_key = spec.restoration_key.clone();
     let initial = WindowGeometry {
         x: normal.x,
@@ -157,7 +163,7 @@ pub fn open_window<V: Render + 'static>(
                     app_id,
                     restoration_key,
                     min_size,
-                    max_size,
+                    placement_max,
                     saved: initial,
                 },
             );
@@ -178,32 +184,54 @@ pub fn on_fullscreen_escape(event: &KeyDownEvent, window: &mut Window, cx: &mut 
     }
 }
 
-/// Empty space in an in-client titlebar. Drag and double-click apply only
-/// when `drag` is set, which is the macOS unified band. Controls must not
-/// use this; they keep their own hit targets.
-pub fn titlebar_spacer(drag: bool) -> atelier_ui::gpui::Div {
-    drag_region(div().flex_1().h_full().min_w(px(8.0)), drag)
+/// Empty space beside titlebar content. Not a drag surface unless
+/// `client_drag` is set, which GPUI 0.2.2 never sets for the macOS band.
+/// Controls must not use this; they keep their own hit targets.
+pub fn titlebar_spacer(chrome: ResolvedChrome) -> atelier_ui::gpui::Div {
+    titlebar_region(div().flex_1().h_full().min_w(px(8.0)), chrome)
 }
 
 /// Leading clearance for native traffic lights. Zero width is omitted by the caller.
-pub fn titlebar_leading(width: f32, drag: bool) -> atelier_ui::gpui::Div {
-    drag_region(div().w(px(width)).h_full().flex_none(), drag && width > 0.0)
+pub fn titlebar_leading(width: f32, chrome: ResolvedChrome) -> atelier_ui::gpui::Div {
+    let region = div().w(px(width)).h_full().flex_none();
+    if width <= 0.0 {
+        region
+    } else {
+        titlebar_region(region, chrome)
+    }
 }
 
-fn drag_region(mut region: atelier_ui::gpui::Div, drag: bool) -> atelier_ui::gpui::Div {
-    if !drag {
+fn titlebar_region(
+    mut region: atelier_ui::gpui::Div,
+    chrome: ResolvedChrome,
+) -> atelier_ui::gpui::Div {
+    if chrome.client_drag {
+        // Windows uses the hit-test area. X11 and Wayland use `start_window_move`.
+        // macOS supports neither, so `client_drag` stays false there.
+        let forward_double_click = chrome.forwards_titlebar_double_click;
+        region = region
+            .window_control_area(WindowControlArea::Drag)
+            .on_mouse_down(
+                MouseButton::Left,
+                move |event: &MouseDownEvent, window, cx| {
+                    if event.click_count > 1 && forward_double_click {
+                        window.titlebar_double_click();
+                    } else {
+                        window.start_window_move();
+                    }
+                    cx.stop_propagation();
+                },
+            );
         return region;
     }
-    region = region
-        .window_control_area(WindowControlArea::Drag)
-        .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
+    if chrome.forwards_titlebar_double_click {
+        region = region.on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, cx| {
             if event.click_count > 1 {
                 window.titlebar_double_click();
-            } else {
-                window.start_window_move();
+                cx.stop_propagation();
             }
-            cx.stop_propagation();
         });
+    }
     region
 }
 
@@ -211,7 +239,7 @@ struct SessionConfig {
     app_id: String,
     restoration_key: Option<SharedString>,
     min_size: (f32, f32),
-    max_size: Option<(f32, f32)>,
+    placement_max: Option<(f32, f32)>,
     saved: WindowGeometry,
 }
 
@@ -220,7 +248,7 @@ struct WindowSession {
     app_id: String,
     restoration_key: Option<SharedString>,
     min_size: (f32, f32),
-    max_size: Option<(f32, f32)>,
+    placement_max: Option<(f32, f32)>,
     saved: WindowGeometry,
 }
 
@@ -242,7 +270,7 @@ impl WindowSession {
             window.is_maximized(),
             window.is_fullscreen(),
             self.min_size,
-            self.max_size,
+            self.placement_max,
             displays,
         );
         if next == self.saved || window.is_fullscreen() {
@@ -274,7 +302,7 @@ fn retain_session(cx: &mut App, window: &mut Window, config: SessionConfig) {
         app_id,
         restoration_key,
         min_size,
-        max_size,
+        placement_max,
         saved,
     } = config;
     let session = cx.new(|cx: &mut Context<WindowSession>| {
@@ -288,7 +316,7 @@ fn retain_session(cx: &mut App, window: &mut Window, config: SessionConfig) {
             app_id,
             restoration_key,
             min_size,
-            max_size,
+            placement_max,
             saved,
         }
     });
