@@ -10,16 +10,33 @@ use crate::transport::TransportError;
 
 #[derive(Debug)]
 pub enum JellyfinError {
-    InvalidUrl { message: String },
-    Unreachable { detail: String },
+    InvalidUrl {
+        message: String,
+    },
+    Unreachable {
+        detail: String,
+    },
     AuthRejected,
     NotFound,
     Unauthorized,
-    Server { status: u16, context: String },
-    Malformed { context: String },
-    PlaybackUnavailable { message: String },
+    Server {
+        status: u16,
+        context: String,
+    },
+    Malformed {
+        context: String,
+    },
+    PlaybackUnavailable {
+        message: String,
+    },
     NoCompatibleSource,
     Cancelled,
+    /// The OS vault rejected a session read or write. The detail is redacted.
+    CredentialFailure,
+    /// A stored session could not be turned back into a [`crate::Session`].
+    ///
+    /// The stored bytes are left in place. Logout is the call that removes them.
+    CorruptSession,
 }
 
 impl JellyfinError {
@@ -97,6 +114,10 @@ impl fmt::Display for JellyfinError {
                 f.write_str("Jellyfin could not create a compatible video stream.")
             }
             Self::Cancelled => f.write_str("The request was cancelled."),
+            Self::CredentialFailure => {
+                f.write_str("The credential vault could not complete the request.")
+            }
+            Self::CorruptSession => f.write_str("The saved Jellyfin session could not be read."),
         }
     }
 }

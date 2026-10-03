@@ -106,7 +106,7 @@ export default function MediaIntegrationSettings({ radarrUrl, sonarrUrl, onConfi
           message: `${providerDetails[provider].title} ${result.version || ''} connected.`.replace('  ', ' '),
         },
       }));
-      clearUpcomingCache();
+      await clearUpcomingCache();
       onConfigured(provider, result.serverUrl);
     } catch (error) {
       setStates((current) => ({
@@ -128,7 +128,7 @@ export default function MediaIntegrationSettings({ radarrUrl, sonarrUrl, onConfi
         ...current,
         [provider]: { keyConfigured: false, ready: false, message: 'Integration removed.' },
       }));
-      clearUpcomingCache();
+      await clearUpcomingCache();
       onConfigured(provider, '');
     } catch (error) {
       setStates((current) => ({

@@ -4,9 +4,11 @@
 //! [`matinee_core`] types. DTOs stay private. Screens and the player depend
 //! on the domain, not on `Id`, `RunTimeTicks`, or `UserData`.
 //!
-//! The session is in memory only. Native persistent login is intentionally
-//! not implemented here, and this crate does not read the shipping app's
-//! credential vault.
+//! [`Session`] is still built in memory by [`authenticate`]. A separate
+//! [`persist`] module can save and load that session through a
+//! [`matinee_secrets::CredentialStore`]. It does not call `keyring` itself,
+//! and it does not read the shipping browser `sessionStorage` entry. No
+//! screen is wired to it yet.
 //!
 //! # Device id
 //!
@@ -33,6 +35,7 @@ mod client;
 mod convert;
 mod dto;
 mod error;
+mod persist;
 mod playback;
 mod profile;
 mod query;
@@ -47,6 +50,7 @@ pub use artwork::{ArtworkRequest, ArtworkUrls};
 pub use auth::{Password, authenticate};
 pub use client::JellyfinClient;
 pub use error::JellyfinError;
+pub use persist::{SESSION_ACCOUNT, SESSION_NAMESPACE, load_session, remove_session, save_session};
 pub use session::{ServerInfo, Session};
 pub use transport::{
     CancelFlag, HttpRequest, HttpResponse, Method, ReqwestTransport, Transport, TransportError,

@@ -33,6 +33,9 @@ matinee-ui = { path = "crates/matinee-ui" }
 matinee-player = { path = "crates/matinee-player" }
 matinee-core = { path = "crates/matinee-core" }
 matinee-jellyfin = { path = "crates/matinee-jellyfin" }
+matinee-secrets = { path = "crates/matinee-secrets" }
+matinee-integrations = { path = "crates/matinee-integrations" }
+matinee-studio = { path = "crates/matinee-studio" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

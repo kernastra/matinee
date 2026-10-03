@@ -12,6 +12,7 @@ on:
       - crates/**
       - apps/**
       - scripts/check-architecture.sh
+      - src-tauri/**
       - .github/workflows/rust-workspace.yml
   push:
     branches: [main]
@@ -21,6 +22,7 @@ on:
       - crates/**
       - apps/**
       - scripts/check-architecture.sh
+      - src-tauri/**
       - .github/workflows/rust-workspace.yml
   workflow_dispatch:
 
@@ -59,7 +61,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            pkg-config libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev \
             libmpv2 ffmpeg
       - name: Architecture boundaries
@@ -100,7 +102,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            pkg-config libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libfontconfig-dev libfreetype-dev libx11-xcb-dev libxcb1-dev
       # macOS and Windows are the only jobs that compile and test those targets.
       - name: Build workspace
@@ -118,3 +120,27 @@ jobs:
       - name: Test (platform-specific code paths)
         if: runner.os != 'Linux'
         run: cargo test --workspace --locked
+
+  shipping:
+    name: Shipping Tauri adapters (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Install Tauri and credential libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
+      - name: Check and test shipping adapters
+        working-directory: src-tauri
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+        run: |
+          cargo check --locked
+          cargo test --locked

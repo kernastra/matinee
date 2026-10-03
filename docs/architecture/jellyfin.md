@@ -75,8 +75,15 @@ installation identity. Login itself omits `Token`. A 401 on login is
 `AuthRejected`. A 401 or 403 on any other call is `Unauthorized`. A 404 is
 `NotFound`. A transport failure is `Unreachable`.
 
-The session lives in memory. This crate does not write a token file and does
-not read the Tauri credential vault. Native persistent login stays open.
+`authenticate` still returns an in-memory `Session` and does not touch a vault.
+`persist` can save, load, and remove that session through a
+`matinee_secrets::CredentialStore`. The namespace is
+`dev.sean.matinee.jellyfin-session` and the account is `default`. The payload
+is JSON (`serverUrl`, `userId`, `userName`, optional `avatarTag`,
+`accessToken`). The whole payload is a `Secret`. A corrupt payload returns
+`CorruptSession` and is left in place. This crate does not call `keyring` and
+does not read the shipping browser `sessionStorage` entry. No Login screen
+calls `persist` yet.
 
 `GET /System/Info/Public` maps server name, version, operating system,
 product, and server id. Missing fields stay empty.

@@ -95,11 +95,31 @@ forbid_deps() {
 forbid_deps crates/atelier-ui/Cargo.toml matinee-core matinee-jellyfin matinee-player matinee-ui
 forbid_deps crates/atelier-app/Cargo.toml matinee-core matinee-jellyfin matinee-player matinee-ui
 forbid_deps crates/matinee-core/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player matinee-jellyfin reqwest
-forbid_deps crates/matinee-jellyfin/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player
+forbid_deps crates/matinee-jellyfin/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player keyring
 if ! depends_on crates/matinee-jellyfin/Cargo.toml matinee-core; then
   fail "matinee-jellyfin must depend on matinee-core"
 fi
+if ! depends_on crates/matinee-jellyfin/Cargo.toml matinee-secrets; then
+  fail "matinee-jellyfin must depend on matinee-secrets for persistent sessions"
+fi
 forbid_deps crates/matinee-player/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-jellyfin matinee-core
+forbid_deps crates/matinee-secrets/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-core matinee-jellyfin matinee-player matinee-integrations matinee-studio tauri
+forbid_deps crates/matinee-integrations/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player matinee-jellyfin matinee-core matinee-studio tauri
+if ! depends_on crates/matinee-integrations/Cargo.toml matinee-secrets; then
+  fail "matinee-integrations must depend on matinee-secrets"
+fi
+forbid_deps crates/matinee-studio/Cargo.toml gpui atelier-ui atelier-app matinee-ui matinee-player matinee-jellyfin tauri
+if ! depends_on crates/matinee-studio/Cargo.toml matinee-secrets; then
+  fail "matinee-studio must depend on matinee-secrets"
+fi
+for crate in matinee-secrets matinee-integrations matinee-studio; do
+  if ! grep -q "../crates/$crate" src-tauri/Cargo.toml; then
+    fail "src-tauri must depend on $crate"
+  fi
+  if grep -q 'src-tauri' "crates/$crate/Cargo.toml"; then
+    fail "crates/$crate must not depend on src-tauri"
+  fi
+done
 
 # 8. The shipping app and spikes stay outside the workspace.
 for path in src-tauri spikes; do

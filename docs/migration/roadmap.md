@@ -98,16 +98,24 @@ the software cap.
   `matinee_core::native_playback()`. The shipping static stream fallback is
   a typed `NoCompatibleSource` error.
 
-**Phase 2B is not started.** Screens are not started.
+**Phase 2B: Native application services — landed.** Screens are not started.
 
-Still in Phase 2, not started:
+- `matinee-secrets`: OS keyring (Linux Secret Service, macOS Keychain,
+  Windows Credential Manager) behind `CredentialStore`. Tests use
+  `MemoryStore`. Shipping namespaces are unchanged.
+- `matinee-integrations`: Radarr and Sonarr connection tests, calendar
+  normalization, partial failure, the five-minute cache, and Home selection.
+- `matinee-studio`: Poster Studio credentials, Codex and fal generation,
+  manifests, and media-folder artwork. Higgsfield generation is still the
+  shipping "not available" error.
+- The shipping Tauri commands are adapters over those crates. Command names
+  are unchanged. Two new commands feed the calendar UI:
+  `fetch_upcoming_releases` and `clear_integration_calendar_cache`.
+- `matinee-jellyfin::persist` can save and load one session through
+  `CredentialStore`. `authenticate` is unchanged. No Login screen uses it.
 
-- `matinee-integrations`, `matinee-studio`: extract the existing Rust in
-  `src-tauri` (calendar, image generation, credentials) into UI-agnostic
-  crates. The Tauri app can depend on them, which removes duplication without
-  changing its behavior.
-- Native persistent login. The Jellyfin client does not write tokens and does
-  not read the Tauri credential vault.
+Phase 2 is structurally complete. The next work is a screen, not another
+service boundary.
 
 ## Phase 3: Screens (proposed, screen by screen)
 

@@ -13,7 +13,6 @@ import type { AppSettings } from '../lib/settings';
 import { debugWarn } from '../lib/logger';
 import {
   fetchUpcomingReleases,
-  homeUpcoming,
   integrationEnabled,
   upcomingWindow,
   type UpcomingRelease,
@@ -96,7 +95,7 @@ export default function Home({ session, settings, onSignOut, onNavigate, onSearc
     const window = upcomingWindow();
     fetchUpcomingReleases(settings, window.start, window.end)
       .then((result) => {
-        if (!cancelled) setUpcoming(homeUpcoming(result.events));
+        if (!cancelled) setUpcoming(result.home);
       })
       .catch((reason) => {
         debugWarn('[calendar] could not load the home shelf', reason);

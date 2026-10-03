@@ -14,9 +14,9 @@ at Phase 0.
 | Styling | Hand-authored CSS (~1.2k lines), `@fontsource` Fraunces / Manrope / IBM Plex Mono, Material Symbols TTF | `src/styles.css`, `src/assets/` |
 | Playback | HTML5 `<video>` + hls.js (dynamic import), Jellyfin direct play and HLS transcode | `src/components/Player.tsx` |
 | Jellyfin | REST client (auth, libraries, items, playback info, progress, played/watchlist) | `src/lib/jellyfin.ts` |
-| Calendar | Radarr / Sonarr monitored releases, fetched through Rust | `src-tauri/src/media_calendar.rs`, `src/lib/integrations.ts`, `Calendar.tsx`, `ComingSoonShelf.tsx` |
-| Poster Studio | Guided generation (Codex CLI or fal.ai), `movie.mf.json` manifests, export, `poster.jpg` beside media | `src-tauri/src/image_generation.rs`, `src/lib/posterPrompts.ts`, `PosterStudio.tsx` |
-| Secrets | OS credential vault via `keyring` (Secret Service / Keychain / Credential Manager) | `src-tauri` |
+| Calendar | Radarr / Sonarr monitored releases. Rust normalizes and caches them. TypeScript keeps date labels and a synchronous Home helper. | `crates/matinee-integrations`, `src-tauri/src/media_calendar.rs`, `src/lib/integrations.ts` |
+| Poster Studio | Guided generation (Codex CLI or fal.ai), `movie.mf.json` manifests, export, `poster.jpg` beside media. Prompt composition stays in TypeScript. | `crates/matinee-studio`, `src-tauri/src/image_generation.rs`, `src/lib/posterPrompts.ts` |
+| Secrets | OS credential vault via `keyring` (Secret Service / Keychain / Credential Manager), called through `matinee-secrets` | `crates/matinee-secrets` |
 | Settings | `localStorage` (`matinee.settings.v1`), including reduced motion | `src/lib/settings.ts` |
 | Window chrome | Custom 28px navbar, macOS-style traffic lights on all platforms, 10px window corners; Tauri commands close/minimize/maximize | `WindowChrome.tsx`, `src-tauri/src/window.rs` |
 | Tests | Vitest + jsdom (5 files, 46 tests at Phase 0); Rust test harness | `src/lib/*.test.ts` |
@@ -34,13 +34,15 @@ Calendar, Settings (playback, integrations, image providers), Poster Studio.
 `export_poster_to_media_folder`, `generate_poster_image`,
 `list_custom_posters`, `load_movie_manifest`, `provider_key_status`,
 `remove_provider_key`, `save_provider_key`, `scan_local_image_provider`,
-`fetch_integration_calendar`, `integration_key_status`,
+`fetch_integration_calendar`, `fetch_upcoming_releases`,
+`clear_integration_calendar_cache`, `integration_key_status`,
 `remove_integration_key`, `test_and_save_integration`, `close_window`,
 `minimize_window`, `toggle_maximize_window`.
 
-This Rust logic (image generation, calendar, credential handling) is the
-first candidate for extraction into shared, UI-agnostic crates
-(`matinee-integrations`, `matinee-studio`) that both apps can use.
+The calendar, Poster Studio, and credential commands are adapters. The
+implementations live in `matinee-integrations`, `matinee-studio`, and
+`matinee-secrets`. `src-tauri` declares Rust 1.90 so it can compile those
+crates. Its edition stays 2021.
 
 ## Design sources of truth
 
@@ -66,7 +68,7 @@ first candidate for extraction into shared, UI-agnostic crates
 
 ## Known build note
 
-`src-tauri/Cargo.lock` requires Rust ≥ 1.85 (edition-2024 dependency
-`idna_adapter 1.2.2`). With Rust 1.90.0, `cargo check --locked` and
-`cargo test --locked` in `src-tauri` pass, as do `pnpm typecheck`,
-`pnpm test`, and `pnpm build`.
+`src-tauri` declares `rust-version = "1.90"` because the shared service crates
+do. The lockfile already needed Rust ≥ 1.85 (`idna_adapter` 1.2.2) before
+Phase 2B. Linux builds of `keyring` need `libdbus-1-dev` at compile time.
+Unit tests do not start a Secret Service daemon.
