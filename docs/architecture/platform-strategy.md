@@ -22,7 +22,9 @@ Everything else asks about a *convention*:
 |---|---|---|---|
 | `primary_modifier()` | ⌘ | Ctrl | Ctrl |
 | `quits_when_last_window_closes()` | no | yes | yes |
+| `reopens_when_activated_without_windows()` | yes | no | no |
 | `has_global_menu_bar()` | yes | no | no |
+| `restores_window_origin()` | yes | yes | X11 yes, Wayland no |
 | `word_key()` / emacs line keys / character palette | Option, yes, yes | Ctrl, no, no | Ctrl, no, no |
 
 Components never contain platform checks. `scripts/check-architecture.sh`
@@ -43,6 +45,8 @@ the gesture, so the app must not bind it.
 | Minimize | ⌘M | — (WM) | — (WM) | Minimize |
 | Full Screen | ⌃⌘F | F11 | F11 | Enter Full Screen / Full Screen |
 | Settings | ⌘, | Ctrl+, | Ctrl+, | Settings… / Settings / Preferences |
+| Hide | ⌘H | — | — | Hide |
+| Hide Others | ⌥⌘H | — | — | Hide Others |
 
 Tests assert that no two commands collide on any platform. Tab / Shift-Tab
 focus traversal is installed by `atelier-app` on all platforms. On macOS,
@@ -51,70 +55,100 @@ focus traversal is installed by `atelier-app` on all platforms. On macOS,
 
 ## Menus
 
-On macOS, `AtelierApp` installs a native menu bar: App menu (Settings, Services,
-Quit) and Window menu (Minimize, Full Screen, Close). On Windows and Linux
-GPUI 0.2.2 renders no menu bar. `set_menus` is only called where a global
-menu bar exists. An in-window stand-in for that menu bar (a hamburger or
-overflow following platform conventions) is still not wired. Phase 1B added
-the Popover and Menu primitives that stand-in would use.
+On macOS, `AtelierApp` installs a native menu bar: App (Settings, Services,
+Hide, Hide Others, Quit), Edit (Undo, Redo, Cut, Copy, Paste, Select All),
+and Window (Minimize, Full Screen, Close). Edit items use GPUI `OsAction` so
+the system selector is `cut:` / `copy:` / `paste:` / `selectAll:`. Undo and
+Redo stay disabled: there is no undo stack, and GPUI notes that `undo:` /
+`redo:` do not attach to an `NSTextView`. There is no About item.
+`SystemMenuType` only offers Services, and GPUI 0.2.2 has no About-panel API.
+
+On Windows and Linux GPUI 0.2.2 renders no menu bar. `set_menus` is only
+called where a global menu bar exists. An in-window stand-in for that menu
+bar is still not wired. Phase 1B added the Popover and Menu primitives that
+stand-in would use. The same commands and shortcuts still exist.
 
 ## Window architecture
 
-Phase 0 deliberately uses **native, server-side decorations everywhere**
-(`atelier_app::open_window`). The Tauri app's custom frameless chrome and
-macOS-style traffic lights on all platforms are *not* recreated. That is the
-"one design language, platform-appropriate behavior" decision applied to
-windows.
+Applications pass a `WindowSpec` (title, size, min, optional max, resizable,
+restoration key, `ChromeIntent`). `open_window` maps that intent per
+platform. Views read `resolve_chrome` for the titlebar band and leading
+inset. They do not embed traffic-light offsets. The Tauri app's frameless
+chrome is not recreated.
 
-GPUI 0.2.2 capabilities relevant to the eventual design:
+`ChromeIntent::PlatformDefault` and `Unified` draw a unified titlebar on
+macOS only. Windows and Linux stay on the system frame even if an app asks
+for `Unified`. GPUI has no maximum-size field, so max size is applied when
+placing and when saving a normal frame. The OS can still resize past it
+during the session.
 
-| Need | GPUI 0.2.2 API |
-|---|---|
-| Hide system titlebar, draw content under it | `TitlebarOptions { appears_transparent: true, traffic_light_position }` (macOS, Windows) |
-| Client-side decorations (Linux) | `WindowOptions::window_decorations = Client`, `Window::request_decorations`, `window_decorations()`, `set_client_inset` |
-| Drag / resize from custom chrome | `start_window_move`, `start_window_resize(ResizeEdge)`, `window_control_area(WindowControlArea::{Drag,Close,Max,Min})` (Windows hit-testing) |
-| Window menu / zoom | `show_window_menu`, `zoom_window` |
-| Fullscreen | `toggle_fullscreen`, `is_fullscreen` |
-| Platform window-control availability | `window_controls()` (fullscreen, maximize, minimize, window_menu) |
-| Translucency | `WindowBackgroundAppearance::{Opaque, Transparent, Blurred}` |
-| Appearance and scale | `appearance()` (light/dark), `scale_factor()` |
-| App grouping on Linux | `WindowOptions::app_id` (set from `AppInfo::app_id`) |
+GPUI 0.2.2 window APIs that this layer actually uses:
 
-### macOS (target)
+| Need | GPUI 0.2.2 API | What Atelier does with it |
+|---|---|---|
+| Native frame | `WindowDecorations::Server` | Always. Client decorations are not requested. |
+| Unified macOS titlebar | `TitlebarOptions { appears_transparent, traffic_light_position }` | macOS unified only. Real traffic lights at (12, 12) in a 38px band; content starts after a 78px leading inset. |
+| Windows caption / Snap | default caption when `appears_transparent` is false | Kept. `window_control_area` is not used on Windows, because a custom caption would own hit-testing. |
+| Drag / double-click | `WindowControlArea::Drag` (Windows `WM_NCHITTEST` only), `start_window_move` (X11 and Wayland only), `titlebar_double_click` (macOS) | Wired on empty in-client titlebar regions. That path is live only for the macOS unified band. |
+| Fullscreen | `toggle_fullscreen`, `is_fullscreen`, `WindowBounds::Fullscreen` | F11 / ⌃⌘F. Escape exits when no dialog, menu, or search field consumed it. Fullscreen bounds are not written to the saved frame. |
+| Maximize | `is_maximized`, `WindowBounds::Maximized` | The saved file keeps the last windowed size and a maximized flag. |
+| Bounds and displays | `Window::bounds`, `App::displays`, `PlatformDisplay::bounds` | Logical pixels. Off-screen frames are moved so the top edge stays reachable. |
+| Scale | `Window::scale_factor` (read-only) | Shown in the Gallery and Window Lab. Not simulated. |
+| Lifecycle | `on_window_closed`, `Application::on_reopen`, `hide`, `hide_other_apps` | Windows and Linux quit when the last window closes. macOS stays running and reopens on dock click. |
+| Linux app id | `WindowOptions::app_id` | `AppInfo::app_id`. |
 
-- **Unified titlebar:** `appears_transparent: true`, a toolbar row drawn by the
-  app, and real traffic lights positioned with `traffic_light_position` to
-  align with the toolbar's baseline. No fake traffic lights.
-- **Native menus** (already in place), Services menu, ⌘-shortcuts, and the
-  Window menu. Native fullscreen via `toggle_fullscreen`.
-- Focus: honor key-window state (`is_window_active`) by dimming chrome
-  accents when inactive, like AppKit.
-- Gaps to verify in Phase 1: vibrancy material behind the sidebar (`Blurred`)
-  and its legibility, plus the reduced-transparency preference (no GPUI API).
+Not used, and not papered over: `WindowDecorations::Client`, `set_client_inset`, `show_window_menu`, `zoom_window`, `WindowBackgroundAppearance::Blurred`. GPUI's macOS `on_hit_test_window_control` is a no-op, and `start_window_move` is unimplemented on macOS, so a unified titlebar cannot be dragged by pointer. Double-click still calls `titlebar_double_click`, which honors `AppleActionOnDoubleClick`. Traffic lights cannot be moved while fullscreen (GPUI skips that; Zed issue 4712). There is no public titlebar height; the 38px band is Atelier's layout, not a measured AppKit value.
 
-### Windows (target)
+### macOS
 
-- Keep **native caption buttons** and Snap layouts. If a custom titlebar is
-  adopted, use `appears_transparent` plus `window_control_area` so the OS
-  still hit-tests Close/Max/Min and Snap flyouts keep working.
-- **DPI:** GPUI works in logical pixels and reports `scale_factor()`. Verify
-  per-monitor DPI changes when dragging between monitors in Phase 1.
-- Conventions: Alt+F4 / Exit, F11 fullscreen, no global menu bar.
+Unified titlebar with native traffic lights and a toolbar row in the band.
+Sidebar content starts under that band. No drawn stand-in for the traffic
+lights. Native menus are the App, Edit, and Window menus above. Fullscreen
+uses the system transition. On macOS 15.3+, GPUI temporarily turns the
+transparent titlebar off while fullscreen.
 
-### Linux (target)
+Pointer-dragging the unified band does not move the window. That is a GPUI
+0.2.2 gap, not an Atelier drawing fallback. `ChromeIntent::Native` keeps the
+opaque system titlebar, which AppKit drags itself, and reports a zero inset.
 
-- **Wayland and X11** are both compiled in (GPUI default features); GPUI picks
-  the backend at runtime. Phase 0 was exercised on X11 (Xfce) with Mesa
-  lavapipe.
-- **Decorations:** server-side by default. On compositors without SSD (GNOME
-  Wayland), GPUI falls back to client-side decorations, which the app would
-  have to draw. A minimal CSD titlebar component is required before shipping
-  on GNOME Wayland.
-- **HiDPI:** fractional scaling via the Wayland backend. Verify on Fedora
-  (the current primary platform) in Phase 1.
-- **Fedora compatibility:** the Tauri app needs `WEBKIT_DISABLE_DMABUF_RENDERER=1`;
-  GPUI does not use WebKit, so that workaround does not apply. GPUI needs
-  a working Vulkan driver (Mesa is fine).
+### Windows
+
+Native caption, Snap layouts, resize, and DPI stay with the system. Atelier
+does not draw caption buttons. Alt+F4 and the caption close the window.
+F11 is fullscreen. There is no global menu bar. Per-monitor DPI has not been
+dragged between displays in this environment; `scale_factor` is the live value.
+
+### Linux
+
+GPUI compiles both Wayland and X11 and prefers Wayland when `WAYLAND_DISPLAY`
+is non-empty. Decorations are server-side. The toolbar is ordinary client
+content under the window-manager titlebar, so it is not a drag region.
+GNOME Wayland often has no SSD; GPUI can fall back to client decorations, and
+this layer still does not draw them. A CSD titlebar is required before that
+desktop is a supported target.
+
+Saved positions are restored on X11 and ignored on Wayland (the window is
+centered, size and maximized flag kept). Wayland position restore is not
+reliable. HiDPI fractional scale is a Wayland concern and was not exercised
+here; the development session is X11 at scale 1.
+
+Fedora note, unchanged: the Tauri app needs `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
+GPUI does not use WebKit. It needs a Vulkan driver (Mesa is fine).
+
+### Restoration and fullscreen
+
+One text file per restoration key under `ATELIER_STATE_DIR`, or the platform
+state directory (`~/Library/Application Support/Atelier`, `%APPDATA%/Atelier`,
+`$XDG_STATE_HOME/atelier` or `~/.local/state/atelier`). The file stores the
+normal origin and size plus a maximized flag. A restored frame that does not
+leave its top edge on a display is moved onto the nearest display. Fullscreen
+does not overwrite that file. This is not a settings database.
+
+### Window Lab
+
+`apps/atelier-window-lab` is the manual window harness. It is not a Gallery
+story. It shows the resolved platform, insets, scale, frame, fullscreen, and
+a toolbar whose empty regions are drag surfaces only when the chrome says so.
 
 ## Reduced motion and other system preferences
 
@@ -160,7 +194,8 @@ packaging or signing (no distributable yet).
 - Reduced-transparency source (no GPUI API). Reduced motion is probed at launch only.
 - Windows reduced-motion detection still shells out to PowerShell. Replace it with a direct Win32 `SystemParametersInfo` call. See the roadmap.
 - macOS Full Keyboard Access semantics for Tab.
-- In-window menus for Windows/Linux; CSD titlebar for GNOME Wayland.
+- In-window menus for Windows/Linux. GNOME Wayland still needs a CSD titlebar; Phase 1C kept server decorations on purpose.
+- macOS unified-titlebar dragging, once GPUI exposes a drag path. About panel, once GPUI has an API for it.
 - `Platform` injection so the Gallery can preview other platforms' conventions.
 - Packaging per platform (bundle, signing/notarization, AppImage/Flatpak/RPM).
   Native playback adds libmpv packaging; see [playback.md](playback.md).

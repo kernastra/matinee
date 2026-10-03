@@ -49,6 +49,18 @@ impl Platform {
         !matches!(self, Platform::MacOS)
     }
 
+    /// macOS reopens a window when the dock icon is clicked and none are open.
+    pub const fn reopens_when_activated_without_windows(self) -> bool {
+        !self.quits_when_last_window_closes()
+    }
+
+    /// Saved window positions are restored on macOS, Windows, and X11.
+    /// GPUI prefers Wayland when `WAYLAND_DISPLAY` is set, and Wayland
+    /// positions are not reliable, so Linux ignores the saved origin then.
+    pub fn restores_window_origin(self) -> bool {
+        restores_window_origin_for(self, env_nonempty("WAYLAND_DISPLAY"))
+    }
+
     /// Whether the application menu lives in a global system menu bar.
     pub const fn has_global_menu_bar(self) -> bool {
         matches!(self, Platform::MacOS)
@@ -102,6 +114,43 @@ impl Platform {
             Platform::Linux => detect_linux(),
         }
     }
+}
+
+/// `wayland` is true when GPUI would select its Wayland backend.
+pub fn restores_window_origin_for(platform: Platform, wayland: bool) -> bool {
+    match platform {
+        Platform::MacOS | Platform::Windows => true,
+        Platform::Linux => !wayland,
+    }
+}
+
+fn env_nonempty(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|value| !value.is_empty())
+}
+
+/// Directory for the one-file window frame. `ATELIER_STATE_DIR` overrides it.
+pub fn window_state_root() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("ATELIER_STATE_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    match Platform::current() {
+        Platform::MacOS => home_dir().join("Library/Application Support/Atelier"),
+        Platform::Windows => std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home_dir().join("AppData/Roaming"))
+            .join("Atelier"),
+        Platform::Linux => match std::env::var_os("XDG_STATE_HOME") {
+            Some(dir) => std::path::PathBuf::from(dir).join("atelier"),
+            None => home_dir().join(".local/state/atelier"),
+        },
+    }
+}
+
+fn home_dir() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
 /// `enable-animations` true means full motion.
@@ -241,8 +290,15 @@ mod tests {
         assert_eq!(Platform::Linux.primary_modifier(), PrimaryModifier::Control);
         assert!(!Platform::MacOS.quits_when_last_window_closes());
         assert!(Platform::Windows.quits_when_last_window_closes());
+        assert!(Platform::Linux.quits_when_last_window_closes());
+        assert!(Platform::MacOS.reopens_when_activated_without_windows());
+        assert!(!Platform::Windows.reopens_when_activated_without_windows());
         assert!(Platform::MacOS.has_global_menu_bar());
         assert!(!Platform::Linux.has_global_menu_bar());
+        assert!(restores_window_origin_for(Platform::MacOS, true));
+        assert!(restores_window_origin_for(Platform::Windows, false));
+        assert!(!restores_window_origin_for(Platform::Linux, true));
+        assert!(restores_window_origin_for(Platform::Linux, false));
         assert_eq!(Platform::MacOS.word_key(), "alt");
         assert_eq!(Platform::Linux.word_key(), "ctrl");
         assert!(Platform::MacOS.uses_emacs_line_editing());

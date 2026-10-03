@@ -34,13 +34,13 @@ fn main() {
         if let Err(error) = matinee_ui::load_bundled_fonts(cx) {
             eprintln!("failed to load Matinee fonts: {error}");
         }
+        let themes = themes.clone();
+        let initial_story = initial_story.clone();
         open_window(
             cx,
-            WindowSpec {
-                title: format!("{FRAMEWORK_NAME} Gallery").into(),
-                size: (1180.0, 800.0),
-                min_size: (760.0, 520.0),
-            },
+            WindowSpec::new(format!("{FRAMEWORK_NAME} Gallery"), (1180.0, 800.0))
+                .min_size((760.0, 520.0))
+                .restoration_key("gallery"),
             move |window, cx| cx.new(|cx| Gallery::new(themes, initial_story, window, cx)),
         )
         .expect("failed to open gallery window");

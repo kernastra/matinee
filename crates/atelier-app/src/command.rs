@@ -10,7 +10,17 @@ use crate::platform::{Platform, PrimaryModifier};
 
 actions!(
     atelier,
-    [Quit, CloseWindow, Minimize, ToggleFullScreen, OpenSettings]
+    [
+        Quit,
+        CloseWindow,
+        Minimize,
+        ToggleFullScreen,
+        OpenSettings,
+        Hide,
+        HideOthers,
+        Undo,
+        Redo,
+    ]
 );
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -20,6 +30,8 @@ pub enum Command {
     Minimize,
     ToggleFullScreen,
     OpenSettings,
+    Hide,
+    HideOthers,
 }
 
 /// A platform-neutral key chord. `primary` resolves to ⌘ on macOS and Ctrl
@@ -57,6 +69,11 @@ impl Shortcut {
 
     const fn with_control(mut self) -> Self {
         self.control = true;
+        self
+    }
+
+    const fn with_alt(mut self) -> Self {
+        self.alt = true;
         self
     }
 
@@ -125,12 +142,14 @@ impl Shortcut {
 }
 
 impl Command {
-    pub const ALL: [Command; 5] = [
+    pub const ALL: [Command; 7] = [
         Command::Quit,
         Command::CloseWindow,
         Command::Minimize,
         Command::ToggleFullScreen,
         Command::OpenSettings,
+        Command::Hide,
+        Command::HideOthers,
     ];
 
     /// The shortcut for this command, or `None` where the platform (window
@@ -148,6 +167,10 @@ impl Command {
             }
             (Command::ToggleFullScreen, _) => Some(Shortcut::bare("f11")),
             (Command::OpenSettings, _) => Some(Shortcut::primary(",")),
+            (Command::Hide, Platform::MacOS) => Some(Shortcut::primary("h")),
+            (Command::Hide, Platform::Windows | Platform::Linux) => None,
+            (Command::HideOthers, Platform::MacOS) => Some(Shortcut::primary("h").with_alt()),
+            (Command::HideOthers, Platform::Windows | Platform::Linux) => None,
         }
     }
 
@@ -170,6 +193,8 @@ impl Command {
                 Platform::Windows => "Settings".into(),
                 Platform::Linux => "Preferences".into(),
             },
+            Command::Hide => "Hide".into(),
+            Command::HideOthers => "Hide Others".into(),
         }
     }
 
@@ -180,6 +205,8 @@ impl Command {
             Command::Minimize => Box::new(Minimize),
             Command::ToggleFullScreen => Box::new(ToggleFullScreen),
             Command::OpenSettings => Box::new(OpenSettings),
+            Command::Hide => Box::new(Hide),
+            Command::HideOthers => Box::new(HideOthers),
         }
     }
 }

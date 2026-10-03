@@ -1,5 +1,6 @@
 use atelier_app::{
-    Command, FRAMEWORK_NAME, Platform, command::OpenSettings, set_motion_preference, set_theme,
+    ChromeIntent, Command, FRAMEWORK_NAME, Platform, command::OpenSettings, install_window_input,
+    resolve_chrome, set_motion_preference, set_theme,
 };
 use atelier_ui::prelude::*;
 use atelier_ui::{Inspection, clear_inspection, current_inspection};
@@ -271,6 +272,7 @@ impl Gallery {
 
 impl Render for Gallery {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        install_window_input(window);
         let theme = cx.theme().clone();
         let story = self.selected;
         clear_inspection();
@@ -282,7 +284,8 @@ impl Render for Gallery {
         };
         let reduced = cx.ui_preferences().motion() == MotionPreference::Reduced;
 
-        h_stack(Space::S0)
+        let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
+        let body = h_stack(Space::S0)
             .id("gallery")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
@@ -327,7 +330,16 @@ impl Render for Gallery {
                                     )),
                             ),
                     ),
-            )
+            );
+        if chrome.band_height > 0.0 {
+            v_stack(Space::S0)
+                .size_full()
+                .child(div().w_full().h(px(chrome.band_height)).flex_none())
+                .child(body.flex_1().min_h(px(0.0)))
+                .into_any_element()
+        } else {
+            body.into_any_element()
+        }
     }
 }
 

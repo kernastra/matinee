@@ -1,0 +1,19 @@
+[package]
+name = "atelier-window-lab"
+description = "Manual inspection of Atelier's native window behavior. Not a component story."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "atelier-window-lab"
+path = "src/main.rs"
+
+[dependencies]
+atelier-app.workspace = true
+atelier-ui.workspace = true
+
+[lints]
+workspace = true

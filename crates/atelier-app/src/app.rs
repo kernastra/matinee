@@ -1,18 +1,23 @@
 use std::borrow::Cow;
 
+use std::rc::Rc;
+
 use atelier_ui::{
-    ActiveTheme, ComponentKeymap, FocusNext, FocusPrevious, Theme, UiAssets, UiPreferences,
+    ActiveTheme, ComponentKeymap, Copy, Cut, FocusNext, FocusPrevious, Paste, SelectAll, Theme,
+    UiAssets, UiPreferences,
     gpui::{
-        self, App, Application, AssetSource, Bounds, Entity, Global, KeyBinding, Menu, MenuItem,
-        Render, SharedString, SystemMenuType, TitlebarOptions, Window, WindowBounds,
-        WindowDecorations, WindowHandle, WindowOptions, px, size,
+        self, App, Application, AssetSource, Global, KeyBinding, Menu, MenuItem, OsAction,
+        SharedString, SystemMenuType, Window,
     },
     install_component_keybindings, note_keyboard_navigation,
     tokens::MotionPreference,
 };
 
 use crate::{
-    command::{CloseWindow, Command, Minimize, OpenSettings, Quit, ToggleFullScreen},
+    command::{
+        CloseWindow, Command, Hide, HideOthers, Minimize, OpenSettings, Quit, Redo,
+        ToggleFullScreen, Undo,
+    },
     platform::Platform,
 };
 
@@ -70,43 +75,51 @@ impl AtelierApp {
         self
     }
 
-    pub fn run(self, on_launch: impl FnOnce(&mut App) + 'static) {
+    pub fn run(self, on_launch: impl Fn(&mut App) + 'static) {
         let AtelierApp {
             info,
             theme,
             assets,
         } = self;
-        Application::new()
-            .with_assets(AppAssets(assets))
-            .run(move |cx| {
-                let platform = Platform::current();
-                cx.set_global(theme);
-                cx.set_global(UiPreferences {
-                    system_motion: platform.detect_reduced_motion().map(|reduced| {
-                        if reduced {
-                            MotionPreference::Reduced
-                        } else {
-                            MotionPreference::Full
-                        }
-                    }),
-                    motion_override: motion_override_from_env(),
-                });
-                install_commands(cx, platform);
-                if platform.has_global_menu_bar() {
-                    cx.set_menus(app_menus(info.name, platform));
+        let on_launch = Rc::new(on_launch);
+        let application = Application::new().with_assets(AppAssets(assets));
+        if Platform::current().reopens_when_activated_without_windows() {
+            let reopen = Rc::clone(&on_launch);
+            application.on_reopen(move |cx| {
+                if cx.windows().is_empty() {
+                    reopen(cx);
                 }
-                if platform.quits_when_last_window_closes() {
-                    cx.on_window_closed(|cx| {
-                        if cx.windows().is_empty() {
-                            cx.quit();
-                        }
-                    })
-                    .detach();
-                }
-                cx.set_global(info);
-                on_launch(cx);
-                cx.activate(true);
             });
+        }
+        application.run(move |cx| {
+            let platform = Platform::current();
+            cx.set_global(theme);
+            cx.set_global(UiPreferences {
+                system_motion: platform.detect_reduced_motion().map(|reduced| {
+                    if reduced {
+                        MotionPreference::Reduced
+                    } else {
+                        MotionPreference::Full
+                    }
+                }),
+                motion_override: motion_override_from_env(),
+            });
+            install_commands(cx, platform);
+            if platform.has_global_menu_bar() {
+                cx.set_menus(app_menus(info.name, platform));
+            }
+            if platform.quits_when_last_window_closes() {
+                cx.on_window_closed(|cx| {
+                    if cx.windows().is_empty() {
+                        cx.quit();
+                    }
+                })
+                .detach();
+            }
+            cx.set_global(info);
+            on_launch(cx);
+            cx.activate(true);
+        });
     }
 }
 
@@ -159,6 +172,8 @@ fn install_commands(cx: &mut App, platform: Platform) {
     cx.on_action(|_: &ToggleFullScreen, cx| {
         with_active_window(cx, |window| window.toggle_fullscreen());
     });
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
 }
 
 fn key_binding(command: Command, keystroke: &str) -> KeyBinding {
@@ -168,6 +183,8 @@ fn key_binding(command: Command, keystroke: &str) -> KeyBinding {
         Command::Minimize => KeyBinding::new(keystroke, Minimize, None),
         Command::ToggleFullScreen => KeyBinding::new(keystroke, ToggleFullScreen, None),
         Command::OpenSettings => KeyBinding::new(keystroke, OpenSettings, None),
+        Command::Hide => KeyBinding::new(keystroke, Hide, None),
+        Command::HideOthers => KeyBinding::new(keystroke, HideOthers, None),
     }
 }
 
@@ -196,7 +213,22 @@ fn app_menus(app_name: &str, platform: Platform) -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),
+                item(Command::Hide),
+                item(Command::HideOthers),
+                MenuItem::separator(),
                 item(Command::Quit),
+            ],
+        },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::os_action("Undo", Undo, OsAction::Undo),
+                MenuItem::os_action("Redo", Redo, OsAction::Redo),
+                MenuItem::separator(),
+                MenuItem::os_action("Cut", Cut, OsAction::Cut),
+                MenuItem::os_action("Copy", Copy, OsAction::Copy),
+                MenuItem::os_action("Paste", Paste, OsAction::Paste),
+                MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
             ],
         },
         Menu {
@@ -209,42 +241,6 @@ fn app_menus(app_name: &str, platform: Platform) -> Vec<Menu> {
             ],
         },
     ]
-}
-
-/// Describes a top-level window in platform-neutral terms.
-#[derive(Clone, Debug)]
-pub struct WindowSpec {
-    pub title: SharedString,
-    pub size: (f32, f32),
-    pub min_size: (f32, f32),
-}
-
-/// Opens a standard application window using the platform's native
-/// decorations and titlebar. Custom chrome is deliberately not offered yet.
-pub fn open_window<V: Render + 'static>(
-    cx: &mut App,
-    spec: WindowSpec,
-    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
-) -> gpui::Result<WindowHandle<V>> {
-    let app_id = cx
-        .try_global::<AppInfo>()
-        .map(|info| info.app_id.to_string());
-    let bounds = Bounds::centered(None, size(px(spec.size.0), px(spec.size.1)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(spec.title),
-                appears_transparent: false,
-                traffic_light_position: None,
-            }),
-            app_id,
-            window_min_size: Some(size(px(spec.min_size.0), px(spec.min_size.1))),
-            window_decorations: Some(WindowDecorations::Server),
-            ..Default::default()
-        },
-        build,
-    )
 }
 
 /// Swaps the active theme and repaints every window.
