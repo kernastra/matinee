@@ -5,11 +5,11 @@
 depend on `Id`, `RunTimeTicks`, `UserData`, or `MediaSources`.
 
 The crate depends on `matinee-core`. It does not depend on GPUI, Atelier,
-`matinee-ui`, `matinee-player`, or Tauri. `apps/matinee-next` depends on
-`matinee-core` and does not link this crate. A featureless GPUI binary that
-also linked reqwest is large enough to crash the Linux linker during
-`cargo clippy --all-targets`. A future screen will depend on the client when
-it actually calls it.
+`matinee-ui`, `matinee-player`, or Tauri. `apps/matinee-next` links this
+crate and calls it from the application service runtime described in
+[application.md](application.md). The UI crate does not name `reqwest`.
+CI still sets `CARGO_PROFILE_DEV_DEBUG=0` and `CARGO_PROFILE_TEST_DEBUG=0`
+because a debug GPUI binary that also links this client is large.
 
 ## HTTP
 
@@ -30,9 +30,9 @@ The runtime owner is the application, not this crate and not a UI task:
 GPUI application → application/service runtime → matinee-jellyfin async calls
 ```
 
-That adapter is Phase 3. Calling `ReqwestTransport` from a UI task panics.
-`apps/matinee-next` does not depend on this crate, so a featureless shell
-does not discover the requirement by linking it.
+That adapter is `ServiceRuntime` in `apps/matinee-next`. Calling
+`ReqwestTransport` from a UI task panics. The window awaits a oneshot; it
+does not poll this transport.
 
 `CancelFlag::cancel()` only stops a request that has not started. It does
 not interrupt a request already in flight. Dropping the `ReqwestTransport`
@@ -94,7 +94,9 @@ URL would have those stripped. An invalid URL, a non-HTTP scheme, credentials
 in the URL, a malformed user id, a malformed avatar tag, and a blank token
 are also `CorruptSession`. The payload stays in the vault. This crate does
 not call `keyring` and does not read the shipping browser `sessionStorage`
-entry. No Login screen calls `persist` yet.
+entry. The native Login screen calls `load_session`, `save_session`, and
+`remove_session` through the application runtime. This crate still does not
+know about that screen. A corrupt payload stays in the vault.
 
 `GET /System/Info/Public` maps server name, version, operating system,
 product, and server id. Missing fields stay empty.
@@ -134,7 +136,8 @@ loader cannot set the authorization header. That token can land in a log, a
 proxy, or an image cache.
 
 `ArtworkRequest` is the native shape: the same address with no `api_key`.
-Phase 3 sends `Session::authorization_header` with it. Availability stays on
+The next native screen that loads artwork sends
+`Session::authorization_header` with it. Login does not. Availability stays on
 `ItemArtwork`; the builders still emit a URL when no tag is present,
 matching `imageUrl`.
 

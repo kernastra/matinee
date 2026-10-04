@@ -74,6 +74,13 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                     TextField::new("disabled-field", "Locked").disabled(true),
                 ))
                 .child(row(
+                    "Secure",
+                    TextField::new("secure-field", "secret")
+                        .masked(true)
+                        .label("Password")
+                        .placeholder("Password"),
+                ))
+                .child(row(
                     "Trailing",
                     TextField::new("trailing-field", value).trailing(IconName::Close, "Clear", {
                         let model = model.clone();

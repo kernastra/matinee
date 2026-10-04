@@ -9,6 +9,13 @@
 //! field is not composing. `on_change` must write the new value back or the
 //! next frame restores the previous one.
 //!
+//! [`TextField::masked`] paints one bullet per Unicode scalar. The controlled
+//! value stays the real text so submission and editing see it. Copy and cut
+//! do nothing in that mode, so the value is not written to the clipboard.
+//! Paste still inserts. This is not an operating-system secure text field
+//! and it does not wipe process memory. The platform input handler can still
+//! read the underlying characters.
+//!
 //! Component metrics: height 30 (aligned with medium buttons), default width
 //! 280, 1px border, 1px caret. A focused field uses a 1px `focus.ring`
 //! border and a caret. It does not draw [`crate::components::FocusRing`]; that ring is reserved
@@ -16,6 +23,7 @@
 
 mod input;
 mod layout;
+mod mask;
 mod render;
 mod state;
 
@@ -27,6 +35,8 @@ use crate::components::{IconName, keybindings::TEXT_FIELD_CONTEXT};
 
 use state::{ChangeHandler, FocusHandler, TrailingHandler};
 
+pub(super) const FIELD_WIDTH: f32 = 280.0;
+
 /// A single-line text field.
 #[derive(gpui::IntoElement)]
 pub struct TextField {
@@ -37,6 +47,9 @@ pub struct TextField {
     pub(in crate::components::text_field) supporting_text: Option<SharedString>,
     pub(in crate::components::text_field) invalid: bool,
     pub(in crate::components::text_field) disabled: bool,
+    pub(in crate::components::text_field) masked: bool,
+    /// `None` stretches the field to the parent's width.
+    pub(in crate::components::text_field) width: Option<f32>,
     pub(in crate::components::text_field) leading_icon: Option<IconName>,
     pub(in crate::components::text_field) trailing_icon: Option<IconName>,
     pub(in crate::components::text_field) trailing_label: Option<SharedString>,
@@ -58,6 +71,8 @@ impl TextField {
             supporting_text: None,
             invalid: false,
             disabled: false,
+            masked: false,
+            width: Some(FIELD_WIDTH),
             leading_icon: None,
             trailing_icon: None,
             trailing_label: None,
@@ -92,6 +107,20 @@ impl TextField {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Paint bullets instead of the characters. The controlled value is unchanged.
+    ///
+    /// Copy and cut are ignored. The characters are not placed on the clipboard.
+    pub fn masked(mut self, masked: bool) -> Self {
+        self.masked = masked;
+        self
+    }
+
+    /// Use the width of the parent instead of the default field width.
+    pub fn fill(mut self) -> Self {
+        self.width = None;
         self
     }
 

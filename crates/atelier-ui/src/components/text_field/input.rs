@@ -266,15 +266,17 @@ impl FieldState {
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
-        if !self.selection.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                self.content[self.selection.clone()].to_string(),
-            ));
+        // A masked field must not place its value on the clipboard.
+        if self.masked || self.selection.is_empty() {
+            return;
         }
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            self.content[self.selection.clone()].to_string(),
+        ));
     }
 
     fn cut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.disabled || self.selection.is_empty() {
+        if self.disabled || self.masked || self.selection.is_empty() {
             return;
         }
         self.copy(cx);

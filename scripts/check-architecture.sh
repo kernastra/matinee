@@ -150,6 +150,26 @@ if matches=$(grep -RIniE 'gpui|atelier' \
   echo "$matches" >&2
 fi
 
+# 10. The native UI does not speak HTTP itself. One application runtime
+#     owns Tokio. Screens do not block on it and do not construct another.
+if matches=$(grep -RInE '\breqwest\b' apps/matinee-next --include='*.rs' --include='Cargo.toml'); then
+  fail "matinee-next must not name reqwest; call matinee-jellyfin on the service runtime:"
+  echo "$matches" >&2
+fi
+# Service crates may build a runtime for their own tests. The UI and the
+# native window may not. The application constructs one in runtime.rs.
+if matches=$(grep -RIn 'tokio::runtime' \
+  apps/matinee-next crates/atelier-ui crates/atelier-app crates/matinee-ui \
+  --include='*.rs' | grep -v '^apps/matinee-next/src/runtime.rs:'); then
+  fail "Tokio runtime setup is owned by apps/matinee-next/src/runtime.rs:"
+  echo "$matches" >&2
+fi
+if matches=$(grep -RInE '\bblock_on\b' \
+  apps/matinee-next crates/atelier-ui crates/atelier-app crates/matinee-ui --include='*.rs'); then
+  fail "block_on in the UI layer:"
+  echo "$matches" >&2
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

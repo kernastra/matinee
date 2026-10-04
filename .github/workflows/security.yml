@@ -1,21 +1,35 @@
 name: Security audit
 
+# Two Rust lockfiles live in this repository. The native workspace is the
+# root Cargo.lock. The shipping app is src-tauri/Cargo.lock. Both are audited.
+# Web dependencies are a third job.
+
 on:
   pull_request:
     paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**/Cargo.toml
+      - apps/**/Cargo.toml
+      - src-tauri/Cargo.toml
+      - src-tauri/Cargo.lock
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
-      - src-tauri/Cargo.toml
-      - src-tauri/Cargo.lock
+      - .github/workflows/security.yml
   push:
     branches: [main]
     paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**/Cargo.toml
+      - apps/**/Cargo.toml
+      - src-tauri/Cargo.toml
+      - src-tauri/Cargo.lock
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
-      - src-tauri/Cargo.toml
-      - src-tauri/Cargo.lock
+      - .github/workflows/security.yml
   schedule:
     - cron: '17 9 * * 1'
   workflow_dispatch:
@@ -38,8 +52,17 @@ jobs:
           node-version: 22
       - run: pnpm audit
 
-  rust:
-    name: Rust dependencies
+  rust-workspace:
+    name: Native v2 Rust workspace dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  rust-tauri:
+    name: Shipping Tauri Rust dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

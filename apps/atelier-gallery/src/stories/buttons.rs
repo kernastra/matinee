@@ -162,8 +162,19 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         .child(example("With icons", "A leading icon sized to the control.", with_icons))
         .child(example("Sizes", "Small, medium, and large share one geometry model.", sizes))
         .child(example(
+            "Full width",
+            "A parent-sized button. Loading can keep the label beside the activity icon.",
+            div().w(px(280.0)).child(
+                Button::new("fill-loading", "Connecting…")
+                    .variant(ButtonVariant::Primary)
+                    .fill()
+                    .loading(true)
+                    .show_label_while_loading(true),
+            ),
+        ))
+        .child(example(
             "States",
-            "Disabled buttons are skipped by Tab; loading buttons keep focus and width but ignore activation.",
+            "Disabled buttons are skipped by Tab. Loading buttons keep focus and ignore activation. A full-width loading button can keep its label visible.",
             states,
         ))
         .into_any_element()
