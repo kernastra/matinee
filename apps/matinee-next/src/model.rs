@@ -142,15 +142,30 @@ impl AppModel {
         self.notice.as_deref()
     }
 
+    /// True while a sign-in request is in flight. The form fields are locked
+    /// to the snapshot that request already owns.
+    pub fn fields_locked(&self) -> bool {
+        self.phase == Phase::Authenticating
+    }
+
     pub fn set_server(&mut self, value: String) {
+        if self.fields_locked() {
+            return;
+        }
         self.server = value;
     }
 
     pub fn set_username(&mut self, value: String) {
+        if self.fields_locked() {
+            return;
+        }
         self.username = value;
     }
 
     pub fn set_password(&mut self, value: String) {
+        if self.fields_locked() {
+            return;
+        }
         self.password.zeroize();
         self.password = value;
     }
@@ -432,7 +447,14 @@ mod tests {
         let mut model = ready_form();
         let request = model.begin_sign_in().unwrap();
         assert_eq!(model.phase(), Phase::Authenticating);
+        assert!(model.fields_locked());
         assert_eq!(model.button_label(), "Connecting…");
+        model.set_server("https://other.example".into());
+        model.set_username("someone-else".into());
+        model.set_password("different-phrase".into());
+        assert_eq!(model.server(), "http://jellyfin.local:8096");
+        assert_eq!(model.username(), "alex");
+        assert_eq!(model.password(), PASSWORD);
         assert!(model.begin_sign_in().is_none(), "duplicate submit");
         assert_eq!(model.phase(), Phase::Authenticating);
         let (server, username, password) = request.into_parts();
@@ -455,7 +477,10 @@ mod tests {
         assert!(model.begin_sign_in().is_some());
         model.apply_sign_in(Err("That username or password was not accepted.".into()));
         assert!(model.shows_login());
+        assert!(!model.fields_locked());
         assert_eq!(model.password(), PASSWORD);
+        model.set_username("jordan".into());
+        assert_eq!(model.username(), "jordan");
         assert_eq!(
             model.notice(),
             Some("That username or password was not accepted.")

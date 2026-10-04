@@ -53,6 +53,9 @@ pub struct MatineeRoot {
     focus: FocusHandle,
     task: Option<JoinHandle<()>>,
     focus_username: bool,
+    /// After sign-in starts, move focus onto the loading button once the
+    /// fields have left the tab order.
+    park_focus: bool,
 }
 
 impl MatineeRoot {
@@ -66,6 +69,7 @@ impl MatineeRoot {
             model,
             focus: cx.focus_handle(),
             task: None,
+            park_focus: false,
         };
         if review.is_none() {
             root.start_restore(cx);
@@ -118,6 +122,7 @@ impl MatineeRoot {
             }
         });
         self.replace_task(task);
+        self.park_focus = true;
         cx.spawn(async move |this, cx| {
             let outcome = rx
                 .await
@@ -182,7 +187,17 @@ impl Render for MatineeRoot {
 
         let theme = cx.theme().clone();
         let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
-        let signing_in = self.model.phase() == Phase::Authenticating;
+        let signing_in = self.model.fields_locked();
+        if signing_in && self.park_focus {
+            self.park_focus = false;
+            // This frame's tab order no longer includes the fields. A focus
+            // id that just disappeared resolves to the first stop (the
+            // window), and the next stop is the loading button.
+            window.on_next_frame(|window, _| {
+                window.focus_next();
+                window.focus_next();
+            });
+        }
 
         div()
             .id("matinee-root")
@@ -279,6 +294,7 @@ impl MatineeRoot {
                             .child(
                                 TextField::new("server", server)
                                     .fill()
+                                    .disabled(signing_in)
                                     .label("Jellyfin server")
                                     .placeholder("http://jellyfin.local:8096")
                                     .on_change({
@@ -301,6 +317,7 @@ impl MatineeRoot {
                             .child(
                                 TextField::new("username", username)
                                     .fill()
+                                    .disabled(signing_in)
                                     .label("Username")
                                     .on_change({
                                         let entity = entity.clone();
@@ -316,6 +333,7 @@ impl MatineeRoot {
                                 TextField::new("password", password)
                                     .fill()
                                     .masked(true)
+                                    .disabled(signing_in)
                                     .label("Password")
                                     .on_change({
                                         let entity = entity.clone();

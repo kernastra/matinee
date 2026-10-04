@@ -84,9 +84,12 @@ Incomplete or invalid text does not warn. The warning does not block submit.
 
 Tab order follows the element tree: server, username, password, Enter
 Matinee. Enter submits when the form can start sign-in. Escape does not
-clear the fields. While `Authenticating`, the fields stay enabled so focus
-is not dropped, the button is `ButtonStatus::Loading` with the label
-“Connecting…”, and a second submit does not start another task.
+clear the fields. While `Authenticating`, the three fields are disabled
+with Atelier’s existing disabled-field behavior, so the visible form cannot
+diverge from the request already in flight. The values stay. Focus moves to
+the loading button, which remains focusable and is not activatable. Its
+label is “Connecting…”. A second submit does not start another task. A
+failed attempt returns the fields to normal editing.
 
 Errors shown beside the form are `JellyfinError`'s `Display` text, or the
 local validation sentence. The UI does not render `context()`, the password,

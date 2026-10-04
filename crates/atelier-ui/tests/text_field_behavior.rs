@@ -4,8 +4,8 @@
 
 use atelier_ui::{ComponentKeymap, TextField, install_component_keybindings, move_focus_forward};
 use gpui::{
-    Context, Entity, IntoElement, Keystroke, ParentElement, Render, SharedString, Styled,
-    TestAppContext, VisualTestContext, Window, div,
+    ClipboardItem, Context, Entity, IntoElement, Keystroke, ParentElement, Render, SharedString,
+    Styled, TestAppContext, VisualTestContext, Window, div,
 };
 
 struct Harness {
@@ -173,5 +173,17 @@ fn masked_entry_keeps_the_value_and_does_not_copy_it(cx: &mut TestAppContext) {
         view.read_with(cx, |this, _| this.value.to_string()),
         "Hi",
         "cut must not remove a masked value"
+    );
+    cx.update(|_window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string("Yo".to_string()));
+    });
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("ctrl-v").unwrap(), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |this, _| this.value.to_string()),
+        "Yo",
+        "paste must insert into a masked field"
     );
 }
