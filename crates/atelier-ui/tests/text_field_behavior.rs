@@ -108,3 +108,70 @@ fn the_field_is_focusable(cx: &mut TestAppContext) {
     let focused = cx.update(|window, cx| window.focused(cx).is_some());
     assert!(focused);
 }
+
+struct SecretHarness {
+    value: SharedString,
+}
+
+impl Render for SecretHarness {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let value = self.value.clone();
+        let entity = cx.entity();
+        div().size_full().flex().items_start().child(
+            TextField::new("secret", value)
+                .masked(true)
+                .on_change(move |value, _, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.value = value;
+                        cx.notify();
+                    });
+                }),
+        )
+    }
+}
+
+#[gpui::test]
+fn masked_entry_keeps_the_value_and_does_not_copy_it(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        install_component_keybindings(
+            cx,
+            &ComponentKeymap {
+                primary: "ctrl",
+                word: "ctrl",
+                emacs_line_keys: false,
+                character_palette: false,
+            },
+        );
+    });
+    let (view, cx) = cx.add_window_view(|_, _| SecretHarness {
+        value: SharedString::default(),
+    });
+    cx.run_until_parked();
+    cx.update(move_focus_forward);
+    cx.run_until_parked();
+    type_chars(cx, "Hi");
+    assert_eq!(view.read_with(cx, |this, _| this.value.to_string()), "Hi");
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("ctrl-a").unwrap(), cx);
+        window.dispatch_keystroke(Keystroke::parse("ctrl-c").unwrap(), cx);
+    });
+    cx.run_until_parked();
+    let copied = cx.update(|_window, cx| {
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default()
+    });
+    assert!(
+        !copied.contains("Hi"),
+        "masked copy must not place the value on the clipboard, got {copied:?}"
+    );
+    cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("ctrl-x").unwrap(), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |this, _| this.value.to_string()),
+        "Hi",
+        "cut must not remove a masked value"
+    );
+}

@@ -21,12 +21,12 @@ use super::{
     TextField,
     input::bind_editing,
     layout::{self, FieldPrepaint, LineStyle},
+    mask::inspection_value,
     state::{FieldState, TrailingHandler},
 };
 
 /// Height aligned with [`crate::components::ButtonSize::Medium`].
 const FIELD_HEIGHT: f32 = 30.0;
-const FIELD_WIDTH: f32 = 280.0;
 const BORDER_WIDTH: f32 = 1.0;
 
 impl RenderOnce for TextField {
@@ -40,6 +40,7 @@ impl RenderOnce for TextField {
         let focused = model.read(cx).focus.is_focused(window) && !self.disabled;
         model.update(cx, |state, cx| {
             state.disabled = self.disabled;
+            state.masked = self.masked;
             state.on_change.clone_from(&self.on_change);
             state.on_focus_change.clone_from(&self.on_focus_change);
             if !self.disabled {
@@ -58,7 +59,7 @@ impl RenderOnce for TextField {
             inspect::report_inspection(Inspection {
                 name: self.inspection_name,
                 focused,
-                value: self.value.to_string(),
+                value: inspection_value(&self.value, self.masked),
             });
         }
 
@@ -96,7 +97,8 @@ impl RenderOnce for TextField {
             .id(self.id.clone())
             .key_context(self.key_context)
             .when(!self.disabled, |this| this.track_focus(&focus_handle))
-            .w(px(FIELD_WIDTH))
+            .when_some(self.width, |this, width| this.w(px(width)))
+            .when(self.width.is_none(), |this| this.w_full().min_w(px(0.0)))
             .h(px(FIELD_HEIGHT))
             .px(Space::S2.px())
             .flex()
@@ -175,6 +177,7 @@ impl RenderOnce for TextField {
             );
 
         v_stack(Space::S1)
+            .when(self.width.is_none(), |this| this.w_full())
             .when_some(self.label, |this, label| {
                 this.child(
                     Text::new(label)

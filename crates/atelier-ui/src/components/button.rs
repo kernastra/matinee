@@ -233,6 +233,7 @@ impl ButtonChrome {
     fn render(
         self,
         width: Option<f32>,
+        fill: bool,
         content: impl IntoElement,
         loading_indicator: Option<Icon>,
         window: &mut Window,
@@ -276,9 +277,15 @@ impl ButtonChrome {
             .items_center()
             .justify_center()
             .h(px(metrics.height))
-            .map(|this| match width {
-                Some(w) => this.w(px(w)),
-                None => this.px(metrics.padding_x.px()),
+            .map(|this| {
+                if fill {
+                    this.w_full()
+                } else {
+                    match width {
+                        Some(w) => this.w(px(w)),
+                        None => this.px(metrics.padding_x.px()),
+                    }
+                }
             })
             .rounded(px(corner_radius))
             .bg(colors.background)
@@ -347,6 +354,9 @@ pub struct Button {
     chrome: ButtonChrome,
     label: SharedString,
     icon: Option<IconName>,
+    fill: bool,
+    /// When loading, keep the label visible and place the activity icon beside it.
+    show_label_while_loading: bool,
 }
 
 impl Button {
@@ -363,6 +373,8 @@ impl Button {
             },
             label: label.into(),
             icon: None,
+            fill: false,
+            show_label_while_loading: false,
         }
     }
 
@@ -396,6 +408,21 @@ impl Button {
         } else if !loading && self.chrome.status == ButtonStatus::Loading {
             self.chrome.status = ButtonStatus::Enabled;
         }
+        self
+    }
+
+    /// Stretch to the width of the parent.
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
+        self
+    }
+
+    /// Show the label next to the activity icon while loading.
+    ///
+    /// Without this, the label stays in the layout at zero opacity and the
+    /// activity icon is centered over it, so the button width does not change.
+    pub fn show_label_while_loading(mut self, show: bool) -> Self {
+        self.show_label_while_loading = show;
         self
     }
 
@@ -434,26 +461,43 @@ impl RenderOnce for Button {
         let metrics = self.chrome.size.metrics();
         let foreground =
             ButtonColors::resolve(cx.theme(), self.chrome.variant, self.chrome.status).foreground;
-        let spinner = (self.chrome.status == ButtonStatus::Loading).then(|| {
+        let loading = self.chrome.status == ButtonStatus::Loading;
+        let spinner = loading.then(|| {
             Icon::new(IconName::Spinner)
                 .size(metrics.icon)
                 .color(foreground)
                 .spinning(true)
         });
+        let show_label = self.show_label_while_loading;
         let content = div()
             .flex()
             .items_center()
             .gap(metrics.gap.px())
-            .when_some(self.icon, |this, icon| {
-                this.child(Icon::new(icon).size(metrics.icon).color(foreground))
+            .when_some(spinner.filter(|_| show_label), |this, spinner| {
+                this.child(spinner)
             })
+            .when_some(
+                self.icon.filter(|_| !(loading && show_label)),
+                |this, icon| this.child(Icon::new(icon).size(metrics.icon).color(foreground)),
+            )
             .child(
                 Text::new(self.label)
                     .role(metrics.text)
                     .color(foreground)
                     .truncate(),
             );
-        self.chrome.render(None, content, spinner, window, cx)
+        let overlay = if loading && !show_label {
+            Some(
+                Icon::new(IconName::Spinner)
+                    .size(metrics.icon)
+                    .color(foreground)
+                    .spinning(true),
+            )
+        } else {
+            None
+        };
+        self.chrome
+            .render(None, self.fill, content, overlay, window, cx)
     }
 }
 
@@ -527,7 +571,7 @@ impl RenderOnce for IconButton {
             ButtonColors::resolve(cx.theme(), self.chrome.variant, self.chrome.status).foreground;
         let content = Icon::new(self.icon).size(metrics.icon).color(foreground);
         self.chrome
-            .render(Some(metrics.height), content, None, window, cx)
+            .render(Some(metrics.height), false, content, None, window, cx)
     }
 }
 

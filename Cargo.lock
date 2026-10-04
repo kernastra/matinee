@@ -3279,7 +3279,12 @@ dependencies = [
  "atelier-app",
  "atelier-ui",
  "matinee-core",
+ "matinee-jellyfin",
+ "matinee-secrets",
  "matinee-ui",
+ "tokio",
+ "url",
+ "zeroize",
 ]
 
 [[package]]

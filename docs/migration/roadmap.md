@@ -53,7 +53,7 @@ Done, without a frame surface, screen migration, or playback:
 
 - `WindowSpec` and per-platform chrome. macOS uses a unified titlebar and native traffic lights. Windows keeps the system caption. Linux keeps server-side decorations.
 - Titlebar insets, geometry restore with off-screen correction, generic fullscreen, macOS Hide / Hide Others / Edit menu.
-- Window Lab (`apps/atelier-window-lab`). `matinee-next` uses the window infrastructure and stays featureless.
+- Window Lab (`apps/atelier-window-lab`). `matinee-next` uses the same window infrastructure. Login arrived in Phase 3A.
 - Still open: a macOS client drag region (GPUI 0.2.2 cannot start one; the system titlebar still moves the window), GNOME Wayland client-side decorations, an About panel.
 
 ## Phase 1D: Native playback foundation (landed)
@@ -112,31 +112,36 @@ the software cap.
   are unchanged. Two new commands feed the calendar UI:
   `fetch_upcoming_releases` and `clear_integration_calendar_cache`.
 - `matinee-jellyfin::persist` can save and load one session through
-  `CredentialStore`. `authenticate` is unchanged. No Login screen uses it.
+  `CredentialStore`. `authenticate` is unchanged.
 
 Phase 2 is structurally complete. The next work is a screen, not another
 service boundary.
 
-## Phase 3: Screens (proposed, screen by screen)
+## Phase 3: Screens
 
-Login → Player (first, since native playback is the main motivation) →
-Details → Home → Library → Search → Calendar → Settings → Poster Studio.
-Each screen ships only after behavioral parity with the reference app,
-including the product rules in `docs/design-spec.md`.
+Login → Player → Details → Home → Library → Search → Calendar → Settings →
+Poster Studio. Each screen ships only after behavioral parity with the
+reference app, including the product rules in `docs/design-spec.md`.
 
-The first screen that calls `matinee-jellyfin` also owns the Tokio runtime.
-The UI framework does not poll `ReqwestTransport` itself:
+**Phase 3A: Native application runtime and Login — landed.**
 
-```text
-GPUI application → application/service runtime → matinee-jellyfin async calls
-```
+- `apps/matinee-next` owns one Tokio service runtime and calls
+  `matinee-jellyfin` there. The UI does not poll `ReqwestTransport`.
+- Startup loads `dev.sean.matinee.jellyfin-session` / `default`. A valid
+  session opens the authenticated shell. No session opens Login. A corrupt
+  payload stays in the vault and Login explains it. A vault failure is
+  visible.
+- Login: server, username, password, Enter Matinee. HTTP warning, masked
+  password, and sign-in errors follow the shipping form. Success saves the
+  session before the shell appears. Sign-out removes it, or stays signed in
+  when removal fails.
+- The signed-in destination is a minimal shell: identity, server, and Sign
+  out. It is not Home.
 
-Calling the production transport from a UI task panics. That adapter is not
-part of Phase 2.
-
-Artwork for that screen uses `ArtworkRequest`: the URL has no `api_key`, and
-the loader sends `Session::authorization_header`. The compatibility builders
-that still put `api_key` on the URL stay until that loader exists.
+Phase 3B and later screens are not started. The next native screen that
+loads artwork uses `ArtworkRequest` and `Session::authorization_header`. The
+compatibility builders that still put `api_key` on the URL stay until that
+loader exists.
 
 ## Phase 4: Distribution and cut-over (proposed)
 

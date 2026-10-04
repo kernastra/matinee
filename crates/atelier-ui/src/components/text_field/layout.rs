@@ -12,6 +12,9 @@ use crate::{
     tokens::{Color, Weight},
 };
 
+use super::mask::{
+    content_to_mask_offset, mask_offset_to_content, masked_glyphs, snap_mask_offset,
+};
 use super::state::FieldState;
 
 const CARET_WIDTH: f32 = 1.0;
@@ -49,7 +52,12 @@ pub(super) fn index_for_position(state: &FieldState, position: Point<Pixels>) ->
         return state.content.len();
     }
     let x = position.x - bounds.left() + px(state.scroll.get());
-    line.closest_index_for_x(x).min(state.content.len())
+    let index = line.closest_index_for_x(x);
+    if state.masked {
+        mask_offset_to_content(&state.content, snap_mask_offset(index))
+    } else {
+        index.min(state.content.len())
+    }
 }
 
 pub(super) fn bounds_for_utf16(
@@ -60,17 +68,27 @@ pub(super) fn bounds_for_utf16(
     let layout = state.layout.borrow();
     let line = layout.as_ref()?;
     let range = editing::range_from_utf16(&state.content, &range_utf16);
+    let start = shaped_index(state, range.start);
+    let end = shaped_index(state, range.end);
     let scroll = px(state.scroll.get());
     Some(Bounds::from_corners(
         point(
-            element_bounds.left() + line.x_for_index(range.start) - scroll,
+            element_bounds.left() + line.x_for_index(start) - scroll,
             element_bounds.top(),
         ),
         point(
-            element_bounds.left() + line.x_for_index(range.end) - scroll,
+            element_bounds.left() + line.x_for_index(end) - scroll,
             element_bounds.bottom(),
         ),
     ))
+}
+
+fn shaped_index(state: &FieldState, content_byte: usize) -> usize {
+    if state.masked {
+        content_to_mask_offset(&state.content, content_byte)
+    } else {
+        content_byte.min(state.content.len())
+    }
 }
 
 pub(super) fn layout_field(
@@ -83,9 +101,12 @@ pub(super) fn layout_field(
     let selected = state.selection.clone();
     let cursor = state.cursor();
     let marked = state.marked.clone();
+    let masked = state.masked;
     let show_placeholder = content.is_empty();
     let display: SharedString = if show_placeholder {
         style.placeholder.clone()
+    } else if masked {
+        masked_glyphs(&content).into()
     } else {
         content.clone()
     };
@@ -108,24 +129,29 @@ pub(super) fn layout_field(
         strikethrough: None,
     };
     let runs = if !show_placeholder && let Some(marked) = marked.as_ref() {
+        let start = shaped_index(state, marked.start).min(display.len());
+        let end = shaped_index(state, marked.end)
+            .max(start)
+            .min(display.len());
         vec![
-            run(marked.start, color, false),
-            run(marked.end.saturating_sub(marked.start), color, true),
-            run(display.len().saturating_sub(marked.end), color, false),
+            run(start, color, false),
+            run(end.saturating_sub(start), color, true),
+            run(display.len().saturating_sub(end), color, false),
         ]
         .into_iter()
         .filter(|run| run.len > 0)
         .collect()
     } else {
-        vec![run(display.len().max(0), color, false)]
+        vec![run(display.len(), color, false)]
     };
+    let stored_text = display.clone();
     let line = window
         .text_system()
         .shape_line(display, px(style.font_size), &runs, None);
 
     let mut scroll = px(state.scroll.get());
     if !show_placeholder {
-        let caret_x = line.x_for_index(cursor.min(content.len()));
+        let caret_x = line.x_for_index(shaped_index(state, cursor));
         if caret_x > scroll + bounds.size.width - px(CARET_WIDTH) {
             scroll = caret_x - bounds.size.width + px(CARET_WIDTH);
         }
@@ -142,7 +168,7 @@ pub(super) fn layout_field(
 
     let (selection, caret) = if style.focused && !style.disabled && !show_placeholder {
         if selected.is_empty() {
-            let x = bounds.left() + line.x_for_index(cursor) - scroll;
+            let x = bounds.left() + line.x_for_index(shaped_index(state, cursor)) - scroll;
             (
                 None,
                 Some(fill(
@@ -154,8 +180,9 @@ pub(super) fn layout_field(
                 )),
             )
         } else {
-            let start = bounds.left() + line.x_for_index(selected.start) - scroll;
-            let end = bounds.left() + line.x_for_index(selected.end) - scroll;
+            let start =
+                bounds.left() + line.x_for_index(shaped_index(state, selected.start)) - scroll;
+            let end = bounds.left() + line.x_for_index(shaped_index(state, selected.end)) - scroll;
             (
                 Some(fill(
                     Bounds::from_corners(point(start, bounds.top()), point(end, bounds.bottom())),
@@ -171,13 +198,13 @@ pub(super) fn layout_field(
     if show_placeholder {
         *state.layout.borrow_mut() = None;
     } else {
-        // Re-shape the content so mouse hit-testing matches the stored line
-        // after this one is moved into prepaint state below.
-        let content_runs = vec![run(content.len(), style.text_color, false)];
+        // Keep the shaped display line for hit testing. A masked field's line
+        // is the bullet string, and `index_for_position` maps back to the value.
+        let stored_runs = vec![run(stored_text.len(), style.text_color, false)];
         let stored =
             window
                 .text_system()
-                .shape_line(content, px(style.font_size), &content_runs, None);
+                .shape_line(stored_text, px(style.font_size), &stored_runs, None);
         *state.layout.borrow_mut() = Some(stored);
     }
     *state.text_bounds.borrow_mut() = Some(bounds);

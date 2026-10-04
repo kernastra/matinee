@@ -134,7 +134,7 @@ The **Advanced** panel exposes the assembled prompt, permits an editable copy or
 
 ## Local-First Scope
 
-Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. The released v0.5.6 app keeps Jellyfin login state session-scoped. The in-progress native v2 backend includes credential-vault primitives for persistent Jellyfin sessions; Radarr, Sonarr, and image-provider secrets are also stored through the operating system credential vault.
+Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. The released v0.5.6 app keeps Jellyfin login state session-scoped. The in-progress native app (`apps/matinee-next`) stores one Jellyfin session in the operating-system credential vault and does not store the password. Radarr, Sonarr, and image-provider secrets use that same vault. The native window is Login and a minimal signed-in shell; it is not a replacement for the released app.
 
 Poster Studio makes one provider request per deliberate generation attempt and never silently retries a rejected image. Codex jobs run in a restricted temporary workspace, successful job files are cleaned up automatically, and failed diagnostics are retained locally for seven days to support troubleshooting.
 
@@ -150,6 +150,7 @@ Poster Studio makes one provider request per deliberate generation attempt and n
 | `pnpm audit:web` | Check shipped web dependencies for known advisories |
 | `pnpm audit:rust` | Check the native dependency graph after installing `cargo-audit` |
 | `pnpm tauri:build` | Build installable desktop bundles for the current platform |
+| `cargo +1.90.0 run -p matinee-next` | Open the in-progress native Login window. Not the usable release. |
 
 The visual direction, component rules, interaction patterns, and Matinee color tokens live in [docs/design-spec.md](docs/design-spec.md). Poster generation uses the machine-readable house style in [`src/data/matinee-poster-style.json`](src/data/matinee-poster-style.json) and the prompt architecture documented in [docs/poster-prompt-templates.md](docs/poster-prompt-templates.md).
 
@@ -180,7 +181,7 @@ docs/
 
 ## Known Limitations
 
-- Login state is stored for the current app session, so a full restart may require signing in again.
+- The released app stores Login state for the current app session, so a full restart may require signing in again. The in-progress native window persists one Jellyfin session in the OS credential vault and still does not store the password.
 - Calendar dates depend on the metadata available in Radarr and Sonarr. A monitored title with no future release or air date will not appear until its upstream metadata is updated.
 - Trailer playback remains unavailable until Jellyfin provides a supported trailer source. The More menu is available for playback, media, watchlist, played-state, progress, and title-copy actions.
 - Chapter navigation works whenever Jellyfin returns chapters; preview artwork requires chapter-image extraction to be enabled and completed on the Jellyfin server.

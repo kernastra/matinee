@@ -4,11 +4,11 @@
 //! [`matinee_core`] types. DTOs stay private. Screens and the player depend
 //! on the domain, not on `Id`, `RunTimeTicks`, or `UserData`.
 //!
-//! [`Session`] is still built in memory by [`authenticate`]. A separate
-//! [`persist`] module can save and load that session through a
-//! [`matinee_secrets::CredentialStore`]. It does not call `keyring` itself,
-//! and it does not read the shipping browser `sessionStorage` entry. No
-//! screen is wired to it yet.
+//! [`Session`] is built in memory by [`authenticate`]. [`persist`] saves and
+//! loads that session through a [`matinee_secrets::CredentialStore`]. It does
+//! not call `keyring` itself, and it does not read the shipping browser
+//! `sessionStorage` entry. The native app calls persist from its service
+//! runtime. This crate does not know about that screen.
 //!
 //! # Device id
 //!
@@ -19,12 +19,10 @@
 //! # HTTP runtime
 //!
 //! [`ReqwestTransport`] must be polled on a Tokio runtime. The owner is the
-//! application service runtime, not this crate and not a UI task. That
-//! runtime is not built yet. The first screen that calls this client creates
-//! it and drives these futures there. Calling [`ReqwestTransport`] from a UI
-//! task panics. Tests substitute [`Transport`] and use
-//! `futures::executor::block_on`. The owner diagram is in the architecture
-//! notes for this client.
+//! application service runtime in `apps/matinee-next`, not this crate and
+//! not a UI task. Calling [`ReqwestTransport`] from a UI task panics. Tests
+//! substitute [`Transport`] and use `futures::executor::block_on`. The owner
+//! diagram is in the architecture notes for this client.
 
 #[cfg(test)]
 mod api_tests;

@@ -15,7 +15,7 @@ Thanks for helping improve Matinee.
 
 ## Architecture
 
-The native migration is intentionally layered. Generic GPUI components belong in Atelier; Matinee-specific UI and domain behavior belong in Matinee crates. Shared service crates must remain independent of Tauri and GPUI unless the architecture documentation explicitly says otherwise.
+The native migration is intentionally layered. Generic GPUI components belong in Atelier; Matinee-specific UI and domain behavior belong in Matinee crates. Shared service crates must remain independent of Tauri and GPUI unless the architecture documentation explicitly says otherwise. `apps/matinee-next` owns the one service runtime that calls `matinee-jellyfin`. Do not poll that client from a UI task.
 
 Start with `docs/architecture/overview.md`, `docs/migration/roadmap.md`, and `docs/design-spec.md` before making broad architectural or visual changes.
 

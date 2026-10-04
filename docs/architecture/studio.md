@@ -8,7 +8,8 @@ handle (home, app data, and the Pictures directory when it exists) and calls
 
 The application polls `ReqwestStudio` and `TokioProcess` on a Tokio runtime
 this crate does not create. Shipping Tauri already has that runtime. A
-future GPUI app uses the Phase 3 application runtime.
+native app (`apps/matinee-next`) owns that runtime for Login. Poster Studio
+is not called from it.
 
 ## Credentials and providers
 
