@@ -64,6 +64,24 @@ fn paint_mark(pixels: &mut [u8], width: u32, preview: PlayerPreview) {
     }
 }
 
+fn fill_rect(pixels: &mut [u8], width: u32, x: i32, y: i32, w: i32, h: i32) {
+    let height = pixels.len() / (width as usize * 4);
+    for dy in 0..h {
+        for dx in 0..w {
+            let px = x + dx;
+            let py = y + dy;
+            if px < 0 || py < 0 || px >= width as i32 || py >= height as i32 {
+                continue;
+            }
+            let index = ((py as u32 * width + px as u32) * 4) as usize;
+            pixels[index] = 232;
+            pixels[index + 1] = 214;
+            pixels[index + 2] = 176;
+            pixels[index + 3] = 0xff;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,24 +97,6 @@ mod tests {
             PlayerPreview::SubtitleMenu,
         ] {
             let _ = fixture_frame(scene);
-        }
-    }
-}
-
-fn fill_rect(pixels: &mut [u8], width: u32, x: i32, y: i32, w: i32, h: i32) {
-    let height = pixels.len() / (width as usize * 4);
-    for dy in 0..h {
-        for dx in 0..w {
-            let px = x + dx;
-            let py = y + dy;
-            if px < 0 || py < 0 || px >= width as i32 || py >= height as i32 {
-                continue;
-            }
-            let index = ((py as u32 * width + px as u32) * 4) as usize;
-            pixels[index] = 232;
-            pixels[index + 1] = 214;
-            pixels[index + 2] = 176;
-            pixels[index + 3] = 0xff;
         }
     }
 }
