@@ -1,8 +1,8 @@
 //! Native Matinee application.
 //!
 //! The GPUI window talks to one service runtime. That runtime owns Jellyfin
-//! HTTP and vault work. Login is the first screen. Library screens are not
-//! in this crate yet.
+//! HTTP, playback reporting, and vault work. Login and the Player are the
+//! screens in this crate. Home and the other library screens are not.
 //!
 //! # Artwork
 //!
@@ -12,6 +12,7 @@
 //! runtime. Do not put `api_key` back on artwork URLs.
 
 mod model;
+mod player;
 mod runtime;
 mod session;
 mod store;
@@ -63,6 +64,12 @@ fn review_scene() -> Option<ReviewScene> {
         Some("error") => Some(ReviewScene::Error),
         Some("loading") => Some(ReviewScene::Loading),
         Some("shell") => Some(ReviewScene::Shell),
+        Some("player-playing") => Some(ReviewScene::PlayerPlaying),
+        Some("player-paused") => Some(ReviewScene::PlayerPaused),
+        Some("player-controls") => Some(ReviewScene::PlayerControls),
+        Some("player-error") => Some(ReviewScene::PlayerError),
+        Some("player-audio") => Some(ReviewScene::PlayerAudio),
+        Some("player-subtitles") => Some(ReviewScene::PlayerSubtitles),
         _ => None,
     }
 }

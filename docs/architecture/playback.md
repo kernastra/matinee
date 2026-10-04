@@ -1,7 +1,8 @@
 # Native playback
 
-Status: **Phase 1D foundation**. The Matinee Player screen is not built.
-Jellyfin login, Home, and Library are not built. Packaging is not built.
+Status: **Phase 3B**. The native Player screen lives in `apps/matinee-next`.
+The playback engine is still the Phase 1D `matinee-player`. Home, Details,
+and the other library screens are not built. Packaging is not built.
 
 The feasibility spike (not merged) established the engine choice and the
 cost of a software frame. This document is the production design. New
@@ -10,16 +11,19 @@ playback findings belong here.
 ## Path
 
 ```
-future domain (Jellyfin URL) → matinee-player → libmpv
+Session → item → playback info → PlaybackPlan
+        → direct / remux / transcode URL
+        → matinee-player → libmpv
         → render thread → latest CPU frame
-        → app adapter → atelier ExternalFrameSurface → GPUI
+        → apps/matinee-next → atelier ExternalFrameSurface → GPUI
 ```
 
 `matinee-player` loads a URL and returns a [`Snapshot`] plus BGRA frames.
 It does not depend on GPUI, Atelier, or `matinee-ui`. `atelier-ui` paints
 an externally produced BGRA picture. It does not know about codecs, clocks,
-streams, or Matinee. The only adapter is `apps/matinee-playback-lab`, which
-turns a `CpuFrame` into a `BgraFrame` and publishes it.
+streams, or Matinee. `apps/matinee-next` is the Player adapter.
+`apps/matinee-playback-lab` remains a harness for the same engine. It is
+not the Player screen.
 
 Audio stays inside libmpv. There is no Atelier audio layer. Subtitles are
 drawn by libmpv (libass into the frame). The UI does not lay out subtitle text.
@@ -133,8 +137,9 @@ thread that calls the client API, except `mpv_wakeup`.
   callback wakes it. It renders into a 64-byte-aligned CPU buffer, forces
   opaque BGRA, and publishes to a one-slot mailbox. It does not call
   `get_property`. The owner publishes the target size.
-- The mailbox listener may only signal another thread. The lab wakes its
-  UI task, and that task takes the frame and publishes to Atelier.
+- The mailbox listener may only signal another thread. The lab and the
+  Player wake a UI task, and that task takes the frame and publishes to
+  Atelier. The Player does not poll frames on the animation clock.
 - Shutdown sends `Shutdown`, pokes the owner, joins the render thread
   (which frees the render context), then drops the handle
   (`mpv_terminate_destroy`), then unloads the library. Drop of `Player`
@@ -155,9 +160,11 @@ Search order:
    `mpv-2.dll`, then `libmpv.dll`.
 
 Client API major must be 2. Anything else is `LibraryIncompatible`. A
-missing library is `LibraryMissing`. `matinee-next` does not open a player,
-so the shell still launches when playback is unavailable. The lab shows the
-typed error and stays open.
+missing library is `LibraryMissing`. `matinee-next` opens a player only
+after a playback plan succeeds. `LibraryMissing` and
+`LibraryIncompatible` stay on the Player as an error, and the shell is
+still reachable. Packaging the library is Phase 4. The lab shows the typed
+error and stays open.
 
 Development machines and Linux CI may use the distro package. Ubuntu's
 libmpv and FFmpeg are GPL builds. They are for tests only and must not be
@@ -253,6 +260,16 @@ Source: generated 1920×1080 H.264 at 24 fps, local file, direct play.
 | Replaced before present | 0 | 0 |
 
 The lab presented every produced frame across the sampled seconds, paused, seeked, and resumed. A separate 3840×2160 software render, not uploaded, averaged 8.88 ms plus 1.71 ms to force alpha. That is inside a 24 fps budget on this host before any GPU upload. It is not a 4K production result: the surface still refuses frames above the 1080p cap, and the earlier spike measured about 36 ms for the same class of work. 1080p is the target.
+
+## Native Player
+
+Phase 3B's screen is `apps/matinee-next`. Ownership, the plan path,
+authorization headers, reporting, and cleanup are in
+[application.md](application.md). The screen uses this engine and
+`ExternalFrameSurface` with `ImageFit::Fit`. It does not add a playback
+backend, a GPU path, or a GPUI subtitle renderer. The 1080p software cap
+still applies. A source outside the playback profile is transcoded by
+Jellyfin. libmpv packaging remains Phase 4.
 
 ## Known limits
 

@@ -138,10 +138,28 @@ reference app, including the product rules in `docs/design-spec.md`.
 - The signed-in destination is a minimal shell: identity, server, and Sign
   out. It is not Home.
 
-Phase 3B and later screens are not started. The next native screen that
+**Phase 3B: Native Player — landed.**
+
+- The authenticated shell has a temporary item-ID entry. It is not Home or
+  Details. No server address, user ID, media ID, token, or library name is
+  hard-coded.
+- `PlayerModel` owns playback state. `PlayerScreen` paints it. The engine
+  is the existing `matinee-player`. Frames go through `ExternalFrameSurface`
+  with latest-frame-wins and `ImageFit::Fit`.
+- The plan path is Session → item → `playback_plan` → DirectPlay, remux, or
+  Transcode. `NoCompatibleSource` does not invent a URL. Stream auth uses
+  `LoadRequest` headers. The token is not painted.
+- Resume uses the plan start and the shipping 30-second completion tail.
+  Reports are start, progress on pause/resume/seek, progress every 10
+  seconds while playing, and stop on completion or close. A failed report
+  is a notice.
+- A missing libmpv is an error state. Packaging remains Phase 4. The
+  software frame path stays capped at 1080p.
+
+Phase 3C and later screens are not started. The next native screen that
 loads artwork uses `ArtworkRequest` and `Session::authorization_header`. The
 compatibility builders that still put `api_key` on the URL stay until that
-loader exists.
+loader exists. The Player does not load artwork.
 
 ## Phase 4: Distribution and cut-over (proposed)
 

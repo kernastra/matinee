@@ -1,4 +1,4 @@
-//! Native window: startup, Login, and the minimal authenticated shell.
+//! Native window: startup, Login, the authenticated shell, and the Player.
 //!
 //! The view asks the service runtime to do vault and HTTP work, then applies
 //! the result to [`crate::model::AppModel`]. It does not poll HTTP futures.
@@ -15,11 +15,14 @@ use matinee_secrets::{KeyringStore, MemoryStore};
 use matinee_ui::palette::FADED_TEAL;
 use tokio::task::JoinHandle;
 
+use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen};
 use crate::runtime::ServiceRuntime;
 use crate::session::{accept_authentication, forget_session, restore_session};
 use crate::store::SharedStore;
 
-use crate::model::{AppModel, LOGIN_COPY, MIGRATION_NOTE, Phase, ReviewScene};
+use crate::model::{
+    AppModel, LOGIN_COPY, MIGRATION_NOTE, PLAYER_ENTRY, PLAYER_ENTRY_NOTE, Phase, ReviewScene,
+};
 
 #[derive(Clone)]
 pub struct Services {
@@ -56,23 +59,38 @@ pub struct MatineeRoot {
     /// After sign-in starts, move focus onto the loading button once the
     /// fields have left the tab order.
     park_focus: bool,
+    player: Option<Entity<PlayerScreen>>,
+    focus_player: bool,
 }
 
 impl MatineeRoot {
-    fn new(services: Services, review: Option<ReviewScene>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        services: Services,
+        review: Option<ReviewScene>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let model = review
             .map(AppModel::review)
             .unwrap_or_else(AppModel::starting);
+        let player = review.and_then(ReviewScene::player_preview).map(|scene| {
+            cx.new(|cx| PlayerScreen::preview(Arc::clone(&services.runtime), scene, window, cx))
+        });
         let mut root = Self {
             services,
             focus_username: review == Some(ReviewScene::Focus),
+            focus_player: player.is_some(),
             model,
             focus: cx.focus_handle(),
             task: None,
             park_focus: false,
+            player,
         };
         if review.is_none() {
             root.start_restore(cx);
+        }
+        if let Some(player) = root.player.clone() {
+            root.watch_player(&player, cx);
         }
         root
     }
@@ -142,6 +160,7 @@ impl MatineeRoot {
         if !self.model.begin_sign_out() {
             return;
         }
+        self.player = None;
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -165,6 +184,41 @@ impl MatineeRoot {
         .detach();
         cx.notify();
     }
+
+    fn open_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item_id) = self.model.begin_playback() else {
+            cx.notify();
+            return;
+        };
+        let Some(session) = self.model.session().cloned() else {
+            return;
+        };
+        let player = cx.new(|cx| {
+            PlayerScreen::open(
+                Arc::clone(&self.services.runtime),
+                session,
+                item_id,
+                window,
+                cx,
+            )
+        });
+        self.watch_player(&player, cx);
+        window.focus(player.read(cx).focus_handle());
+        self.player = Some(player);
+        cx.notify();
+    }
+
+    fn watch_player(&self, player: &Entity<PlayerScreen>, cx: &mut Context<Self>) {
+        cx.subscribe(player, |this, _, _: &LeavePlayer, cx| {
+            this.player = None;
+            cx.notify();
+        })
+        .detach();
+    }
+
+    fn close_player(&mut self) {
+        self.player = None;
+    }
 }
 
 impl Drop for MatineeRoot {
@@ -184,10 +238,25 @@ impl Render for MatineeRoot {
                 window.focus_next();
             });
         }
+        if self.focus_player {
+            self.focus_player = false;
+            let menu_open = self
+                .player
+                .as_ref()
+                .is_some_and(|player| player.read(cx).menu_open());
+            if !menu_open && let Some(player) = self.player.clone() {
+                let focus = player.read(cx).focus_handle().clone();
+                window.on_next_frame(move |window, _| {
+                    window.focus(&focus);
+                });
+            }
+        }
 
         let theme = cx.theme().clone();
         let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
         let signing_in = self.model.fields_locked();
+        let playing = self.player.is_some();
+        let fullscreen = window.is_fullscreen();
         if signing_in && self.park_focus {
             self.park_focus = false;
             // This frame's tab order no longer includes the fields. A focus
@@ -208,26 +277,51 @@ impl Render for MatineeRoot {
             .font_family(theme.typography.families.interface)
             .text_color(theme.colors.text.primary)
             .track_focus(&self.focus)
-            .on_key_down(on_fullscreen_escape)
-            .on_key_down(cx.listener(|this, event, _window, cx| {
+            .on_key_down(cx.listener(|this, event, window, cx| {
+                if this.player.is_some() {
+                    let outcome = this
+                        .player
+                        .as_ref()
+                        .map(|player| {
+                            player.update(cx, |player, cx| player.on_key(event, window, cx))
+                        })
+                        .unwrap_or(KeyOutcome::Ignored);
+                    if matches!(outcome, KeyOutcome::Leave) {
+                        this.close_player();
+                        cx.notify();
+                    }
+                    return;
+                }
                 if plain_enter(event) && this.model.shows_login() {
                     this.start_sign_in(cx);
                 }
+                on_fullscreen_escape(event, window, cx);
             }))
-            .child(atmosphere(&theme))
+            .when(!playing, |root| root.child(atmosphere(&theme)))
             .child(
                 v_stack(Space::S0)
                     .size_full()
-                    .when(chrome.band_height > 0.0, |column| {
-                        column.child(titlebar(&theme, chrome))
-                    })
-                    .child(
+                    .when(
+                        chrome.band_height > 0.0 && !(playing && fullscreen),
+                        |column| column.child(titlebar(&theme, chrome)),
+                    )
+                    .child(if playing {
+                        div()
+                            .id("matinee-player-slot")
+                            .flex_1()
+                            .w_full()
+                            .min_h(px(0.0))
+                            .overflow_hidden()
+                            .child(self.player.clone().unwrap())
+                            .into_any_element()
+                    } else {
                         ScrollView::vertical("matinee-scroll")
                             .flex_1()
                             .w_full()
                             .min_h(px(0.0))
-                            .child(self.body(window, chrome.band_height, signing_in, cx)),
-                    ),
+                            .child(self.body(window, chrome.band_height, signing_in, cx))
+                            .into_any_element()
+                    }),
             )
     }
 }
@@ -381,10 +475,12 @@ impl MatineeRoot {
         let notice = self.model.notice().map(str::to_string);
         let signing_out = self.model.phase() == Phase::SigningOut;
         let label = self.model.button_label();
+        let item_id = self.model.item_id().to_string();
+        let entity = cx.entity();
 
         Surface::new(SurfaceLevel::Elevated)
             .padding(Space::S8)
-            .w(px(420.0))
+            .w(px(460.0))
             .child(
                 v_stack(Space::S4)
                     .w_full()
@@ -399,6 +495,43 @@ impl MatineeRoot {
                         Text::new(MIGRATION_NOTE)
                             .role(TextRole::Body)
                             .tone(TextTone::Muted),
+                    )
+                    .child(
+                        v_stack(Space::S2)
+                            .w_full()
+                            .child(
+                                Text::new(PLAYER_ENTRY)
+                                    .role(TextRole::Label)
+                                    .color(theme.colors.control.accent),
+                            )
+                            .child(
+                                Text::new(PLAYER_ENTRY_NOTE)
+                                    .role(TextRole::Caption)
+                                    .tone(TextTone::Muted),
+                            )
+                            .child(
+                                TextField::new("item-id", item_id)
+                                    .fill()
+                                    .disabled(signing_out)
+                                    .label("Item ID")
+                                    .on_change({
+                                        let entity = entity.clone();
+                                        move |value, _, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.model.set_item_id(value.to_string());
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
+                            )
+                            .child(
+                                Button::new("play-item", "Play")
+                                    .variant(ButtonVariant::Primary)
+                                    .disabled(signing_out)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_player(window, cx);
+                                    })),
+                            ),
                     )
                     .when_some(notice, |stack, notice| {
                         stack.child(
@@ -501,7 +634,7 @@ pub fn open_matinee(
             .restoration_key("matinee"),
         move |window, cx| {
             cx.new(|cx| {
-                let root = MatineeRoot::new(services, review, cx);
+                let root = MatineeRoot::new(services, review, window, cx);
                 window.focus(&root.focus);
                 root
             })

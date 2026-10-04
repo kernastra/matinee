@@ -3278,8 +3278,10 @@ version = "0.0.0"
 dependencies = [
  "atelier-app",
  "atelier-ui",
+ "futures",
  "matinee-core",
  "matinee-jellyfin",
+ "matinee-player",
  "matinee-secrets",
  "matinee-ui",
  "tokio",

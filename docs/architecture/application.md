@@ -1,8 +1,9 @@
 # Native application
 
 `apps/matinee-next` is the native Matinee window. Phase 3A gives it one
-service runtime, Login, and a minimal authenticated shell. It is not Home,
-Player, or any other library screen.
+service runtime, Login, and a minimal authenticated shell. Phase 3B adds
+the Player on that same runtime. It is not Home, Details, Library, Search,
+Calendar, Settings, or Poster Studio.
 
 The shipping Tauri app remains the usable reference. This binary does not
 replace it.
@@ -13,9 +14,18 @@ replace it.
 GPUI window
   → AppModel (Starting, Unauthenticated, Authenticating, Authenticated, SigningOut)
   → ServiceRuntime (one Tokio runtime)
-  → matinee-jellyfin (ReqwestTransport, persist)
+  → matinee-jellyfin (ReqwestTransport, persist, playback plan, reports)
   → matinee-secrets (KeyringStore in production, MemoryStore in tests and review)
+  → PlayerModel + PlayerScreen
+       → matinee-player (existing engine; no second backend)
+       → ExternalFrameSurface
 ```
+
+`PlayerModel` in `apps/matinee-next` is the playback model. `PlayerScreen`
+paints it and forwards input. The GPUI view does not choose a source, invent
+a URL, or decide when to report. `matinee-player`, `matinee-jellyfin`, and
+`matinee-core` do not depend on GPUI. Atelier does not know about Jellyfin
+or playback plans.
 
 GPUI does not poll `reqwest` futures, call `block_on`, or construct a Tokio
 runtime. `scripts/check-architecture.sh` rejects those patterns. The only
@@ -117,11 +127,80 @@ is shown and the phase returns to `Authenticated` with the same session.
 `SigningOut` is only the in-flight removal. It is not another screen.
 
 The shell shows Matinee, “Connected as &lt;username&gt;”, the server, Sign
-out, and a note that native library screens are still being migrated. It
-does not render the access token.
+out, and a temporary playback entry. The entry is labeled temporary Phase
+3B infrastructure. It takes a Jellyfin item ID typed by the person at the
+keyboard. It does not embed a server address, user ID, media ID, token, or
+library name. An empty field asks for an item ID. An ID `ItemId` cannot
+parse is rejected before any request. The shell does not render the access
+token.
+
+## Player
+
+Opening the Player from the shell:
+
+1. `item_details` and `playback_plan` run on `ServiceRuntime`. Source
+   selection stays in `matinee-jellyfin`: valid DirectPlay, then genuine
+   DirectStream/remux, then Transcode, otherwise typed `NoCompatibleSource`.
+   The Player does not invent a fallback URL.
+2. `Player::open` uses the existing `matinee-player` engine. A missing or
+   incompatible libmpv becomes an error on the Player. Packaging that
+   library remains Phase 4. The rest of the application stays usable.
+3. `set_frame_listener` only sends on a channel. The listener does not
+   render GPUI, mutate entities, call back into `Player`, or block. A GPUI
+   task then `take_frame`s and publishes the newest BGRA frame to
+   `ExternalFrameSurface`. The mailbox keeps one unpublished frame.
+4. `LoadRequest` carries the plan URL with credential query pairs removed,
+   the resume start, and `Authorization` from `Session::authorization_header`
+   when the plan's `StreamAuthorization` is `Session`. The header is built
+   at load time and is not stored on `PlayerModel`. The access token is not
+   painted or logged.
+5. After the file loads, the model sends play and a start report.
+
+Leaving the Player, including window close and sign-out, reports stop when
+playback had started, stops the engine, aborts the progress timer, and
+drops `Player`. Drop joins the engine's owner and render threads. The final
+stop report is spawned on the same `ServiceRuntime` and is not aborted with
+the screen's other tasks. There is no second Tokio runtime.
+
+Resume follows the shipping player. A zero position starts at the beginning.
+A position inside the last 30 seconds of a known runtime starts over. If the
+runtime is unknown, the file is loaded at the resume point and seeked to
+the start once duration shows the position is inside that tail.
+
+Reports use `ReportKind` and `PlaybackReport` through `JellyfinClient` on
+the service runtime. Start is sent once when the file loads. Progress is
+sent immediately on pause, resume, and seek, and every 10 seconds of wall
+time while the snapshot is `Playing`. The cadence timer is
+`ServiceRuntime::interval` and is aborted when the Player closes. Stop is
+sent on natural completion and on close. A failed report is a notice. It
+does not stop playback or crash the process. Scrubber seeks are throttled
+to one engine seek per 200 ms while the pointer is moving, and one progress
+report after the pointer settles. Keyboard seeks report immediately.
+
+Controls sit on the picture: title and episode context, timeline, position,
+duration, play/pause, ±10 seconds, volume, mute, audio, subtitles,
+fullscreen, and Back. Fullscreen is `Window::toggle_fullscreen` from Phase
+1C. Escape closes an open track menu, then leaves fullscreen, then returns
+to the shell. Space, Left, Right, Up, and Down apply when the video surface
+is focused and no menu is open. M and F apply when no menu is open. A
+focused button, slider, or menu keeps its own keys. Controls show on
+pointer and keyboard activity, hide after 5 seconds while playing, and stay
+visible while paused, buffering, loading, ended, failed, hovered, or while
+a menu is open. Show and hide are instant.
+
+Audio and subtitle rows come from `Snapshot` and use Matinee `TrackId`s.
+Labels use title and language. Subtitles are drawn by libmpv into the
+frame. Off sets the reported subtitle index to `-1`. Selecting another
+subtitle or audio track does not invent a Jellyfin stream index from the
+engine id; the negotiated index stays until Off.
+
+The picture uses `ImageFit::Fit` at the window's content size, including
+960×620, 1200×760, 1440×900, and fullscreen. The software path remains the
+1080p BGRA cap documented in [playback.md](playback.md). This screen does
+not load poster or backdrop artwork.
 
 ## Artwork
 
-Login does not load artwork. The next native screen that does must build
-`ArtworkRequest` and send `Session::authorization_header` from the service
-runtime. Do not put `api_key` back on those URLs.
+Login and the Player do not load artwork. The next native screen that does
+must build `ArtworkRequest` and send `Session::authorization_header` from
+the service runtime. Do not put `api_key` back on those URLs.

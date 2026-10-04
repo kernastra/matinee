@@ -16,6 +16,8 @@ use crate::warning::insecure_http_warning;
 
 pub(crate) const LOGIN_COPY: &str = "Connect to your Jellyfin server to browse your library and pick up exactly where you left off.";
 pub(crate) const MIGRATION_NOTE: &str = "Native library screens are still being migrated.";
+pub(crate) const PLAYER_ENTRY: &str = "Temporary playback entry";
+pub(crate) const PLAYER_ENTRY_NOTE: &str = "Phase 3B infrastructure. Paste an item ID from this server. Home and Details are not here yet.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -64,6 +66,31 @@ pub enum ReviewScene {
     Error,
     Loading,
     Shell,
+    PlayerPlaying,
+    PlayerPaused,
+    PlayerControls,
+    PlayerError,
+    PlayerAudio,
+    PlayerSubtitles,
+}
+
+impl ReviewScene {
+    pub(crate) fn player_preview(self) -> Option<crate::player::PlayerPreview> {
+        match self {
+            Self::PlayerPlaying => Some(crate::player::PlayerPreview::Playing),
+            Self::PlayerPaused => Some(crate::player::PlayerPreview::Paused),
+            Self::PlayerControls => Some(crate::player::PlayerPreview::Controls),
+            Self::PlayerError => Some(crate::player::PlayerPreview::Error),
+            Self::PlayerAudio => Some(crate::player::PlayerPreview::AudioMenu),
+            Self::PlayerSubtitles => Some(crate::player::PlayerPreview::SubtitleMenu),
+            Self::Login
+            | Self::Focus
+            | Self::Warning
+            | Self::Error
+            | Self::Loading
+            | Self::Shell => None,
+        }
+    }
 }
 
 pub struct AppModel {
@@ -73,6 +100,7 @@ pub struct AppModel {
     server: String,
     username: String,
     password: String,
+    item_id: String,
 }
 
 impl AppModel {
@@ -104,7 +132,13 @@ impl AppModel {
                 model.username = "alex".into();
                 model.phase = Phase::Authenticating;
             }
-            ReviewScene::Shell => {
+            ReviewScene::Shell
+            | ReviewScene::PlayerPlaying
+            | ReviewScene::PlayerPaused
+            | ReviewScene::PlayerControls
+            | ReviewScene::PlayerError
+            | ReviewScene::PlayerAudio
+            | ReviewScene::PlayerSubtitles => {
                 model.apply_startup(Startup::Authenticated(review_session()));
             }
         }
@@ -119,6 +153,44 @@ impl AppModel {
             server: String::new(),
             username: String::new(),
             password: String::new(),
+            item_id: String::new(),
+        }
+    }
+
+    pub(crate) fn session(&self) -> Option<&Session> {
+        self.session.as_ref()
+    }
+
+    pub(crate) fn item_id(&self) -> &str {
+        &self.item_id
+    }
+
+    pub(crate) fn set_item_id(&mut self, value: String) {
+        if self.phase != Phase::Authenticated {
+            return;
+        }
+        self.item_id = value;
+    }
+
+    /// Open the temporary player entry, or explain why the id cannot be used.
+    pub(crate) fn begin_playback(&mut self) -> Option<matinee_core::ItemId> {
+        if self.phase != Phase::Authenticated {
+            return None;
+        }
+        let trimmed = self.item_id.trim();
+        if trimmed.is_empty() {
+            self.notice = Some("Enter an item ID.".into());
+            return None;
+        }
+        match matinee_core::ItemId::parse(trimmed) {
+            Ok(id) => {
+                self.notice = None;
+                Some(id)
+            }
+            Err(_) => {
+                self.notice = Some("That item ID cannot be used.".into());
+                None
+            }
         }
     }
 
@@ -318,6 +390,11 @@ impl AppModel {
                     lines.push(identity.server);
                 }
                 lines.push(MIGRATION_NOTE.into());
+                lines.push(PLAYER_ENTRY.into());
+                lines.push(PLAYER_ENTRY_NOTE.into());
+                lines.push("Item ID".into());
+                lines.push(self.item_id.clone());
+                lines.push("Play".into());
                 lines.push(self.button_label().into());
                 if let Some(notice) = &self.notice {
                     lines.push(notice.clone());
@@ -343,6 +420,7 @@ impl fmt::Debug for AppModel {
             .field("username", &self.username)
             .field("password", &"[redacted]")
             .field("notice", &self.notice)
+            .field("item_id", &self.item_id)
             .field("session", &self.session)
             .finish()
     }
@@ -585,6 +663,12 @@ mod tests {
             ReviewScene::Error,
             ReviewScene::Loading,
             ReviewScene::Shell,
+            ReviewScene::PlayerPlaying,
+            ReviewScene::PlayerPaused,
+            ReviewScene::PlayerControls,
+            ReviewScene::PlayerError,
+            ReviewScene::PlayerAudio,
+            ReviewScene::PlayerSubtitles,
         ] {
             let model = AppModel::review(scene);
             let rendered = model.visible_lines().join("\n");
@@ -602,6 +686,23 @@ mod tests {
             error.notice(),
             Some("That username or password was not accepted.")
         );
+    }
+
+    #[test]
+    fn playback_entry_requires_a_usable_item_id() {
+        let mut model = AppModel::starting();
+        model.apply_startup(Startup::Authenticated(sample_session()));
+        assert!(model.begin_playback().is_none());
+        assert_eq!(model.notice(), Some("Enter an item ID."));
+        model.set_item_id("nope/../secret".into());
+        assert!(model.begin_playback().is_none());
+        assert_eq!(model.notice(), Some("That item ID cannot be used."));
+        model.set_item_id("item-1".into());
+        assert_eq!(model.begin_playback().unwrap().as_str(), "item-1");
+        assert!(model.notice().is_none());
+        let lines = model.visible_lines().join("\n");
+        assert!(lines.contains(PLAYER_ENTRY));
+        assert!(!lines.contains(TOKEN));
     }
 
     #[test]
