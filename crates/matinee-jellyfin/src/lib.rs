@@ -49,6 +49,7 @@ pub use auth::{Password, authenticate};
 pub use client::JellyfinClient;
 pub use error::JellyfinError;
 pub use persist::{SESSION_ACCOUNT, SESSION_NAMESPACE, load_session, remove_session, save_session};
+pub use redact::redact_freeform;
 pub use session::{ServerInfo, Session};
 pub use transport::{
     CancelFlag, HttpRequest, HttpResponse, Method, ReqwestTransport, Transport, TransportError,

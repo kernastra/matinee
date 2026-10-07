@@ -157,7 +157,7 @@ Opening the Player from the shell:
 5. After the file loads, the model sends play and a start report.
 
 Leaving the Player, including window close and sign-out, reports stop when
-playback had started, stops the engine, aborts the progress timer, and
+playback had started, stops the engine, aborts in-flight requests, and
 drops `Player`. Drop joins the engine's owner and render threads. The final
 stop report is spawned on the same `ServiceRuntime` and is not aborted with
 the screen's other tasks. There is no second Tokio runtime.
@@ -170,12 +170,22 @@ the start once duration shows the position is inside that tail.
 Reports use `ReportKind` and `PlaybackReport` through `JellyfinClient` on
 the service runtime. Start is sent once when the file loads. Progress is
 sent immediately on pause, resume, and seek, and every 10 seconds of wall
-time while the snapshot is `Playing`. The cadence timer is
-`ServiceRuntime::interval` and is aborted when the Player closes. Stop is
-sent on natural completion and on close. A failed report is a notice. It
-does not stop playback or crash the process. Scrubber seeks are throttled
-to one engine seek per 200 ms while the pointer is moving, and one progress
-report after the pointer settles. Keyboard seeks report immediately.
+time while the snapshot is `Playing`. The cadence is checked on the
+Player's 250 ms UI tick, so there is no second timer to drift against the
+last report. Stop is sent on natural completion and on close. Pressing Play
+after the end rewinds and starts a new Start/Stop pair. A failed report is
+a notice until the next report succeeds. It does not stop playback or crash
+the process. All reports share one `JellyfinClient` per Player.
+
+Scrubber seeks are throttled to one engine seek per 200 ms while the
+pointer is moving. Keyboard seeks become absolute targets. Either way the
+clock and the report show the target until the engine reaches it, and one
+progress report is sent 200 ms after the last seek. Play and pause hold
+their requested state until a snapshot agrees, so a stale snapshot does
+not send a contradicting report. Audio and subtitle changes update the
+reported Jellyfin stream index when the engine's track list matches
+Jellyfin's; otherwise the index is omitted. A command the engine rejects
+because the snapshot moved on (`InvalidCommand`) is ignored, not fatal.
 
 Controls sit on the picture: title and episode context, timeline, position,
 duration, play/pause, ±10 seconds, volume, mute, audio, subtitles,

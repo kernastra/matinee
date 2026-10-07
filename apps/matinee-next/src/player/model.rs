@@ -8,13 +8,21 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use matinee_core::{
-    ItemId, MediaSourceId, PlaySessionId, PlaybackMethod, PlaybackPlan, PlaybackReport, ReportKind,
-    StreamAuthorization,
+    ItemId, MediaSourceId, MediaStream, PlaySessionId, PlaybackMethod, PlaybackPlan,
+    PlaybackReport, ReportKind, StreamAuthorization,
 };
+use matinee_jellyfin::redact_freeform as redact_message;
 use matinee_player::{PlaybackState, PlayerEvent, Snapshot, Track, TrackId, TrackKind};
 
-use super::prepare::{redact_message, resume_start, strip_credential_query};
+use super::prepare::resume_start;
 use super::{COMPLETED_TAIL, CONTROLS_IDLE, PROGRESS_INTERVAL, SEEK_THROTTLE};
+
+/// How long a requested play or pause, or a seek target, outranks a snapshot
+/// that has not caught up yet. Engine commands are applied asynchronously.
+const COMMAND_SETTLE: Duration = Duration::from_millis(1500);
+
+/// A snapshot this close to the seek target means the engine has arrived.
+const SEEK_ARRIVED: Duration = Duration::from_millis(1500);
 
 const LIBRARY_MISSING: &str = "Native playback needs libmpv. Packaging that library is not finished yet, so this build cannot play video. The rest of Matinee is still available.";
 const LIBRARY_INCOMPATIBLE: &str = "This libmpv build cannot be used for playback. Packaging a compatible library is not finished yet.";
@@ -187,6 +195,10 @@ struct PlanFacts {
     start: Duration,
     audio_stream_index: Option<i32>,
     subtitle_stream_index: Option<i32>,
+    /// Jellyfin indices of the audio streams, in container order.
+    audio_indices: Vec<i32>,
+    /// Jellyfin indices of the embedded subtitle streams, in container order.
+    subtitle_indices: Vec<i32>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -210,7 +222,10 @@ pub(crate) struct PlayerModel {
     snapshot: Snapshot,
     volume: f32,
     muted: bool,
+    /// A seek target that outranks the snapshot until the engine arrives.
     scrub: Option<Duration>,
+    /// Play or pause that was sent and not yet seen in a snapshot.
+    expected: Option<(PlaybackState, Instant)>,
     pending_seek: bool,
     last_seek_sent: Option<Instant>,
     last_scrub: Option<Instant>,
@@ -236,6 +251,7 @@ impl PlayerModel {
             volume: 1.0,
             muted: false,
             scrub: None,
+            expected: None,
             pending_seek: false,
             last_seek_sent: None,
             last_scrub: None,
@@ -373,6 +389,21 @@ impl PlayerModel {
         }
     }
 
+    /// Everything the screen paints from the model. Equal keys need no repaint.
+    pub(crate) fn view_key(&self, now: Instant) -> ViewKey {
+        ViewKey {
+            stage: self.stage,
+            snapshot: self.snapshot.clone(),
+            timeline: self.timeline(),
+            controls: self.controls_visible(now),
+            menu: self.menu,
+            volume: self.volume,
+            muted: self.muted,
+            notice: self.report_notice.clone(),
+            failure: self.failure.clone(),
+        }
+    }
+
     pub(crate) fn set_controls_hovered(&mut self, hovered: bool) {
         self.hovering_controls = hovered;
     }
@@ -389,7 +420,10 @@ impl PlayerModel {
             return Vec::new();
         }
         let start = resume_start(prepared.plan.start_position, prepared.runtime);
-        let url = strip_credential_query(&prepared.plan.url);
+        // `matinee-jellyfin` already removed credential query pairs. The load
+        // authorizes with the session header.
+        let url = prepared.plan.url.clone();
+        let (audio_indices, subtitle_indices) = stream_indices(&prepared.plan.streams);
         self.title = prepared.title;
         self.context = prepared.context;
         self.plan = Some(PlanFacts {
@@ -401,6 +435,8 @@ impl PlayerModel {
             start: start.unwrap_or(Duration::ZERO),
             audio_stream_index: prepared.plan.selected_audio,
             subtitle_stream_index: prepared.plan.selected_subtitle,
+            audio_indices,
+            subtitle_indices,
         });
         self.stage = Stage::Loading;
         vec![Directive::Load(LoadIntent {
@@ -446,6 +482,8 @@ impl PlayerModel {
         self.snapshot = snapshot;
         self.volume = self.snapshot.volume;
         self.muted = self.snapshot.muted;
+        self.hold_expected_state(now);
+        self.release_seek_target(now);
         if self.stage == Stage::Loading
             && !matches!(
                 self.snapshot.state,
@@ -523,9 +561,7 @@ impl PlayerModel {
                 Vec::new()
             }
             UserCommand::TogglePlay => self.toggle_play(now),
-            UserCommand::SeekByMs(delta) => {
-                vec![Directive::SeekByMs(delta), self.mark_progress(now)]
-            }
+            UserCommand::SeekByMs(delta) => self.seek_by(delta, now),
             UserCommand::SetVolume(volume) => self.set_volume(volume),
             UserCommand::NudgeVolume(delta) => self.set_volume(self.volume + delta),
             UserCommand::ToggleMute => {
@@ -539,6 +575,10 @@ impl PlayerModel {
                     .iter()
                     .any(|track| track.id == id)
                 {
+                    if let Some(plan) = self.plan.as_mut() {
+                        plan.audio_stream_index =
+                            stream_index(&plan.audio_indices, &self.snapshot.audio_tracks, id);
+                    }
                     vec![Directive::Audio(id)]
                 } else {
                     Vec::new()
@@ -551,6 +591,13 @@ impl PlayerModel {
                     .iter()
                     .any(|track| track.id == id)
                 {
+                    if let Some(plan) = self.plan.as_mut() {
+                        plan.subtitle_stream_index = stream_index(
+                            &plan.subtitle_indices,
+                            &self.snapshot.subtitle_tracks,
+                            id,
+                        );
+                    }
                     vec![Directive::Subtitle(id)]
                 } else {
                     Vec::new()
@@ -606,9 +653,7 @@ impl PlayerModel {
     }
 
     pub(crate) fn note_report(&mut self, result: Result<(), String>) {
-        if let Err(message) = result {
-            self.report_notice = Some(redact_message(&message));
-        }
+        self.report_notice = result.err().map(|message| redact_message(&message));
     }
 
     /// Stop reporting and release the engine. A second call is empty.
@@ -695,20 +740,97 @@ impl PlayerModel {
         match self.snapshot.state {
             PlaybackState::Playing | PlaybackState::Buffering => {
                 self.snapshot.state = PlaybackState::Paused;
+                self.expected = Some((PlaybackState::Paused, now));
                 self.reports.pause_latched = true;
                 vec![Directive::Pause, self.mark_progress(now)]
             }
             PlaybackState::Paused | PlaybackState::Ended => {
+                if self.snapshot.state == PlaybackState::Ended {
+                    // The engine rewinds to the start when play follows the end.
+                    self.hold_seek_target(Duration::ZERO, now);
+                }
                 let resume = self.reports.pause_latched;
                 self.snapshot.state = PlaybackState::Playing;
+                self.expected = Some((PlaybackState::Playing, now));
                 self.reports.pause_latched = false;
                 let mut directives = vec![Directive::Play];
-                if resume {
+                if self.reports.stopped {
+                    // Stop was already reported. Watching again is a new session.
+                    self.reports.stopped = false;
+                    self.reports.started = true;
+                    self.reports.last_progress = Some(now);
+                    directives.push(Directive::Report(ReportKind::Start));
+                } else if resume {
                     directives.push(self.mark_progress(now));
                 }
                 directives
             }
             _ => Vec::new(),
+        }
+    }
+
+    /// Relative seeks become absolute targets so the clock and the report
+    /// show where playback is going, not where it was.
+    fn seek_by(&mut self, delta_ms: i64, now: Instant) -> Vec<Directive> {
+        let Timeline {
+            position,
+            duration: Some(duration),
+            enabled: true,
+            ..
+        } = self.timeline()
+        else {
+            return vec![Directive::SeekByMs(delta_ms)];
+        };
+        let step = Duration::from_millis(delta_ms.unsigned_abs());
+        let target = if delta_ms < 0 {
+            position.saturating_sub(step)
+        } else {
+            (position + step).min(duration)
+        };
+        self.hold_seek_target(target, now);
+        self.last_seek_sent = Some(now);
+        self.seek_report_due = true;
+        vec![Directive::Seek(target)]
+    }
+
+    fn hold_seek_target(&mut self, target: Duration, now: Instant) {
+        self.scrub = Some(target);
+        self.last_scrub = Some(now);
+    }
+
+    /// Drop the seek target once the engine reaches it, or after it has had
+    /// time to. A drag in progress or an unsent report keeps it.
+    fn release_seek_target(&mut self, now: Instant) {
+        let Some(target) = self.scrub else {
+            return;
+        };
+        if self.pending_seek || self.seek_report_due {
+            return;
+        }
+        let arrived = self.snapshot.position.abs_diff(target) <= SEEK_ARRIVED;
+        let expired = self
+            .last_scrub
+            .is_none_or(|since| now.saturating_duration_since(since) >= COMMAND_SETTLE);
+        if arrived || expired {
+            self.scrub = None;
+        }
+    }
+
+    /// Keep a requested play or pause until a snapshot agrees, so a stale
+    /// snapshot does not flip the button or send a contradicting report.
+    fn hold_expected_state(&mut self, now: Instant) {
+        let Some((expected, since)) = self.expected else {
+            return;
+        };
+        let settled = now.saturating_duration_since(since) >= COMMAND_SETTLE;
+        let stale = matches!(
+            self.snapshot.state,
+            PlaybackState::Playing | PlaybackState::Paused | PlaybackState::Ended
+        ) && self.snapshot.state != expected;
+        if stale && !settled {
+            self.snapshot.state = expected;
+        } else {
+            self.expected = None;
         }
     }
 
@@ -813,6 +935,19 @@ impl fmt::Debug for PlayerModel {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ViewKey {
+    stage: Stage,
+    snapshot: Snapshot,
+    timeline: Timeline,
+    controls: bool,
+    menu: Option<MenuKind>,
+    volume: f32,
+    muted: bool,
+    notice: Option<String>,
+    failure: Option<PlayerFailure>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Timeline {
     pub position: Duration,
@@ -842,6 +977,36 @@ pub(crate) fn timeline(position: Duration, duration: Option<Duration>) -> Timeli
         ratio,
         enabled: true,
     }
+}
+
+/// Jellyfin indices of the audio and embedded subtitle streams, in container
+/// order. External subtitles are not in the file the engine opened.
+fn stream_indices(streams: &[MediaStream]) -> (Vec<i32>, Vec<i32>) {
+    let mut audio = Vec::new();
+    let mut subtitles = Vec::new();
+    for stream in streams {
+        match stream {
+            MediaStream::Audio(audio_stream) => audio.push(audio_stream.index),
+            MediaStream::Subtitle(subtitle) if !subtitle.external => subtitles.push(subtitle.index),
+            _ => {}
+        }
+    }
+    audio.sort_unstable();
+    subtitles.sort_unstable();
+    (audio, subtitles)
+}
+
+/// The Jellyfin index for an engine track.
+///
+/// Tracks are matched by position, and only when the engine lists as many
+/// tracks as Jellyfin does. A transcode can carry fewer tracks than the
+/// source, so an uncertain match reports no index instead of a wrong one.
+fn stream_index(indices: &[i32], tracks: &[Track], id: TrackId) -> Option<i32> {
+    if indices.len() != tracks.len() {
+        return None;
+    }
+    let position = tracks.iter().position(|track| track.id == id)?;
+    indices.get(position).copied()
 }
 
 pub(crate) fn format_clock(duration: Duration) -> String {
@@ -927,6 +1092,7 @@ mod tests {
     use matinee_core::{ItemId, PlaybackMethod, StreamAuthorization};
 
     const TOKEN: &str = "token-value-not-for-logs";
+    const SEEK_STEP: i64 = 10_000;
 
     fn item() -> ItemId {
         ItemId::parse("item-1").unwrap()
@@ -938,9 +1104,8 @@ mod tests {
             context: None,
             runtime: Some(Duration::from_secs(3600)),
             plan: PlaybackPlan {
-                url: format!(
-                    "https://jellyfin.local/Videos/item-1/stream?Static=true&api_key={TOKEN}"
-                ),
+                // `matinee-jellyfin` strips credential query pairs before a plan exists.
+                url: "https://jellyfin.local/Videos/item-1/stream?Static=true".into(),
                 source_id: None,
                 play_session_id: None,
                 method,
@@ -1027,8 +1192,9 @@ mod tests {
             vec![Directive::Play, Directive::Report(ReportKind::Progress)]
         );
         assert_eq!(
-            model.command(UserCommand::SeekByMs(-10_000), now)[0],
-            Directive::SeekByMs(-10_000)
+            model.command(UserCommand::SeekByMs(-10_000), now),
+            vec![Directive::Seek(Duration::ZERO)],
+            "a relative seek becomes a clamped absolute target"
         );
         assert_eq!(
             model.command(UserCommand::SetVolume(0.25), now),
@@ -1195,6 +1361,12 @@ mod tests {
         assert!(model.report_notice().unwrap().contains("redacted"));
         let rendered = format!("{model:?}\n{}", model.visible_lines().join("\n"));
         assert!(!rendered.contains(TOKEN));
+        model.note_report(Ok(()));
+        assert_eq!(
+            model.report_notice(),
+            None,
+            "a later successful report clears the notice"
+        );
         let closing = model.close();
         assert!(closing.contains(&Directive::Report(ReportKind::Stopped)));
         assert!(closing.contains(&Directive::Stop));
@@ -1203,6 +1375,237 @@ mod tests {
                 .progress_tick(now + Duration::from_secs(100))
                 .is_empty()
         );
+    }
+
+    fn paused(position: Duration) -> Snapshot {
+        Snapshot {
+            state: PlaybackState::Paused,
+            ..playing(position)
+        }
+    }
+
+    fn reports(directives: &[Directive]) -> Vec<ReportKind> {
+        directives
+            .iter()
+            .filter_map(|directive| match directive {
+                Directive::Report(kind) => Some(*kind),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn minutes(value: u64) -> Duration {
+        Duration::from_secs(value * 60)
+    }
+
+    #[test]
+    fn the_clock_follows_playback_after_a_scrub() {
+        let (mut model, now) = open_live();
+        let at = |ms: u64| now + Duration::from_millis(ms);
+        assert_eq!(
+            model.command(UserCommand::Scrub(minutes(30)), now),
+            vec![Directive::Seek(minutes(30))]
+        );
+        // The engine has not moved yet. The clock and the report show the target.
+        model.ingest(playing(Duration::from_secs(4)), at(100));
+        assert_eq!(model.timeline().position, minutes(30));
+        let settled = model.flush(at(250));
+        assert_eq!(reports(&settled), vec![ReportKind::Progress]);
+        assert_eq!(model.report_body().unwrap().position, minutes(30));
+        // The engine arrives, then keeps playing. The clock must keep moving.
+        model.ingest(playing(minutes(30) + Duration::from_secs(1)), at(500));
+        model.ingest(playing(minutes(31)), at(60_000));
+        assert_eq!(model.timeline().position, minutes(31));
+        assert_eq!(model.report_body().unwrap().position, minutes(31));
+    }
+
+    #[test]
+    fn a_seek_target_expires_if_the_engine_lands_elsewhere() {
+        let (mut model, now) = open_live();
+        model.command(UserCommand::Scrub(minutes(30)), now);
+        model.flush(now + SEEK_THROTTLE);
+        // A keyframe seek can land several seconds away from the target.
+        let landed = minutes(30) - Duration::from_secs(6);
+        model.ingest(playing(landed), now + Duration::from_millis(500));
+        assert_eq!(model.timeline().position, minutes(30));
+        model.ingest(playing(landed), now + COMMAND_SETTLE + SEEK_THROTTLE);
+        assert_eq!(model.timeline().position, landed);
+    }
+
+    #[test]
+    fn keyboard_seeks_report_where_playback_is_going() {
+        let (mut model, now) = open_live();
+        let at = |ms: u64| now + Duration::from_millis(ms);
+        model.ingest(playing(minutes(10)), now);
+        assert_eq!(
+            model.command(UserCommand::SeekByMs(SEEK_STEP), at(10)),
+            vec![Directive::Seek(minutes(10) + Duration::from_secs(10))]
+        );
+        // A second press before the engine moves builds on the first target.
+        assert_eq!(
+            model.command(UserCommand::SeekByMs(SEEK_STEP), at(110)),
+            vec![Directive::Seek(minutes(10) + Duration::from_secs(20))]
+        );
+        model.ingest(playing(minutes(10)), at(150));
+        assert!(
+            reports(&model.flush(at(200))).is_empty(),
+            "presses in a row send one report"
+        );
+        assert_eq!(reports(&model.flush(at(320))), vec![ReportKind::Progress]);
+        assert_eq!(
+            model.report_body().unwrap().position,
+            minutes(10) + Duration::from_secs(20)
+        );
+        assert_eq!(
+            model.command(UserCommand::SeekByMs(SEEK_STEP), at(400)),
+            vec![Directive::Seek(minutes(10) + Duration::from_secs(30))]
+        );
+        model.flush(at(1_000));
+        let near_end = Duration::from_secs(3595);
+        model.ingest(playing(near_end), at(5_000));
+        assert_eq!(
+            model.command(UserCommand::SeekByMs(SEEK_STEP), at(5_000)),
+            vec![Directive::Seek(Duration::from_secs(3600))],
+            "a forward seek stops at the end"
+        );
+    }
+
+    #[test]
+    fn pause_survives_a_snapshot_that_has_not_caught_up() {
+        let (mut model, now) = open_live();
+        let at = |ms: u64| now + Duration::from_millis(ms);
+        let pause = model.command(UserCommand::TogglePlay, at(10));
+        assert_eq!(reports(&pause), vec![ReportKind::Progress]);
+        // The engine applies the pause asynchronously.
+        let stale = model.ingest(playing(Duration::from_secs(5)), at(260));
+        assert!(reports(&stale).is_empty(), "no contradicting report");
+        assert_eq!(model.playback_state(), Some(PlaybackState::Paused));
+        let caught_up = model.ingest(paused(Duration::from_secs(5)), at(510));
+        assert!(reports(&caught_up).is_empty(), "no duplicate report");
+        assert_eq!(model.playback_state(), Some(PlaybackState::Paused));
+
+        let play = model.command(UserCommand::TogglePlay, at(1_000));
+        assert_eq!(reports(&play), vec![ReportKind::Progress]);
+        let stale = model.ingest(paused(Duration::from_secs(5)), at(1_250));
+        assert!(reports(&stale).is_empty());
+        assert_eq!(model.playback_state(), Some(PlaybackState::Playing));
+        model.ingest(playing(Duration::from_secs(5)), at(1_500));
+        assert_eq!(model.playback_state(), Some(PlaybackState::Playing));
+    }
+
+    #[test]
+    fn an_engine_that_never_pauses_wins_after_the_settle_time() {
+        let (mut model, now) = open_live();
+        model.command(UserCommand::TogglePlay, now);
+        model.ingest(playing(Duration::from_secs(5)), now + COMMAND_SETTLE);
+        assert_eq!(model.playback_state(), Some(PlaybackState::Playing));
+    }
+
+    #[test]
+    fn progress_reports_every_ten_seconds_on_the_ui_tick() {
+        let (mut model, now) = open_live();
+        let mut sent = 0;
+        let mut tick = Duration::ZERO;
+        while tick <= Duration::from_secs(30) {
+            sent += model.progress_tick(now + tick).len();
+            tick += Duration::from_millis(250);
+        }
+        assert_eq!(sent, 3, "10, 20, and 30 seconds after Start");
+    }
+
+    #[test]
+    fn play_after_the_end_starts_a_new_report_session() {
+        let (mut model, now) = open_live();
+        let at = |ms: u64| now + Duration::from_millis(ms);
+        let end = Duration::from_secs(3600);
+        model.ingest(playing(end - Duration::from_secs(1)), at(100));
+        let ended = model.ingest_event(PlayerEvent::Ended, at(200));
+        assert_eq!(reports(&ended), vec![ReportKind::Stopped]);
+        let ended_snapshot = Snapshot {
+            state: PlaybackState::Ended,
+            ..playing(end)
+        };
+        model.ingest(ended_snapshot.clone(), at(250));
+
+        let again = model.command(UserCommand::TogglePlay, at(5_000));
+        assert!(again.contains(&Directive::Play));
+        assert_eq!(reports(&again), vec![ReportKind::Start]);
+        assert_eq!(model.report_body().unwrap().position, Duration::ZERO);
+        // The engine has not rewound yet. That stale end is not a second stop.
+        let stale = model.ingest(ended_snapshot, at(5_250));
+        assert!(reports(&stale).is_empty());
+        assert_eq!(model.timeline().position, Duration::ZERO);
+
+        model.ingest(playing(Duration::from_millis(300)), at(5_500));
+        assert_eq!(model.playback_state(), Some(PlaybackState::Playing));
+        assert_eq!(
+            reports(&model.progress_tick(at(15_000))),
+            vec![ReportKind::Progress]
+        );
+        let ended = model.ingest_event(PlayerEvent::Ended, at(20_000));
+        assert_eq!(reports(&ended), vec![ReportKind::Stopped]);
+    }
+
+    #[test]
+    fn track_changes_update_the_reported_stream_indices() {
+        use matinee_core::{AudioStream, MediaStream, SubtitleStream};
+
+        let audio = |index| {
+            MediaStream::Audio(AudioStream {
+                index,
+                codec: None,
+                title: None,
+                display_title: None,
+                language: None,
+                channels: None,
+                channel_layout: None,
+                sample_rate: None,
+                bitrate: None,
+                is_default: index == 1,
+            })
+        };
+        let subtitle = |index, external| {
+            MediaStream::Subtitle(SubtitleStream {
+                index,
+                codec: None,
+                title: None,
+                language: None,
+                is_default: false,
+                forced: false,
+                external,
+            })
+        };
+        let mut prepared = plan(PlaybackMethod::DirectPlay, Duration::ZERO);
+        prepared.plan.streams = vec![audio(2), audio(1), subtitle(3, false), subtitle(4, true)];
+        let now = Instant::now();
+        let mut model = PlayerModel::new();
+        model.begin(item());
+        model.accept_plan(prepared);
+        model.ingest_event(PlayerEvent::Loaded, now);
+        let mut snapshot = playing(Duration::from_secs(4));
+        snapshot.audio_tracks = vec![
+            sample_track(7, TrackKind::Audio, Some("Dialogue"), None),
+            sample_track(8, TrackKind::Audio, Some("Commentary"), None),
+        ];
+        snapshot.subtitle_tracks = vec![sample_track(9, TrackKind::Subtitle, None, None)];
+        model.ingest(snapshot.clone(), now);
+
+        model.command(UserCommand::SelectAudio(TrackId::from_raw(8)), now);
+        assert_eq!(model.report_body().unwrap().audio_stream_index, Some(2));
+        model.command(UserCommand::SubtitlesOff, now);
+        assert_eq!(model.report_body().unwrap().subtitle_stream_index, Some(-1));
+        model.command(UserCommand::SelectSubtitle(TrackId::from_raw(9)), now);
+        assert_eq!(
+            model.report_body().unwrap().subtitle_stream_index,
+            Some(3),
+            "external subtitles are not in the file the engine opened"
+        );
+
+        // A transcode that carries one audio track cannot be matched safely.
+        snapshot.audio_tracks.truncate(1);
+        model.ingest(snapshot, now);
+        model.command(UserCommand::SelectAudio(TrackId::from_raw(7)), now);
+        assert_eq!(model.report_body().unwrap().audio_stream_index, None);
     }
 
     #[test]

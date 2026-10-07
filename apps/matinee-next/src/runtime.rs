@@ -47,26 +47,6 @@ impl ServiceRuntime {
         (handle, rx)
     }
 
-    /// A repeating tick on this runtime.
-    ///
-    /// Dropping or aborting the join handle stops the loop. The receiver is
-    /// what the window awaits. This is not a second Tokio runtime.
-    pub fn interval(&self, period: Duration) -> (JoinHandle<()>, tokio::sync::mpsc::Receiver<()>) {
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let handle = self.runtime().spawn(async move {
-            let mut ticker = tokio::time::interval(period);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            ticker.tick().await;
-            loop {
-                ticker.tick().await;
-                if tx.send(()).await.is_err() {
-                    break;
-                }
-            }
-        });
-        (handle, rx)
-    }
-
     fn runtime(&self) -> &Runtime {
         self.runtime
             .as_ref()
@@ -105,14 +85,6 @@ mod tests {
             inner.shutdown_timeout(Duration::from_millis(50));
         }
         assert!(rx.blocking_recv().is_err());
-        task.abort();
-    }
-
-    #[test]
-    fn interval_ticks_on_the_same_runtime() {
-        let runtime = ServiceRuntime::new().unwrap();
-        let (task, mut rx) = runtime.interval(Duration::from_millis(20));
-        assert!(rx.blocking_recv().is_some());
         task.abort();
     }
 }

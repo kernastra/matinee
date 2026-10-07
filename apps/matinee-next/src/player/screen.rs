@@ -21,10 +21,13 @@ use crate::runtime::ServiceRuntime;
 use super::frame::{bgra_from_cpu, fixture_frame};
 use super::model::{
     Directive, MenuKind, PlanFailure, PlayerFailure, PlayerModel, PlayerPreview, UserCommand,
-    format_clock, track_label,
+    ViewKey, format_clock, track_label,
 };
 use super::prepare::prepare_playback;
-use super::{PROGRESS_INTERVAL, SEEK_STEP_MS, VOLUME_STEP};
+use super::{SEEK_STEP_MS, VOLUME_STEP};
+
+/// One HTTP client per player, shared by the plan request and every report.
+type Client = Arc<JellyfinClient<ReqwestTransport>>;
 
 pub(crate) enum KeyOutcome {
     Ignored,
@@ -34,12 +37,14 @@ pub(crate) enum KeyOutcome {
 
 pub(crate) struct PlayerScreen {
     runtime: Arc<ServiceRuntime>,
-    session: Option<Session>,
+    client: Option<Client>,
     model: PlayerModel,
     surface: Entity<ExternalFrameSurface>,
     focus: FocusHandle,
     tasks: Vec<JoinHandle<()>>,
     player: Option<Player>,
+    /// What the last repaint request showed. Ticks repaint only on change.
+    painted: Option<ViewKey>,
 }
 
 impl PlayerScreen {
@@ -51,14 +56,18 @@ impl PlayerScreen {
         cx: &mut Context<Self>,
     ) -> Self {
         let surface = cx.new(|cx| ExternalFrameSurface::new("Video", window, cx));
+        let client = ReqwestTransport::new()
+            .ok()
+            .map(|transport| Arc::new(JellyfinClient::new(session, transport)));
         let mut screen = Self {
             runtime,
-            session: Some(session),
+            client,
             model: PlayerModel::new(),
             surface,
             focus: cx.focus_handle(),
             tasks: Vec::new(),
             player: None,
+            painted: None,
         };
         screen.model.begin(item_id);
         screen.start_prepare(cx);
@@ -80,12 +89,13 @@ impl PlayerScreen {
         });
         Self {
             runtime,
-            session: None,
+            client: None,
             model: PlayerModel::preview(scene),
             surface,
             focus: cx.focus_handle(),
             tasks: Vec::new(),
             player: None,
+            painted: None,
         }
     }
 
@@ -157,16 +167,19 @@ impl PlayerScreen {
     }
 
     fn start_prepare(&mut self, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone() else {
+        let Some(item_id) = self.model.item_id().cloned() else {
             return;
         };
-        let Some(item_id) = self.model.item_id().cloned() else {
+        let Some(client) = self.client.clone() else {
+            self.model.reject_plan(PlanFailure::stream(
+                "Could not reach Jellyfin. Check the server address and try again.",
+            ));
             return;
         };
         let (task, rx) = self
             .runtime
-            .spawn(async move { prepare_playback(session, item_id).await });
-        self.tasks.push(task);
+            .spawn(async move { prepare_playback(&client, item_id).await });
+        self.track_task(task);
         cx.spawn(async move |this, cx| {
             let outcome = rx
                 .await
@@ -267,18 +280,9 @@ impl PlayerScreen {
             }
         })
         .detach();
-        let (task, mut rx) = self.runtime.interval(PROGRESS_INTERVAL);
-        self.tasks.push(task);
-        cx.spawn(async move |this, cx| {
-            while rx.recv().await.is_some() {
-                if this.update(cx, |this, cx| this.on_progress(cx)).is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
     }
 
+    /// The one clock: snapshots, events, drag flushes, and periodic reports.
     fn on_tick(&mut self, cx: &mut Context<Self>) {
         let now = Instant::now();
         let mut directives = Vec::new();
@@ -290,27 +294,37 @@ impl PlayerScreen {
             }
         }
         directives.extend(self.model.flush(now));
+        directives.extend(self.model.progress_tick(now));
         if directives.is_empty() {
-            cx.notify();
+            self.repaint_if_changed(now, cx);
         } else {
-            self.dispatch(directives, cx);
-        }
-    }
-
-    fn on_progress(&mut self, cx: &mut Context<Self>) {
-        let directives = self.model.progress_tick(Instant::now());
-        if !directives.is_empty() {
             self.dispatch(directives, cx);
         }
     }
 
     fn activity(&mut self, command: UserCommand, cx: &mut Context<Self>) {
-        let directives = self.model.command(command, Instant::now());
+        let now = Instant::now();
+        let directives = self.model.command(command, now);
         if directives.is_empty() {
-            cx.notify();
+            // Pointer movement repaints only when it brings the controls back.
+            self.repaint_if_changed(now, cx);
         } else {
             self.dispatch(directives, cx);
         }
+    }
+
+    fn repaint_if_changed(&mut self, now: Instant, cx: &mut Context<Self>) {
+        let key = self.model.view_key(now);
+        if self.painted.as_ref() != Some(&key) {
+            self.painted = Some(key);
+            cx.notify();
+        }
+    }
+
+    /// Keep a handle so close can abort it. Finished work is dropped here.
+    fn track_task(&mut self, task: JoinHandle<()>) {
+        self.tasks.retain(|task| !task.is_finished());
+        self.tasks.push(task);
     }
 
     fn dispatch(&mut self, directives: Vec<Directive>, cx: &mut Context<Self>) {
@@ -321,6 +335,7 @@ impl PlayerScreen {
                 other => self.apply_engine(&other),
             }
         }
+        self.painted = Some(self.model.view_key(Instant::now()));
         cx.notify();
     }
 
@@ -330,7 +345,8 @@ impl PlayerScreen {
                 .reject_engine(PlayerFailure::engine("Playback could not start."));
             return;
         };
-        let headers = match stream_headers(self.session.as_ref(), intent.authorization) {
+        let session = self.client.as_ref().map(|client| client.session());
+        let headers = match stream_headers(session, intent.authorization) {
             Ok(headers) => headers,
             Err(failure) => {
                 self.model.reject_engine(failure);
@@ -363,15 +379,20 @@ impl PlayerScreen {
             Directive::SubtitlesOff => player.disable_subtitles(),
             Directive::Load(_) | Directive::Report(_) => Ok(()),
         };
-        if let Err(error) = result
-            && self.model.stage() != super::model::Stage::Closed
-        {
-            self.model.fail_playback(error.to_string());
+        match result {
+            Ok(()) => {}
+            // The snapshot changed between the click and the command, for
+            // example a track list refresh. The engine kept playing.
+            Err(PlayerError::InvalidCommand(_)) => {}
+            Err(error) if self.model.stage() != super::model::Stage::Closed => {
+                self.model.fail_playback(error.to_string());
+            }
+            Err(_) => {}
         }
     }
 
     fn spawn_report(&mut self, kind: ReportKind, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone() else {
+        let Some(client) = self.client.clone() else {
             return;
         };
         let Some(report) = self.model.report_body() else {
@@ -379,8 +400,8 @@ impl PlayerScreen {
         };
         let (task, rx) = self
             .runtime
-            .spawn(async move { send_report(session, kind, report).await });
-        self.tasks.push(task);
+            .spawn(async move { send_report(&client, kind, report).await });
+        self.track_task(task);
         cx.spawn(async move |this, cx| {
             let outcome = rx
                 .await
@@ -401,14 +422,14 @@ impl PlayerScreen {
                 self.apply_engine(directive);
             }
         }
-        if let (Some(session), Some(report)) = (self.session.clone(), self.model.report_body()) {
+        if let (Some(client), Some(report)) = (self.client.clone(), self.model.report_body()) {
             for directive in directives {
                 if let Directive::Report(kind) = directive {
-                    let session = session.clone();
+                    let client = Arc::clone(&client);
                     let report = report.clone();
                     let _ = self
                         .runtime
-                        .spawn(async move { send_report(session, kind, report).await });
+                        .spawn(async move { send_report(&client, kind, report).await });
                 }
             }
         }
@@ -941,12 +962,11 @@ fn stream_headers(
 }
 
 async fn send_report(
-    session: Session,
+    client: &JellyfinClient<ReqwestTransport>,
     kind: ReportKind,
     report: PlaybackReport,
 ) -> Result<(), String> {
-    let transport = ReqwestTransport::new().map_err(|error| error.to_string())?;
-    JellyfinClient::new(session, transport)
+    client
         .report_playback(kind, &report)
         .await
         .map_err(|error| error.to_string())
