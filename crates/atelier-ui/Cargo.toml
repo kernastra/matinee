@@ -13,6 +13,11 @@ gpui.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 unicode-segmentation = "1.13"
 
+[features]
+# Headless GPUI test platform for crates that test their own views on
+# Atelier without depending on GPUI directly.
+test-support = ["gpui/test-support"]
+
 [dev-dependencies]
 # Headless TestPlatform for component behavior tests (no GPU or display).
 gpui = { workspace = true, features = ["test-support"] }

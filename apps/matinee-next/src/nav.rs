@@ -55,6 +55,12 @@ impl<T> Navigation<T> {
         self.stack.last()
     }
 
+    /// Whether any open page matches, for checking that a report came from
+    /// a page that is still open.
+    pub(crate) fn any(&self, matches: impl FnMut(&T) -> bool) -> bool {
+        self.stack.iter().any(matches)
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }
@@ -105,6 +111,21 @@ mod tests {
             drained,
             vec![Page::Player("movie-1"), Page::Details("movie-1")]
         );
+    }
+
+    #[test]
+    fn closed_pages_are_no_longer_current() {
+        let mut nav = Navigation::default();
+        nav.push(Page::Details("movie-1"));
+        nav.push(Page::Player("movie-1"));
+        assert!(nav.any(|page| *page == Page::Player("movie-1")));
+        // Session end drains every page; a late report from one is stale.
+        let _ = nav.drain().count();
+        assert!(!nav.any(|page| *page == Page::Player("movie-1")));
+        assert!(!nav.any(|page| *page == Page::Details("movie-1")));
+        // Draining again is harmless.
+        assert_eq!(nav.drain().count(), 0);
+        assert!(!nav.take_root_stale());
     }
 
     #[test]

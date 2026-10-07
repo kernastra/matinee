@@ -126,9 +126,13 @@ behind in that case.
 
 ## Failures
 
-- The title: not found, signed out, Jellyfin unreachable, or unreadable.
-  Each has fixed copy, Try again, and Back. No server text, URL, or token
-  is painted.
+- The title: not found, Jellyfin unreachable, or unreadable. Each has
+  fixed copy, Try again, and Back. No server text, URL, or token is
+  painted.
+- Any request (title or section) answering 401/403 ends the session for
+  the whole app (Phase 3D): Details emits `DetailsEvent::SessionExpired`
+  and the shell returns to Login. It is never shown as a section being
+  unavailable. See [application.md](application.md#session-end).
 - A secondary section that fails says so quietly in its place (“More like
   this isn't available right now.”, “Episodes couldn't be loaded.” with Try
   again). The hero stays.

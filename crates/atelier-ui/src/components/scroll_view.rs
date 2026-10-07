@@ -208,6 +208,7 @@ pub struct ScrollView {
     id: ElementId,
     axis: ScrollAxis,
     focusable: bool,
+    restrict_axis: bool,
     control: Option<ScrollControl>,
     base: Div,
     children: Vec<gpui::AnyElement>,
@@ -219,6 +220,7 @@ impl ScrollView {
             id: id.into(),
             axis: ScrollAxis::Vertical,
             focusable: false,
+            restrict_axis: false,
             control: None,
             base: div(),
             children: Vec::new(),
@@ -238,6 +240,15 @@ impl ScrollView {
     /// list inside the view keeps the arrow keys.
     pub fn focusable(mut self, focusable: bool) -> Self {
         self.focusable = focusable;
+        self
+    }
+
+    /// Scroll only on this view's own axis. By default GPUI turns wheel
+    /// motion on the other axis into motion on this one, so a sideways
+    /// trackpad swipe moves a vertical page. A page that holds horizontal
+    /// rows sets this, so a swipe over a row moves only the row.
+    pub fn restrict_to_axis(mut self, restrict: bool) -> Self {
+        self.restrict_axis = restrict;
         self
     }
 
@@ -289,6 +300,9 @@ impl RenderOnce for ScrollView {
             .when(axis.allows_y(), |this| this.overflow_y_scroll())
             .scrollbar_width(Space::S2.px())
             .track_scroll(control.handle());
+        if self.restrict_axis {
+            view.style().restrict_scroll_to_axis = Some(true);
+        }
 
         if self.focusable {
             let line = control.clone();

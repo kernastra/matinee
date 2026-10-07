@@ -32,6 +32,9 @@ use crate::tiles::{art_frame, backdrop_request, progress_line, stable_index};
 pub(crate) enum DetailsEvent {
     Play(ItemId),
     Back,
+    /// A request found that Jellyfin no longer accepts the session. The
+    /// shell ends it; Details does not sign out by itself.
+    SessionExpired,
 }
 
 pub(crate) struct DetailsScreen {
@@ -163,10 +166,14 @@ impl DetailsScreen {
             self.tasks.retain(|task| !task.is_finished());
             self.tasks.push(task);
             cx.spawn(async move |this, cx| {
-                let Ok(response) = rx.await else {
+                let Ok(answer) = rx.await else {
                     return;
                 };
                 this.update(cx, |this, cx| {
+                    let Ok(response) = answer else {
+                        cx.emit(DetailsEvent::SessionExpired);
+                        return;
+                    };
                     let next = this.model.apply(ticket, response);
                     this.run(next, cx);
                     this.sync_artwork(cx);

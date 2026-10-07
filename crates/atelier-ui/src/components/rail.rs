@@ -11,6 +11,8 @@
 //!   amount that shows it, so focus never sits on an item out of view.
 //! - A vertical mouse wheel is left to the page around the rail. A
 //!   trackpad's horizontal motion, or a horizontal wheel, scrolls the rail.
+//!   Give the page [`ScrollView::restrict_to_axis`](super::ScrollView::restrict_to_axis)
+//!   too, or GPUI also turns that sideways motion into page scrolling.
 //!
 //! [`RailState`] lives with the owner, so the scroll offset and the last
 //! focused index survive the rail not being drawn for a while.

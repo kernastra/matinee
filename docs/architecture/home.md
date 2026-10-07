@@ -78,6 +78,9 @@ watch next, and what is new.
 5. **Favorites.** Poster cards.
 
 Every row is a [`Rail`](ui-framework.md) with ‹ › arrows when it overflows.
+The page `ScrollView` uses `restrict_to_axis`, so a sideways trackpad swipe
+over a row moves only that row and a vertical wheel over a row moves only
+the page.
 
 ## Parity
 
@@ -121,9 +124,19 @@ Every row is a [`Rail`](ui-framework.md) with ‹ › arrows when it overflows.
 - **Sections load independently.** A failure in one shelf leaves the rest
   of Home; shipping blanks the page when any of four requests fails.
 - **Next Up is new.** Shipping Home has no next-episode row. Native uses
-  Jellyfin's `/Shows/NextUp` across series, without resumable episodes
-  (those are Continue Watching) and without anything Continue Watching
-  already shows. This is the "what should I watch next" row.
+  Jellyfin's `/Shows/NextUp` across series (no `seriesId`), limit 12, with
+  `enableResumable=false`, and leaves out anything Continue Watching
+  already shows. This is the "what should I watch next" row. Checked
+  against Jellyfin's source (`TvShowsController.GetNextUp`, which accepts
+  `enableResumable`, default true, and `TVSeriesManager.DetermineNextEpisode`):
+  with it false, a series whose next episode has a saved position is
+  dropped from Next Up, and that same episode is what `/Items/Resume`
+  returns for Continue Watching, so no valid next episode is lost between
+  the rows. The one gap: with more than 12 titles in progress, an
+  in-progress next episode past Continue Watching's 12 is on neither row.
+  The per-series Next Up that Details uses keeps `enableResumable=true`.
+  A server that ignored the parameter would still be covered by the
+  Continue Watching dedupe.
 - **Landscape cards for Continue Watching and Next Up.** What you are in
   the middle of reads differently from what is new, and Home is not one
   wall of identical posters.
@@ -228,6 +241,11 @@ position is at most that far behind.
 Home owns its page `ScrollControl` and one `RailState` per row. Because
 the entity stays alive while Details covers it, the vertical position and
 every row's horizontal position are exactly where they were on return.
+`view.rs` tests prove this on the headless GPUI platform with the real
+objects: after Home → Details → Home and Home → Details → Player → Details
+→ Home, the root still holds the same `HomeScreen` entity, the page and
+every row keep the offsets set before, and the handles taken before are
+still the live ones. (They assert the state objects, not painted pixels.)
 
 Focus returns to the card that was opened, if it is still on Home after any
 refresh; otherwise to the hero's first button. On first load the hero's
@@ -248,14 +266,16 @@ and Space activate. Escape belongs to the shell (fullscreen).
   loaded") with Try again. No server text, URL, or token.
 - Malformed data fails only its shelf.
 - Artwork missing or failed: the calm placeholder with the title.
-- An authorization failure (401/403) on any Home request is
-  `Applied::SessionExpired`. Home emits `HomeEvent::SessionExpired`; the
-  shell (`MatineeRoot::expire_session`) closes every page (the Player
-  sends its stop report), drops Home and the client, removes the saved
-  session from the vault, and returns to Login with the server and
-  username filled in and "Your Jellyfin session has ended. Sign in again
-  to keep browsing." Cards never decide this. An unreachable server never
-  signs anyone out.
+- An authorization failure (401/403, or a rejected token) on any Home
+  request is not a shelf failure. The shelf is left as it was, the page
+  never shows an ordinary failure for it, and `HomeModel::apply` returns
+  `Applied::SessionExpired`. Home emits `HomeEvent::SessionExpired` and the
+  shell ends the session (see [application.md](application.md#session-end)).
+  Five shelves can 401 together; the shell acts once. An unreachable server
+  never signs anyone out.
+- When shelves fail for different reasons, the whole-page failure is
+  "Jellyfin isn't answering" if any shelf found the server unreachable,
+  otherwise "Home couldn't be loaded", whatever order the answers came in.
 
 ## Artwork and memory
 
@@ -270,16 +290,38 @@ cancellation when a slot goes away, and the stale-slot check.
 | Landscape card | Episode still, or movie backdrop, 480 (`THUMB_WIDTH`, as Details' episode rows) | ≈ 0.5 MiB |
 | Poster card | Primary, 360 (`TILE_POSTER_WIDTH`) | ≈ 0.74 MiB |
 
-Worst case (every row full, 24 landscape and 36 poster cards, all
-distinct): about 49 MiB, about half of the 96 MiB cache. A unit test keeps
-it under 55%. A typical Details page adds about 30 MiB (backdrop, poster,
-cast, related tiles), so Home → Details → Home does not evict Home's
-images and returning is a cache hit, not a reload. The hero's backdrop and
-any episode still are shared with Details by address; Details' related
-tiles now also use 360 px (they are drawn 136 px wide), which shares them
-with Home's poster cards and halves their memory. The cache budget is
-unchanged. `MATINEE_ARTWORK_STATS=1` prints hits, misses, entries, and
-decoded bytes when Home finishes loading.
+Planning estimate: a representative worst case, every row full of distinct
+titles (one hero backdrop, 24 landscape cards, 36 poster cards) at the
+expected 16:9 and 2:3 aspects, is about 46.5 MiB, roughly half of the
+96 MiB cache. It is computed in a test from the requests Home actually builds
+(`artwork_plan`, so the widths are `BACKDROP_WIDTH`, `THUMB_WIDTH`,
+`TILE_POSTER_WIDTH`, and the counts come from `HomeShelf::ALL` and
+`SHELF_LIMIT`); changing any of those changes the estimate, and the test
+keeps it under 55% of the budget. Real artwork keeps its own aspect, so this
+is a planning number, not a ceiling. The ceiling is `ARTWORK_CACHE_BYTES`:
+the cache never holds more.
+
+The shared 96 MiB LRU substantially reuses artwork between Home and
+Details. Identical addresses are cache hits: the hero's backdrop is the
+same address as Details' backdrop for that title, an episode still is the
+same as Details' episode rows, and Details' related tiles now use 360 px
+(they are drawn 136 px wide), the same address as Home's poster cards and
+half the memory. Older entries can still be evicted while a heavy Details
+page (many cast portraits, collections, episodes) is open, and a return to
+Home then fetches them again. What is guaranteed is bounded memory and
+useful cross-screen reuse, not that every Home image survives. The cache
+budget is unchanged. `MATINEE_ARTWORK_STATS=1` prints hits, misses,
+entries, and decoded bytes when Home finishes loading.
+
+**One request per address.** `artwork_plan` lists every address once, even
+when the same title is in several shelves (Recently Added and Favorites)
+or is also the hero, so one fetch and one decode serve every slot. The
+screen also skips any address it already has in flight. The hero keeps its
+own 1920 px backdrop; a card's 480 px backdrop of the same title is a
+different address and is fetched separately, because the hero genuinely
+needs the larger image. Two screens loading the same address at the same
+moment (rare: Home is not drawn while Details is open) can each fetch it;
+the cache then keeps one.
 
 ## Rows and virtualization
 

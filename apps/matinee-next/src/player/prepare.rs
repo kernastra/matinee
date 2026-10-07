@@ -49,7 +49,13 @@ pub(crate) fn episode_context(item: &MediaItem) -> Option<String> {
     }
 }
 
+/// Preparation is authoritative: if Jellyfin rejects the session here,
+/// before anything has played, the session has ended. Reports sent later,
+/// during playback, stay non-fatal and never end the session.
 fn failure_from_client(error: JellyfinError) -> PlanFailure {
+    if crate::session::session_ended(&error) {
+        return PlanFailure::SessionEnded;
+    }
     match &error {
         JellyfinError::NoCompatibleSource => PlanFailure::incompatible(error.to_string()),
         JellyfinError::Unreachable { .. } | JellyfinError::Cancelled => {
@@ -137,6 +143,21 @@ mod tests {
             None,
             "inside the last 30 seconds starts over"
         );
+    }
+
+    #[test]
+    fn a_rejected_session_while_preparing_is_a_session_end() {
+        for error in [JellyfinError::Unauthorized, JellyfinError::AuthRejected] {
+            assert_eq!(failure_from_client(error), PlanFailure::SessionEnded);
+        }
+        assert!(matches!(
+            failure_from_client(JellyfinError::NotFound),
+            PlanFailure::Info(_)
+        ));
+        assert!(matches!(
+            failure_from_client(JellyfinError::Cancelled),
+            PlanFailure::Stream(_)
+        ));
     }
 
     #[test]

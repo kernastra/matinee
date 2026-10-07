@@ -27,7 +27,9 @@ pub(crate) const RELATED_LIMIT: usize = 12;
 pub(crate) struct Ticket(u64);
 
 /// Why the title itself could not be shown. The copy is fixed; server text,
-/// URLs, and tokens are never painted.
+/// URLs, and tokens are never painted. An authorization failure normally
+/// never reaches here: `load` turns it into a session end the shell acts on.
+/// `SignedOut` remains as the copy for that case should it arrive anyway.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DetailsFailure {
     NotFound,

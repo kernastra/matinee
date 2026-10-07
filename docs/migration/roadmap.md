@@ -188,12 +188,15 @@ reference app, including the product rules in `docs/design-spec.md`.
   Details. No rotation.
 - Home stays alive under pages: page and row scroll positions survive, focus
   returns to the opened card, and shelves refresh after playback only.
-- An authorization failure returns to Login with the form kept and removes
-  the dead session.
+- An authorization failure on any authenticated request (Home, Details,
+  or the Player's preparation) ends the session once, application-wide:
+  Login with the form kept, the dead session removed. Reports after
+  playback has started stay non-fatal.
 - Atelier `Rail` (horizontal row, arrow-key focus movement, reveal on
   focus, vertical wheel left to the page) with a Gallery story;
   `ScrollView` keeps every child so `ScrollControl::reveal_child` can
-  address them.
+  address them, and `restrict_to_axis` keeps a sideways swipe over a row
+  from scrolling the page.
 - Deferred: library shortcuts and "View all" (Library is Phase 3E), Top
   rated and the editorial showcases, Coming soon, hero rotation. See
   [home.md](../architecture/home.md).

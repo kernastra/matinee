@@ -424,6 +424,22 @@ fn home_shelves_are_separate_requests_with_typed_failures() {
     assert_eq!(pair(next_up, "seriesId"), None, "every series, not one");
     assert_eq!(pair(next_up, "enableResumable").as_deref(), Some("false"));
     assert_eq!(pair(next_up, "limit").as_deref(), Some("12"));
+    // Jellyfin's `TvShowsController.GetNextUp` accepts `enableResumable`
+    // (default true). False drops a series whose next episode has a saved
+    // position; that episode is exactly what `/Items/Resume` lists for
+    // Continue Watching, so nothing is lost between the two rows.
+    assert_eq!(pair(next_up, "userId").as_deref(), Some("user-1"));
+    assert_eq!(pair(next_up, "enableUserData").as_deref(), Some("true"));
+    assert_eq!(pair(next_up, "enableImages").as_deref(), Some("true"));
+    assert!(pair(next_up, "fields").is_some_and(|fields| fields.contains("Overview")));
+    assert_eq!(pair(next_up, "enableRewatching"), None, "never rewatches");
+    assert_eq!(pair(next_up, "disableFirstEpisode"), None, "server default");
+    // The per-series Next Up used by Details keeps resumable episodes.
+    let series = ItemId::parse("series-1").unwrap();
+    let path = crate::query::next_up_path("user-1", &series);
+    let url = Url::parse(&format!("http://h{path}")).unwrap();
+    assert_eq!(pair(&url, "seriesId").as_deref(), Some("series-1"));
+    assert_eq!(pair(&url, "enableResumable").as_deref(), Some("true"));
     assert!(urls.iter().any(|url| {
         pair(url, "IncludeItemTypes").as_deref() == Some("Movie")
             && pair(url, "SortBy").as_deref() == Some("DateCreated")

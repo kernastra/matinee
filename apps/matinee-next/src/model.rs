@@ -739,10 +739,31 @@ mod tests {
         assert_eq!(model.username(), "alex");
         assert!(model.password().is_empty());
         assert!(!model.expire_session(), "only once");
+        // Later reports, while the person is typing, change nothing.
+        model.set_password("new-phrase".into());
+        model.set_username("jordan".into());
+        assert!(!model.expire_session());
+        assert!(!model.expire_session());
+        assert_eq!(model.username(), "jordan");
+        assert_eq!(model.password(), "new-phrase");
+        assert_eq!(model.notice(), Some(SESSION_ENDED));
+        model.set_username("alex".into());
+        model.set_password(String::new());
         assert!(!format!("{model:?}").contains(TOKEN));
-        // The kept form can sign in again at once.
+        // The kept form can sign in again at once, and a report arriving
+        // while that sign-in is in flight does not disturb it.
         model.set_password(PASSWORD.into());
         assert!(model.begin_sign_in().is_some());
+        assert!(!model.expire_session());
+        assert_eq!(model.phase(), Phase::Authenticating);
+        assert_eq!(model.password(), PASSWORD);
+        // Nor during sign-out, or before startup has finished.
+        let mut signing_out = AppModel::starting();
+        assert!(!signing_out.expire_session(), "starting");
+        signing_out.apply_startup(Startup::Authenticated(sample_session()));
+        assert!(signing_out.begin_sign_out());
+        assert!(!signing_out.expire_session());
+        assert_eq!(signing_out.phase(), Phase::SigningOut);
     }
 
     #[test]

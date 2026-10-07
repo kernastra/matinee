@@ -25,7 +25,9 @@ use super::model::{
     Applied, FocusTarget, HeroPick, HeroState, HomeFailure, HomeModel, PageState, Request,
     ShelfState, card_detail, card_title, remaining_label,
 };
-use crate::artwork::{Artwork, ArtworkLoad, ArtworkLoader, Client, THUMB_WIDTH, TILE_POSTER_WIDTH};
+use crate::artwork::{
+    Artwork, ArtworkLoad, ArtworkLoader, BACKDROP_WIDTH, Client, THUMB_WIDTH, TILE_POSTER_WIDTH,
+};
 use crate::details::{PlayAction, meta_line, progress_fraction, summary};
 use crate::runtime::ServiceRuntime;
 use crate::tiles::{art_frame, backdrop_request, progress_line, stable_index};
@@ -130,6 +132,19 @@ impl HomeScreen {
         }
     }
 
+    /// The objects that hold Home's scroll positions, for tests that check
+    /// they survive pages opening above Home.
+    #[cfg(test)]
+    pub(crate) fn scroll_state(&self) -> (ScrollControl, Vec<(HomeShelf, RailState)>) {
+        let mut rails: Vec<(HomeShelf, RailState)> = self
+            .rails
+            .iter()
+            .map(|(shelf, rail)| (*shelf, rail.clone()))
+            .collect();
+        rails.sort_by_key(|(shelf, _)| *shelf as usize);
+        (self.page.clone(), rails)
+    }
+
     pub(crate) fn set_signing_out(&mut self, signing_out: bool, cx: &mut Context<Self>) {
         self.signing_out = signing_out;
         cx.notify();
@@ -217,19 +232,13 @@ impl HomeScreen {
         }
     }
 
-    /// Every image Home shows, hero first, then shelf by shelf.
+    /// Every image Home shows, hero first, then shelf by shelf, each address
+    /// once (see [`artwork_plan`]).
     pub(super) fn wanted_artwork(&self) -> Vec<ArtworkRequest> {
-        let urls = self.session.artwork();
-        let mut wanted = Vec::new();
-        if let HeroState::Ready(pick) = self.model.hero() {
-            wanted.extend(backdrop_request(&pick.item, &urls));
-        }
-        for shelf in HomeShelf::ALL {
-            for item in self.model.items(shelf) {
-                wanted.extend(card_request(shelf, item, &urls));
-            }
-        }
-        wanted
+        artwork_plan(&self.model, &self.session.artwork())
+            .into_iter()
+            .map(|planned| planned.request)
+            .collect()
     }
 
     /// Start what is wanted and missing; cancel and forget what is not.
@@ -421,6 +430,83 @@ impl Drop for HomeScreen {
     }
 }
 
+/// The shape an image is drawn in. Jellyfin scales to the requested width
+/// and keeps the source's aspect, so these are the expected aspects, used
+/// for planning memory, not a guarantee about any one file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ArtShape {
+    /// The hero backdrop, 16:9.
+    Backdrop,
+    /// A Continue Watching or Next Up card: a still or backdrop, 16:9.
+    Landscape,
+    /// A poster card, 2:3.
+    Poster,
+}
+
+impl ArtShape {
+    /// Height over width.
+    #[cfg(test)]
+    pub(super) fn aspect(self) -> f32 {
+        match self {
+            Self::Backdrop | Self::Landscape => 9.0 / 16.0,
+            Self::Poster => 1.5,
+        }
+    }
+}
+
+/// One image Home will ask the loader for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PlannedArt {
+    pub request: ArtworkRequest,
+    pub shape: ArtShape,
+    /// The `maxWidth` the request asks for.
+    pub width: u32,
+}
+
+/// Every image Home shows, hero first, then shelf by shelf. An address
+/// that appears more than once (a movie in Recently Added and Favorites)
+/// is listed once, so one fetch serves every slot. The hero's 1920 px
+/// backdrop and a card's 480 px backdrop of the same item are different
+/// addresses and both stay: the hero needs the larger image.
+pub(super) fn artwork_plan(model: &HomeModel, urls: &ArtworkUrls<'_>) -> Vec<PlannedArt> {
+    let mut plan: Vec<PlannedArt> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut push = |request: Option<ArtworkRequest>, shape: ArtShape, width: u32| {
+        if let Some(request) = request
+            && seen.insert(request.url.clone())
+        {
+            plan.push(PlannedArt {
+                request,
+                shape,
+                width,
+            });
+        }
+    };
+    if let HeroState::Ready(pick) = model.hero() {
+        push(
+            backdrop_request(&pick.item, urls),
+            ArtShape::Backdrop,
+            BACKDROP_WIDTH,
+        );
+    }
+    for shelf in HomeShelf::ALL {
+        let (shape, width) = card_shape(shelf);
+        for item in model.items(shelf) {
+            push(card_request(shelf, item, urls), shape, width);
+        }
+    }
+    plan
+}
+
+/// How a shelf's cards are drawn and the width they ask for.
+fn card_shape(shelf: HomeShelf) -> (ArtShape, u32) {
+    if landscape(shelf) {
+        (ArtShape::Landscape, THUMB_WIDTH)
+    } else {
+        (ArtShape::Poster, TILE_POSTER_WIDTH)
+    }
+}
+
 /// The picture on a card: a still or a backdrop for the landscape rows,
 /// the poster elsewhere. Sizes follow the drawn size, not the hero's.
 pub(super) fn card_request(
@@ -428,15 +514,15 @@ pub(super) fn card_request(
     item: &MediaItem,
     urls: &ArtworkUrls<'_>,
 ) -> Option<ArtworkRequest> {
-    if landscape(shelf) {
-        if item.kind == ItemKind::Episode {
-            urls.item_request(item, ImageRole::Primary, THUMB_WIDTH)
-        } else {
-            urls.item_request(item, ImageRole::Backdrop, THUMB_WIDTH)
-                .or_else(|| urls.item_request(item, ImageRole::Primary, THUMB_WIDTH))
+    let (shape, width) = card_shape(shelf);
+    match shape {
+        ArtShape::Landscape if item.kind == ItemKind::Episode => {
+            urls.item_request(item, ImageRole::Primary, width)
         }
-    } else {
-        urls.item_request(item, ImageRole::Primary, TILE_POSTER_WIDTH)
+        ArtShape::Landscape => urls
+            .item_request(item, ImageRole::Backdrop, width)
+            .or_else(|| urls.item_request(item, ImageRole::Primary, width)),
+        _ => urls.item_request(item, ImageRole::Primary, width),
     }
 }
 
@@ -510,6 +596,8 @@ impl Render for HomeScreen {
 
         let mut page = ScrollView::vertical("home-scroll")
             .control(self.page.clone())
+            // A sideways swipe over a row moves the row, not the page.
+            .restrict_to_axis(true)
             .size_full()
             .flex()
             .flex_col()
@@ -1176,7 +1264,7 @@ fn backdrop_layer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artwork::{ARTWORK_CACHE_BYTES, BACKDROP_WIDTH};
+    use crate::artwork::ARTWORK_CACHE_BYTES;
     use crate::home::model::SHELF_LIMIT;
     use crate::home::model::tests::{item, with_backdrop};
     use crate::test_support::FIXTURE_TOKEN;
@@ -1217,17 +1305,109 @@ mod tests {
         );
     }
 
+    /// A Home with every shelf full of distinct titles that all have art:
+    /// the most images Home can ask for at once.
+    fn full_home() -> HomeModel {
+        let (mut model, requests) = HomeModel::open();
+        for request in requests {
+            let shelf = request.shelf;
+            let items = (0..SHELF_LIMIT)
+                .map(|index| {
+                    let value = format!("{}-{index}", shelf as usize);
+                    let kind = if landscape(shelf) {
+                        ItemKind::Episode
+                    } else {
+                        ItemKind::Movie
+                    };
+                    let mut item = with_backdrop(item(&value, kind));
+                    item.hierarchy.series_id = ItemId::parse(format!("series-{value}")).ok();
+                    item
+                })
+                .collect();
+            model.apply(request, Ok(items));
+        }
+        model
+    }
+
+    fn decoded_bytes(planned: &PlannedArt) -> usize {
+        let width = planned.width as f32;
+        (width * (width * planned.shape.aspect()).round()) as usize * 4
+    }
+
     #[test]
-    fn a_full_home_fits_the_artwork_budget_with_room_for_details() {
-        // Jellyfin scales to the requested width; posters are 2:3, stills
-        // and backdrops 16:9. Four bytes per decoded pixel.
-        let bytes = |width: u32, ratio: f32| (width as f32 * width as f32 * ratio) as usize * 4;
-        let hero = bytes(BACKDROP_WIDTH, 9.0 / 16.0);
-        let landscape = 2 * SHELF_LIMIT * bytes(THUMB_WIDTH, 9.0 / 16.0);
-        let posters = 3 * SHELF_LIMIT * bytes(TILE_POSTER_WIDTH, 1.5);
-        let home = hero + landscape + posters;
-        // About 47 MiB at most: a Details page (backdrop, poster, cast,
-        // related tiles; about 30 MiB) fits beside it without evicting Home.
-        assert!(home < ARTWORK_CACHE_BYTES * 55 / 100, "{home}");
+    fn the_artwork_plan_is_derived_from_the_production_requests() {
+        let session = crate::model::review_session();
+        let urls = session.artwork();
+        let plan = artwork_plan(&full_home(), &urls);
+        // Every planned width is the width its address actually asks for.
+        for planned in &plan {
+            assert!(
+                planned
+                    .request
+                    .url
+                    .contains(&format!("maxWidth={}", planned.width)),
+                "{}",
+                planned.request.url
+            );
+        }
+        let count = |shape| plan.iter().filter(|p| p.shape == shape).count();
+        let landscape_shelves = HomeShelf::ALL.iter().filter(|s| landscape(**s)).count();
+        assert_eq!(count(ArtShape::Backdrop), 1);
+        assert_eq!(count(ArtShape::Landscape), landscape_shelves * SHELF_LIMIT);
+        assert_eq!(
+            count(ArtShape::Poster),
+            (HomeShelf::ALL.len() - landscape_shelves) * SHELF_LIMIT
+        );
+    }
+
+    #[test]
+    fn a_full_home_is_a_planning_estimate_well_inside_the_cache() {
+        // A representative worst case, computed from the requests Home
+        // makes (widths from the production constants, the expected 16:9
+        // and 2:3 aspects). Real files keep their own aspect, so this is a
+        // planning number, not a ceiling. The ceiling is the cache budget.
+        let session = crate::model::review_session();
+        let urls = session.artwork();
+        let home: usize = artwork_plan(&full_home(), &urls)
+            .iter()
+            .map(decoded_bytes)
+            .sum();
+        let mib = home as f32 / (1024.0 * 1024.0);
+        assert!(home < ARTWORK_CACHE_BYTES * 55 / 100, "{mib:.1} MiB");
+        // Documented as "about 46.5 MiB" in docs/architecture/home.md.
+        assert!((44.0..50.0).contains(&mib), "{mib:.1} MiB");
+    }
+
+    #[test]
+    fn the_same_artwork_in_several_shelves_is_one_request() {
+        let session = crate::model::review_session();
+        let urls = session.artwork();
+        let movie = with_backdrop(item("northwind", ItemKind::Movie));
+        let (mut model, requests) = HomeModel::open();
+        for request in requests {
+            let items = match request.shelf {
+                // The hero, a landscape card, and two poster shelves.
+                HomeShelf::ContinueWatching | HomeShelf::RecentMovies | HomeShelf::Favorites => {
+                    vec![movie.clone()]
+                }
+                _ => Vec::new(),
+            };
+            model.apply(request, Ok(items));
+        }
+        let plan = artwork_plan(&model, &urls);
+        let addresses: HashSet<&str> = plan.iter().map(|p| p.request.url.as_str()).collect();
+        assert_eq!(addresses.len(), plan.len(), "no address twice");
+        // Hero backdrop (1920), card backdrop (480), one poster (360):
+        // shared only where the size genuinely matches.
+        assert_eq!(plan.len(), 3);
+        let shapes: Vec<ArtShape> = plan.iter().map(|p| p.shape).collect();
+        assert_eq!(
+            shapes,
+            vec![ArtShape::Backdrop, ArtShape::Landscape, ArtShape::Poster]
+        );
+        assert_ne!(
+            plan[0].request, plan[1].request,
+            "hero keeps its larger image"
+        );
     }
 }

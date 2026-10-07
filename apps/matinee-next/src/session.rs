@@ -7,6 +7,21 @@
 use matinee_jellyfin::{JellyfinError, Session, load_session, remove_session, save_session};
 use matinee_secrets::CredentialStore;
 
+/// Jellyfin said the saved session no longer works (401, 403, or a
+/// rejected token). Every authenticated screen treats this the same way: it
+/// reports it, and the shell ends the session. Unreachable servers, timeouts,
+/// and unreadable answers are not this.
+pub(crate) fn session_ended(error: &JellyfinError) -> bool {
+    matches!(
+        error,
+        JellyfinError::Unauthorized | JellyfinError::AuthRejected
+    )
+}
+
+/// A request found that the session has ended. Carries nothing on purpose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SessionEnded;
+
 #[derive(Debug)]
 pub enum Startup {
     Unauthenticated,

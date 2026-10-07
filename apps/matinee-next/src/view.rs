@@ -20,7 +20,7 @@ use crate::artwork::{ArtworkLoader, Client};
 use crate::details::{DetailsEvent, DetailsScreen};
 use crate::home::{HomeEvent, HomeScreen};
 use crate::nav::Navigation;
-use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen};
+use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen, PlayerSessionEnded};
 use crate::runtime::ServiceRuntime;
 use crate::session::{accept_authentication, forget_session, restore_session};
 use crate::store::SharedStore;
@@ -31,6 +31,9 @@ use crate::model::{AppModel, LOGIN_COPY, Phase, ReviewScene};
 pub struct Services {
     runtime: Arc<ServiceRuntime>,
     store: SharedStore,
+    /// Orders vault writes that can overlap: removing an ended session and
+    /// saving the next sign-in. Whoever takes it first finishes first.
+    vault: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Services {
@@ -38,6 +41,7 @@ impl Services {
         Ok(Self {
             runtime: Arc::new(ServiceRuntime::new()?),
             store: SharedStore::new(KeyringStore::new()),
+            vault: Arc::default(),
         })
     }
 
@@ -45,6 +49,7 @@ impl Services {
         Ok(Self {
             runtime: Arc::new(ServiceRuntime::new()?),
             store: SharedStore::new(MemoryStore::new()),
+            vault: Arc::default(),
         })
     }
 
@@ -176,11 +181,14 @@ impl MatineeRoot {
             return;
         };
         let store = self.services.store.clone();
+        let vault = Arc::clone(&self.services.vault);
         let (server, username, password) = request.into_parts();
         let (task, rx) = self.services.runtime.spawn(async move {
             match ReqwestTransport::new() {
                 Ok(transport) => {
                     let result = authenticate(&transport, &server, &username, password).await;
+                    // After any removal of an ended session, never before it.
+                    let _vault = vault.lock().await;
                     accept_authentication(&store, result)
                 }
                 Err(error) => Err(error.to_string()),
@@ -240,12 +248,19 @@ impl MatineeRoot {
         cx.notify();
     }
 
-    /// Jellyfin stopped accepting the session while Home was in use. Every
-    /// page closes (the Player sends its stop report, which may fail), Home
-    /// goes, and Login returns with the server and username kept. The dead
-    /// session is removed from the vault so the next launch does not
-    /// restore it. Server outages never land here: only an authorization
-    /// failure does.
+    /// Jellyfin stopped accepting the session. Home, Details, or the
+    /// Player's preparation reported it; this is the one place that acts.
+    /// Every page closes (a Player that started sends its stop report,
+    /// which may fail), Home and the client go, and Login returns with the
+    /// server and username kept. The dead session is removed from the vault
+    /// so the next launch does not restore it. Server outages never land
+    /// here: only an authorization failure does.
+    ///
+    /// Idempotent. Several requests can report at once; the first call
+    /// moves to Login and the rest find `AppModel::expire_session` false
+    /// and do nothing: no second removal, no second transition, no touching
+    /// what the person has started typing. Reports from screens that are no
+    /// longer current are dropped by the callers (`is_current_*`).
     fn expire_session(&mut self, cx: &mut Context<Self>) {
         if !self.model.expire_session() {
             return;
@@ -253,16 +268,35 @@ impl MatineeRoot {
         self.release_pages(cx);
         self.leave_home();
         let store = self.services.store.clone();
-        let (task, rx) = self.services.runtime.spawn(async move {
+        let vault = Arc::clone(&self.services.vault);
+        // Take the vault turn now, on this thread, so a sign-in started
+        // afterwards always saves after this removal.
+        let turn = Arc::clone(&vault).try_lock_owned();
+        // Final work: an orderly exit gives it a bounded chance to finish.
+        // It is not the window's in-flight slot, so signing in again does
+        // not abort it.
+        self.services.runtime.spawn_final(async move {
+            let _turn = match turn {
+                Ok(turn) => turn,
+                Err(_) => vault.lock_owned().await,
+            };
             let _ = tokio::task::spawn_blocking(move || forget_session(&store)).await;
         });
-        self.replace_task(task);
-        cx.spawn(async move |this, cx| {
-            let _ = rx.await;
-            this.update(cx, |this, _| this.task = None).ok();
-        })
-        .detach();
         cx.notify();
+    }
+
+    fn is_current_home(&self, home: &Entity<HomeScreen>) -> bool {
+        self.home.as_ref() == Some(home)
+    }
+
+    fn is_current_details(&self, details: &Entity<DetailsScreen>) -> bool {
+        self.pages
+            .any(|page| matches!(page, Page::Details(open) if open == details))
+    }
+
+    fn is_current_player(&self, player: &Entity<PlayerScreen>) -> bool {
+        self.pages
+            .any(|page| matches!(page, Page::Player(open) if open == player))
     }
 
     /// Drop Home and the session's client. Home's in-flight requests and
@@ -298,7 +332,9 @@ impl MatineeRoot {
         cx.subscribe_in(
             &home,
             window,
-            |this, _, event: &HomeEvent, window, cx| match event {
+            |this, home, event: &HomeEvent, window, cx| match event {
+                // Reports from a Home that is no longer the root are stale.
+                _ if !this.is_current_home(home) => {}
                 HomeEvent::Open(item_id) => this.open_details(item_id.clone(), window, cx),
                 HomeEvent::Play(item_id) => this.open_player(item_id.clone(), window, cx),
                 HomeEvent::SignOut => this.start_sign_out(cx),
@@ -363,6 +399,11 @@ impl MatineeRoot {
             |this, details, event: &DetailsEvent, window, cx| match event {
                 DetailsEvent::Play(item_id) => this.open_player(item_id.clone(), window, cx),
                 DetailsEvent::Back => this.close_details(details, cx),
+                DetailsEvent::SessionExpired => {
+                    if this.is_current_details(details) {
+                        this.expire_session(cx);
+                    }
+                }
             },
         )
         .detach();
@@ -405,6 +446,12 @@ impl MatineeRoot {
         cx.subscribe(&player, |this, _, _: &LeavePlayer, cx| {
             this.release_player(cx);
             cx.notify();
+        })
+        .detach();
+        cx.subscribe(&player, |this, player, _: &PlayerSessionEnded, cx| {
+            if this.is_current_player(&player) {
+                this.expire_session(cx);
+            }
         })
         .detach();
         self.pages.push(Page::Player(player));
@@ -847,4 +894,152 @@ pub fn open_matinee(
         },
     )
     .expect("failed to open window");
+}
+
+#[cfg(test)]
+mod tests {
+    //! Home's scroll-owning objects across pages, on the headless GPUI test
+    //! platform. Pixel layout is GPUI's; what is asserted here is that the
+    //! very objects holding the offsets survive, with their offsets.
+
+    use atelier_ui::gpui::{self, TestAppContext, VisualTestContext, point};
+
+    use super::*;
+    use crate::details::DetailsPreview;
+    use crate::player::PlayerPreview;
+
+    fn open(cx: &mut TestAppContext) -> (Entity<MatineeRoot>, &mut VisualTestContext) {
+        let services = Services::memory().unwrap();
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            MatineeRoot::new(services, Some(ReviewScene::Home), window, cx)
+        });
+        cx.run_until_parked();
+        (root, cx)
+    }
+
+    fn home_of(root: &Entity<MatineeRoot>, cx: &mut VisualTestContext) -> Entity<HomeScreen> {
+        root.read_with(cx, |root, _| root.home.clone().expect("Home is the root"))
+    }
+
+    fn push_details(
+        root: &Entity<MatineeRoot>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<DetailsScreen> {
+        let details = root.update_in(cx, |root, window, cx| {
+            let runtime = Arc::clone(&root.services.runtime);
+            let loader = root.artwork.clone();
+            let details =
+                cx.new(|cx| DetailsScreen::preview(runtime, loader, DetailsPreview::Movie, cx));
+            root.push_details(details.clone(), window, cx);
+            details
+        });
+        cx.run_until_parked();
+        details
+    }
+
+    /// Scroll Home's page and every row, and return what was set.
+    fn scroll_home(home: &Entity<HomeScreen>, cx: &mut VisualTestContext) -> (f32, Vec<f32>) {
+        let (page, rails) = home.read_with(cx, |home, _| home.scroll_state());
+        assert!(!rails.is_empty(), "rows were drawn");
+        page.set_offset(point(px(0.0), px(-150.0)));
+        let page_y = f32::from(page.offset().y);
+        assert!(page_y < 0.0, "the page has room to scroll");
+        let rows = rails
+            .iter()
+            .map(|(_, rail)| {
+                rail.scroll().set_offset(point(px(-120.0), px(0.0)));
+                f32::from(rail.scroll().offset().x)
+            })
+            .collect();
+        cx.run_until_parked();
+        (page_y, rows)
+    }
+
+    fn assert_kept(
+        home: &Entity<HomeScreen>,
+        cx: &mut VisualTestContext,
+        before: &(f32, Vec<f32>),
+    ) {
+        let (page, rails) = home.read_with(cx, |home, _| home.scroll_state());
+        assert_eq!(f32::from(page.offset().y), before.0, "page offset kept");
+        let rows: Vec<f32> = rails
+            .iter()
+            .map(|(_, rail)| f32::from(rail.scroll().offset().x))
+            .collect();
+        assert_eq!(rows, before.1, "row offsets kept");
+    }
+
+    #[gpui::test]
+    fn home_and_its_scroll_state_survive_details(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let home = home_of(&root, cx);
+        let (page, rails) = home.read_with(cx, |home, _| home.scroll_state());
+        let before = scroll_home(&home, cx);
+
+        let details = push_details(&root, cx);
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+
+        assert_eq!(home_of(&root, cx), home, "the same Home entity");
+        assert_kept(&home, cx, &before);
+        // The handles held before are the live ones: moving them moves Home.
+        page.set_offset(point(px(0.0), px(-60.0)));
+        let (live, live_rails) = home.read_with(cx, |home, _| home.scroll_state());
+        assert_eq!(f32::from(live.offset().y), -60.0);
+        assert_eq!(live_rails.len(), rails.len());
+    }
+
+    #[gpui::test]
+    fn home_and_its_scroll_state_survive_details_and_the_player(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let home = home_of(&root, cx);
+        let before = scroll_home(&home, cx);
+
+        let details = push_details(&root, cx);
+        root.update_in(cx, |root, window, cx| {
+            let runtime = Arc::clone(&root.services.runtime);
+            let player =
+                cx.new(|cx| PlayerScreen::preview(runtime, PlayerPreview::Paused, window, cx));
+            root.pages.mark_root_stale();
+            root.push_player(player, cx);
+        });
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.release_player(cx));
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+
+        assert_eq!(home_of(&root, cx), home, "the same Home entity");
+        assert!(root.read_with(cx, |root, _| root.pages.is_empty()));
+        assert_kept(&home, cx, &before);
+    }
+
+    #[gpui::test]
+    fn a_session_end_from_a_closed_page_is_ignored(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let details = push_details(&root, cx);
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+        // The closed Details reports late: it is no longer current.
+        details.update(cx, |_, cx| cx.emit(DetailsEvent::SessionExpired));
+        cx.run_until_parked();
+        assert!(root.read_with(cx, |root, _| root.model.shows_home()));
+        // The current Home reports twice: one transition, then nothing.
+        let home = home_of(&root, cx);
+        home.update(cx, |_, cx| {
+            cx.emit(HomeEvent::SessionExpired);
+            cx.emit(HomeEvent::SessionExpired);
+        });
+        cx.run_until_parked();
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login());
+            assert!(root.home.is_none());
+            assert!(root.pages.is_empty());
+            assert_eq!(root.model.notice(), Some(crate::model::SESSION_ENDED));
+        });
+        // The old Home reporting again changes nothing.
+        home.update(cx, |_, cx| cx.emit(HomeEvent::SessionExpired));
+        cx.run_until_parked();
+        assert!(root.read_with(cx, |root, _| root.model.shows_login()));
+    }
 }

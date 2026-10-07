@@ -44,7 +44,7 @@ pub(crate) enum HomeFailure {
 impl HomeFailure {
     pub(crate) fn from_error(error: &JellyfinError) -> Self {
         match error {
-            JellyfinError::Unauthorized | JellyfinError::AuthRejected => Self::SignedOut,
+            error if crate::session::session_ended(error) => Self::SignedOut,
             JellyfinError::Unreachable { .. } | JellyfinError::Cancelled => Self::Unreachable,
             _ => Self::Unreadable,
         }
@@ -69,7 +69,8 @@ impl HomeFailure {
     }
 }
 
-/// One shelf. Each is independent of the others.
+/// One shelf. Each is independent of the others. A shelf never holds
+/// `Failed(SignedOut)`: an ended session is reported, not shown.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ShelfState {
     Loading,
@@ -232,8 +233,10 @@ impl HomeModel {
             return Applied::Ignored;
         }
         slot.ticket = None;
-        let expired = response == Err(HomeFailure::SignedOut);
         match response {
+            // Not a shelf failure: the session is gone. The shelf keeps what
+            // it showed, and the shell ends the session.
+            Err(HomeFailure::SignedOut) => return Applied::SessionExpired,
             Ok(mut items) => {
                 items.truncate(SHELF_LIMIT);
                 slot.state = ShelfState::Ready(items);
@@ -243,11 +246,7 @@ impl HomeModel {
             Err(failure) => slot.state = ShelfState::Failed(failure),
         }
         self.settle_hero();
-        if expired {
-            Applied::SessionExpired
-        } else {
-            Applied::Updated
-        }
+        Applied::Updated
     }
 
     /// Whether any shelf is waiting for an answer.
@@ -278,14 +277,22 @@ impl HomeModel {
     }
 
     pub(crate) fn page(&self) -> PageState {
-        let mut failure = None;
+        let mut failure: Option<HomeFailure> = None;
         let mut empty = true;
         for slot in &self.slots {
             match &slot.state {
                 ShelfState::Loading => return PageState::Content,
                 ShelfState::Ready(items) => empty &= items.is_empty(),
+                // Shelves can fail for different reasons. An unreachable
+                // server explains the others, so it wins; otherwise the
+                // first failure in shelf order. Either way the choice does
+                // not depend on which answer arrived first.
                 ShelfState::Failed(reason) => {
-                    failure.get_or_insert(*reason);
+                    failure = match failure {
+                        Some(HomeFailure::Unreachable) => failure,
+                        Some(_) if *reason != HomeFailure::Unreachable => failure,
+                        _ => Some(*reason),
+                    };
                 }
             }
         }
@@ -644,6 +651,91 @@ pub(crate) mod tests {
             Err(HomeFailure::from_error(&JellyfinError::Unauthorized)),
         );
         assert_eq!(outcome, Applied::SessionExpired);
+        assert_eq!(
+            HomeFailure::from_error(&JellyfinError::AuthRejected),
+            HomeFailure::SignedOut
+        );
+        // Not a shelf failure: the shelf is untouched, and the page never
+        // turns into an ordinary failure page because of it.
+        assert_eq!(
+            model.shelf(HomeShelf::ContinueWatching),
+            &ShelfState::Loading
+        );
+        // Every other shelf 401s too. Each reports; the shell's
+        // `expire_session` is what makes that harmless (see AppModel tests).
+        for request in &requests[1..] {
+            assert_eq!(
+                model.apply(*request, Err(HomeFailure::SignedOut)),
+                Applied::SessionExpired
+            );
+        }
+        assert_eq!(model.page(), PageState::Content);
+        assert!(!model.is_loading());
+    }
+
+    #[test]
+    fn page_states_cover_every_mix_of_shelves() {
+        let run = |answer: &dyn Fn(HomeShelf) -> Option<Response>| {
+            let (mut model, requests) = HomeModel::open();
+            for request in &requests {
+                if let Some(response) = answer(request.shelf) {
+                    model.apply(*request, response);
+                }
+            }
+            model.page()
+        };
+        // All empty: the empty-library page.
+        assert_eq!(run(&|_| Some(Ok(Vec::new()))), PageState::Empty);
+        // Four empty, one unreachable: Home, with that shelf's note.
+        assert_eq!(
+            run(&|shelf| Some(match shelf {
+                HomeShelf::NextUp => Err(HomeFailure::Unreachable),
+                _ => Ok(Vec::new()),
+            })),
+            PageState::Content
+        );
+        // All unreachable: the whole-page failure.
+        assert_eq!(
+            run(&|_| Some(Err(HomeFailure::Unreachable))),
+            PageState::Failed(HomeFailure::Unreachable)
+        );
+        // Some content, some failed: Home.
+        assert_eq!(
+            run(&|shelf| Some(match shelf {
+                HomeShelf::RecentMovies => Ok(vec![item("m", ItemKind::Movie)]),
+                _ => Err(HomeFailure::Unreadable),
+            })),
+            PageState::Content
+        );
+        // Some still loading, the rest failed: Home, still loading.
+        assert_eq!(
+            run(&|shelf| match shelf {
+                HomeShelf::Favorites => None,
+                _ => Some(Err(HomeFailure::Unreachable)),
+            }),
+            PageState::Content
+        );
+    }
+
+    #[test]
+    fn the_whole_page_failure_is_chosen_the_same_way_in_any_order() {
+        let mixed = |shelf: HomeShelf| match shelf {
+            HomeShelf::ContinueWatching | HomeShelf::Favorites => HomeFailure::Unreadable,
+            _ => HomeFailure::Unreachable,
+        };
+        for reversed in [false, true] {
+            let (mut model, mut requests) = HomeModel::open();
+            if reversed {
+                requests.reverse();
+            }
+            for request in &requests {
+                model.apply(*request, Err(mixed(request.shelf)));
+            }
+            assert_eq!(model.page(), PageState::Failed(HomeFailure::Unreachable));
+        }
+        let (mut model, requests) = HomeModel::open();
+        answer_all(&mut model, &requests, |_| Err(HomeFailure::Unreadable));
+        assert_eq!(model.page(), PageState::Failed(HomeFailure::Unreadable));
     }
 
     #[test]

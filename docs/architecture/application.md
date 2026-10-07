@@ -189,15 +189,48 @@ Nothing renders the access token.
 
 ### Session end
 
-When a Home request answers 401 or 403, Home reports
-`HomeEvent::SessionExpired`. `MatineeRoot::expire_session` finishes every
-page (a Player sends its stop report, which may itself fail), drops Home and
-the session's client, removes the saved session from the vault on the
-service runtime, and shows Login with the server and username kept and the
-notice “Your Jellyfin session has ended. Sign in again to keep browsing.”
-Only an authorization failure does this; an unreachable server leaves the
-session alone. Details still shows its own “session has ended” failure with
-Back; it does not sign out by itself.
+One rule for every authenticated screen:
+
+```text
+authenticated request → Unauthorized / AuthRejected (401, 403)
+  → the screen reports it → MatineeRoot::expire_session → Login
+```
+
+Timeouts, an unreachable server, and malformed answers are not this; they
+stay local or partial failures on the screen that saw them.
+
+- **Home.** Any shelf: `HomeEvent::SessionExpired` (see [home.md](home.md)).
+- **Details.** Any request, primary or secondary (the title, similar,
+  collections, seasons, next up, episodes): `details::load` answers
+  `SessionEnded` instead of a response, and the screen emits
+  `DetailsEvent::SessionExpired`. A dead session never shows up as "More
+  like this isn't available". The title's own "session has ended" copy
+  remains only as a fallback.
+- **Player.** Preparation (the item and the playback plan) is
+  authoritative: a 401/403 there becomes `PlanFailure::SessionEnded`, the
+  Player shows "Your Jellyfin session has ended." and emits
+  `PlayerSessionEnded`. Nothing has played, so no stop report is due.
+  Progress and stop reports after playback has started stay non-fatal
+  notices and never end the session.
+
+`MatineeRoot::expire_session` is the only place that acts. It finishes
+every page (a Player that started sends its stop report, which may itself
+fail), drops Home and the session's client, and shows Login with the
+server and username kept, the password cleared, and the notice “Your
+Jellyfin session has ended. Sign in again to keep browsing.” The dead
+session is removed from the vault as final work on the service runtime
+(an orderly exit gives it the usual bounded drain). The removal takes the
+vault turn synchronously, before Login is shown, and sign-in saves only
+after taking that turn, so a quick sign-in can never be undone by the
+removal.
+
+It is idempotent. `AppModel::expire_session` is true only while
+`Authenticated`; Home's five shelves reporting together, a Details request
+reporting after Home, or a report arriving while the person types or
+signs in again all find it false and do nothing: one vault removal, one
+transition, one release of pages, and the new form is untouched. Reports
+from a Home or page that is no longer current (already closed, or from a
+previous sign-in) are dropped before that check.
 
 ## Navigation
 
