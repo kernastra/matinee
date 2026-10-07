@@ -415,21 +415,32 @@ impl PlayerScreen {
         .detach();
     }
 
-    fn shutdown(&mut self) {
-        let directives = self.model.close();
-        for directive in &directives {
+    /// End this Player: send the final stop report if one is owed, stop the
+    /// engine, and abort Player tasks. A second call does nothing.
+    ///
+    /// The shell calls this when it leaves the Player, and the window calls
+    /// it before it closes or the application quits. The report goes through
+    /// [`ServiceRuntime::spawn_final`]: leaving for the shell does not wait for
+    /// Jellyfin, and an orderly exit drains it before the runtime is dropped.
+    pub(crate) fn finish(&mut self) {
+        if let Some(player) = self.player.as_ref() {
+            self.model.note_final_snapshot(&player.snapshot());
+        }
+        let closing = self.model.close();
+        for directive in &closing.directives {
             if matches!(directive, Directive::Stop) {
                 self.apply_engine(directive);
             }
         }
-        if let (Some(client), Some(report)) = (self.client.clone(), self.model.report_body()) {
-            for directive in directives {
+        if let (Some(client), Some(report)) = (self.client.clone(), closing.report) {
+            for directive in closing.directives {
                 if let Directive::Report(kind) = directive {
                     let client = Arc::clone(&client);
                     let report = report.clone();
-                    let _ = self
-                        .runtime
-                        .spawn(async move { send_report(&client, kind, report).await });
+                    self.runtime.spawn_final(async move {
+                        // A failed final report is not shown: the Player is gone.
+                        let _ = send_report(&client, kind, report).await;
+                    });
                 }
             }
         }
@@ -440,9 +451,11 @@ impl PlayerScreen {
     }
 }
 
+/// Defensive cleanup. Orderly paths call [`PlayerScreen::finish`] first, so
+/// this normally finds the Player already closed and only releases resources.
 impl Drop for PlayerScreen {
     fn drop(&mut self) {
-        self.shutdown();
+        self.finish();
     }
 }
 
@@ -981,3 +994,165 @@ fn plain_key(event: &KeyDownEvent) -> bool {
 pub(crate) struct LeavePlayer;
 
 impl EventEmitter<LeavePlayer> for PlayerScreen {}
+
+#[cfg(test)]
+mod tests {
+    //! The final stop report on the real client path, against a local server.
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use matinee_core::{ItemId, PlaybackMethod, PlaybackReport, ReportKind, User, UserId};
+    use matinee_jellyfin::{JellyfinClient, ReqwestTransport, Session};
+
+    use super::send_report;
+    use crate::runtime::{Drain, ServiceRuntime};
+
+    enum Reply {
+        NoContent,
+        ServerError,
+        Hang,
+    }
+
+    /// A one-request Jellyfin stand-in on loopback. Each request's head and
+    /// body arrive on the receiver.
+    fn fake_jellyfin(reply: Reply) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let Ok(read) = stream.read(&mut buffer) else {
+                    return;
+                };
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&request);
+                if let Some(head_end) = text.find("\r\n\r\n") {
+                    let length = text[..head_end]
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())?
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= head_end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&request).into_owned());
+            let response: &[u8] = match reply {
+                Reply::NoContent => b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n",
+                Reply::ServerError => {
+                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
+                }
+                Reply::Hang => {
+                    std::thread::sleep(Duration::from_secs(30));
+                    return;
+                }
+            };
+            let _ = stream.write_all(response);
+        });
+        (address, rx)
+    }
+
+    fn client(address: &str) -> std::sync::Arc<JellyfinClient<ReqwestTransport>> {
+        let session = Session::new(
+            address,
+            "fixture-token",
+            User::new(UserId::parse("user-1").unwrap(), "alex", None),
+        )
+        .unwrap();
+        std::sync::Arc::new(JellyfinClient::new(
+            session,
+            ReqwestTransport::new().unwrap(),
+        ))
+    }
+
+    fn final_report() -> PlaybackReport {
+        PlaybackReport {
+            item_id: ItemId::parse("item-1").unwrap(),
+            media_source_id: None,
+            play_session_id: None,
+            position: Duration::from_secs(754),
+            paused: true,
+            muted: false,
+            volume: 0.8,
+            audio_stream_index: Some(1),
+            subtitle_stream_index: Some(-1),
+            method: PlaybackMethod::DirectPlay,
+        }
+    }
+
+    /// What `PlayerScreen::finish` does with a stop report, then an exit drain.
+    fn send_final_and_drain(
+        runtime: &ServiceRuntime,
+        address: &str,
+        bound: Duration,
+    ) -> (Drain, mpsc::Receiver<Result<(), String>>) {
+        let client = client(address);
+        let (tx, rx) = mpsc::channel();
+        runtime.spawn_final(async move {
+            let outcome = send_report(&client, ReportKind::Stopped, final_report()).await;
+            let _ = tx.send(outcome);
+        });
+        (runtime.drain_final_within(bound), rx)
+    }
+
+    #[test]
+    fn orderly_exit_delivers_the_final_stop_before_teardown() {
+        let (address, requests) = fake_jellyfin(Reply::NoContent);
+        let runtime = ServiceRuntime::new().unwrap();
+        let (drain, outcome) = send_final_and_drain(&runtime, &address, Duration::from_secs(5));
+        assert_eq!(drain, Drain::Settled);
+        assert_eq!(outcome.try_recv().unwrap(), Ok(()));
+        let request = requests.try_recv().unwrap();
+        assert!(request.starts_with("POST /Sessions/Playing/Stopped "));
+        assert!(request.contains("\"PositionTicks\":7540000000"));
+        assert!(request.contains("\"IsPaused\":true"));
+        assert!(request.contains("\"SubtitleStreamIndex\":-1"));
+        drop(runtime);
+    }
+
+    #[test]
+    fn a_failed_final_stop_does_not_stop_the_exit() {
+        let (address, _requests) = fake_jellyfin(Reply::ServerError);
+        let runtime = ServiceRuntime::new().unwrap();
+        let (drain, outcome) = send_final_and_drain(&runtime, &address, Duration::from_secs(5));
+        assert_eq!(drain, Drain::Settled);
+        assert!(outcome.try_recv().unwrap().is_err());
+        drop(runtime);
+    }
+
+    #[test]
+    fn a_hanging_final_stop_is_abandoned_at_the_bound() {
+        let (address, requests) = fake_jellyfin(Reply::Hang);
+        let runtime = ServiceRuntime::new().unwrap();
+        let started = std::time::Instant::now();
+        let bound = Duration::from_millis(300);
+        let (drain, outcome) = send_final_and_drain(&runtime, &address, bound);
+        assert_eq!(drain, Drain::TimedOut);
+        assert!(
+            requests.try_recv().is_ok(),
+            "the request did reach the server"
+        );
+        assert!(outcome.try_recv().is_err(), "and never got an answer");
+        drop(runtime);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "exit continued after {:?}",
+            started.elapsed()
+        );
+    }
+}

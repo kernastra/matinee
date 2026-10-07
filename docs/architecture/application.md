@@ -51,10 +51,54 @@ the shipping Tauri id `dev.sean.matinee`.
 ## Shutdown
 
 `main` holds one `Arc<ServiceRuntime>` until `AtelierApp::run` returns, then
-drops it. The last `Drop` calls `Runtime::shutdown_timeout` (2 seconds),
-which aborts leftover tasks. Closing the window aborts that view's handle
-first. On macOS the process can outlive the last window; the runtime stays
-until the process quits.
+drops it. The last `Drop` drains final work (below), then calls
+`Runtime::shutdown_timeout` (2 seconds), which aborts leftover tasks.
+Closing the window aborts that view's handle first. On macOS the process can
+outlive the last window; the runtime stays until the process quits.
+
+### Final work and orderly exit
+
+Some work must outlive the screen that started it. Today that is only the
+Player's final Jellyfin stop report. It is started with
+`ServiceRuntime::spawn_final`, which counts it as pending until it finishes
+or is cancelled.
+
+- **Player → shell** (Back, Escape, sign-out). `MatineeRoot::release_player`
+  calls `PlayerScreen::finish`, which starts the stop report and returns.
+  Nothing waits: the runtime stays alive and delivers it in the background.
+- **Window close.** `Window::on_window_should_close` calls the same
+  `release_player` before the window is torn down, so the report does not
+  depend on drop order. The window then closes. The Close Window command
+  removes the window without that check; there `Drop for PlayerScreen`
+  starts the same tracked report, so the exit drain below still covers it.
+  On Linux and Windows the last window closing quits the app, which
+  continues as below.
+- **Orderly application exit** (Quit, or the last window closing where that
+  quits). GPUI runs its `on_app_quit` handlers before it drops windows. The
+  window's handler finishes the Player if it is still open, then calls
+  `ServiceRuntime::drain_final`. An application-level handler registered in
+  `lib.rs` drains as well, for the case where the window, and its Player,
+  closed first. Drain blocks the GPUI thread until pending final work
+  finishes or `FINAL_WORK_BOUND` (2 seconds) passes, counted once from the
+  first drain however many handlers call it. Exit then continues whether the
+  report succeeded, failed, or timed out. A failed or abandoned final report
+  is not shown; the window is gone. This is the only place the GPUI thread
+  waits on the service runtime, and only during termination. It is not
+  `block_on` and does not poll HTTP: it waits on a condition variable that
+  the runtime's tasks signal. GPUI's own 100 ms wait for quit futures is
+  not used for this, because the handlers return completed futures.
+- The runtime is destroyed only after that: on Linux and Windows when `run`
+  returns, on macOS when the process exits after the quit handlers.
+  `ServiceRuntime`'s `Drop` drains again in case no quit handler ran; after
+  an orderly drain it returns at once.
+- `Drop for PlayerScreen` calls `finish` too. It is defensive cleanup that
+  normally finds the Player already closed and only stops the engine and
+  releases resources.
+
+Matinee cannot deliver the final report when the process is killed
+(`SIGKILL`, Task Manager end task), crashes, or the OS crashes or loses
+power. Jellyfin then keeps the last progress report, at most 10 seconds old
+while playing, and expires the session on its own schedule.
 
 If sign-in is aborted after `save_session` has already returned, the vault
 keeps the session and the next launch restores it. If it is aborted before
@@ -156,11 +200,18 @@ Opening the Player from the shell:
    painted or logged.
 5. After the file loads, the model sends play and a start report.
 
-Leaving the Player, including window close and sign-out, reports stop when
-playback had started, stops the engine, aborts in-flight requests, and
-drops `Player`. Drop joins the engine's owner and render threads. The final
-stop report is spawned on the same `ServiceRuntime` and is not aborted with
-the screen's other tasks. There is no second Tokio runtime.
+Leaving the Player, including window close, sign-out, and application exit,
+reports stop when playback had started, stops the engine, aborts in-flight
+requests, and drops `Player`. Drop joins the engine's owner and render
+threads. The stop report body is captured by `PlayerModel::close` before it
+resets anything, after taking position, volume, and mute from the engine's
+last snapshot (an idle or failed snapshot is ignored, so teardown never
+reports position zero). It carries the last seek target, pause state, and
+audio and subtitle indices. The report runs as final work on the same
+`ServiceRuntime` (see Shutdown) and is not aborted with the screen's other
+tasks. A stop already sent at natural completion is not sent again, and
+playback that never started (resolving, loading, or a startup failure) sends
+none. There is no second Tokio runtime.
 
 Resume follows the shipping player. A zero position starts at the beginning.
 A position inside the last 30 seconds of a known runtime starts over. If the

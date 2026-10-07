@@ -147,6 +147,18 @@ thread that calls the client API, except `mpv_wakeup`.
 
 The GPUI thread does not call libmpv and does not wait for a frame.
 
+### Player shutdown and the final stop report
+
+`PlayerScreen::finish` takes the engine's last snapshot, closes the model
+(which captures the stop report body), stops the engine, starts the stop
+report as final work on the service runtime, and drops `Player`. The shell
+calls it when leaving the Player, the window calls it before it closes, and
+the quit handler calls it before an orderly exit drains final work for at
+most 2 seconds. Drop calls it again as cleanup. Leaving for the shell never
+waits for Jellyfin. The application lifecycle, the bound, and what cannot
+be guaranteed after a forced kill or crash are in
+[application.md](application.md#final-work-and-orderly-exit).
+
 ## Dynamic library
 
 libmpv is opened with `libloading` at `Player::open`. Nothing is linked at

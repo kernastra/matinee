@@ -92,6 +92,18 @@ impl MatineeRoot {
         if let Some(player) = root.player.clone() {
             root.watch_player(&player, cx);
         }
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_, cx| {
+            // Close the Player before the window goes, so its stop report does
+            // not depend on drop order. The window still closes.
+            weak.update(cx, |root, cx| root.release_player(cx)).ok();
+            true
+        });
+        cx.on_app_quit(|root, cx| {
+            root.prepare_exit(cx);
+            async {}
+        })
+        .detach();
         root
     }
 
@@ -160,7 +172,7 @@ impl MatineeRoot {
         if !self.model.begin_sign_out() {
             return;
         }
-        self.player = None;
+        self.release_player(cx);
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -210,14 +222,28 @@ impl MatineeRoot {
 
     fn watch_player(&self, player: &Entity<PlayerScreen>, cx: &mut Context<Self>) {
         cx.subscribe(player, |this, _, _: &LeavePlayer, cx| {
-            this.player = None;
+            this.release_player(cx);
             cx.notify();
         })
         .detach();
     }
 
-    fn close_player(&mut self) {
-        self.player = None;
+    /// Player → shell, and the first step of window close and application
+    /// exit. The final stop report is started here and not awaited: the
+    /// service runtime stays alive. Only [`Self::prepare_exit`] waits for it.
+    fn release_player(&mut self, cx: &mut Context<Self>) {
+        if let Some(player) = self.player.take() {
+            player.update(cx, |player, _| player.finish());
+        }
+    }
+
+    /// Orderly application exit. GPUI calls this from its quit handlers,
+    /// before it drops windows. The Player is finished explicitly, then the
+    /// GPUI thread waits for final reports, bounded by
+    /// [`crate::runtime::FINAL_WORK_BOUND`]. Exit continues either way.
+    fn prepare_exit(&mut self, cx: &mut Context<Self>) {
+        self.release_player(cx);
+        self.services.runtime.drain_final();
     }
 }
 
@@ -287,7 +313,7 @@ impl Render for MatineeRoot {
                         })
                         .unwrap_or(KeyOutcome::Ignored);
                     if matches!(outcome, KeyOutcome::Leave) {
-                        this.close_player();
+                        this.release_player(cx);
                         cx.notify();
                     }
                     return;

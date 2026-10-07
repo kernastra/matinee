@@ -657,16 +657,46 @@ impl PlayerModel {
     }
 
     /// Stop reporting and release the engine. A second call is empty.
-    pub(crate) fn close(&mut self) -> Vec<Directive> {
+    ///
+    /// The stop report body is captured here, before close resets anything,
+    /// so it carries the last position, seek target, and track choices.
+    /// `report` is present only when this close owes Jellyfin a stop.
+    pub(crate) fn close(&mut self) -> Closing {
         if self.stage == Stage::Closed {
-            return Vec::new();
+            return Closing::default();
         }
         let mut directives = self.stop_report();
+        let report = if directives.is_empty() {
+            None
+        } else {
+            self.report_body()
+        };
         directives.push(Directive::Stop);
         self.stage = Stage::Closed;
         self.menu = None;
         self.scrub = None;
-        directives
+        Closing { directives, report }
+    }
+
+    /// Take position, volume, and mute from the engine's last snapshot just
+    /// before close. An idle, failed, or empty snapshot is ignored so teardown
+    /// never reports position zero in place of the last real one. Play state
+    /// stays as the model holds it, including a pause that is still settling.
+    pub(crate) fn note_final_snapshot(&mut self, snapshot: &Snapshot) {
+        if self.stage != Stage::Live
+            || !matches!(
+                snapshot.state,
+                PlaybackState::Playing
+                    | PlaybackState::Paused
+                    | PlaybackState::Buffering
+                    | PlaybackState::Ended
+            )
+        {
+            return;
+        }
+        self.snapshot.position = snapshot.position;
+        self.volume = snapshot.volume;
+        self.muted = snapshot.muted;
     }
 
     pub(crate) fn report_body(&self) -> Option<PlaybackReport> {
@@ -935,6 +965,14 @@ impl fmt::Debug for PlayerModel {
     }
 }
 
+/// What closing the Player owes the engine and Jellyfin.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Closing {
+    pub directives: Vec<Directive>,
+    /// The stop report body, captured before close reset the model.
+    pub report: Option<PlaybackReport>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ViewKey {
     stage: Stage,
@@ -1177,7 +1215,7 @@ mod tests {
         assert_eq!(model.playback_state(), Some(PlaybackState::Error));
         model.close();
         assert_eq!(model.stage(), Stage::Closed);
-        assert!(model.close().is_empty());
+        assert_eq!(model.close(), Closing::default());
     }
 
     #[test]
@@ -1367,7 +1405,7 @@ mod tests {
             None,
             "a later successful report clears the notice"
         );
-        let closing = model.close();
+        let closing = model.close().directives;
         assert!(closing.contains(&Directive::Report(ReportKind::Stopped)));
         assert!(closing.contains(&Directive::Stop));
         assert!(
@@ -1608,6 +1646,124 @@ mod tests {
         assert_eq!(model.report_body().unwrap().audio_stream_index, None);
     }
 
+    fn stops(closing: &Closing) -> usize {
+        reports(&closing.directives)
+            .into_iter()
+            .filter(|kind| *kind == ReportKind::Stopped)
+            .count()
+    }
+
+    #[test]
+    fn closing_from_playback_reports_one_stop_with_the_last_state() {
+        use matinee_core::{MediaSourceId, PlaySessionId};
+
+        let mut prepared = plan(PlaybackMethod::Transcode, Duration::ZERO);
+        prepared.plan.source_id = Some(MediaSourceId::parse("source-1").unwrap());
+        prepared.plan.play_session_id = Some(PlaySessionId::parse("play-1").unwrap());
+        let now = Instant::now();
+        let mut model = PlayerModel::new();
+        model.begin(item());
+        model.accept_plan(prepared);
+        model.ingest_event(PlayerEvent::Loaded, now);
+        model.ingest(playing(minutes(20)), now);
+        model.command(UserCommand::TogglePlay, now);
+        model.command(UserCommand::SubtitlesOff, now);
+        // The engine paused at 20:03 with the volume lowered and muted.
+        let last = Snapshot {
+            volume: 0.4,
+            muted: true,
+            ..paused(minutes(20) + Duration::from_secs(3))
+        };
+        model.note_final_snapshot(&last);
+
+        let closing = model.close();
+        assert_eq!(stops(&closing), 1);
+        assert!(closing.directives.contains(&Directive::Stop));
+        let report = closing.report.expect("a stop is owed");
+        assert_eq!(report.position, minutes(20) + Duration::from_secs(3));
+        assert!(report.paused);
+        assert!(report.muted);
+        assert!((report.volume - 0.4).abs() < f32::EPSILON);
+        assert_eq!(report.audio_stream_index, Some(1));
+        assert_eq!(report.subtitle_stream_index, Some(-1));
+        assert_eq!(report.media_source_id.unwrap().as_str(), "source-1");
+        assert_eq!(report.play_session_id.unwrap().as_str(), "play-1");
+        assert_eq!(report.method, PlaybackMethod::Transcode);
+        assert_eq!(model.close(), Closing::default(), "teardown after close");
+    }
+
+    #[test]
+    fn teardown_never_reports_position_zero_in_place_of_the_last_one() {
+        let (mut model, now) = open_live();
+        model.ingest(playing(minutes(42)), now);
+        // The engine already went idle, so its snapshot says zero.
+        model.note_final_snapshot(&Snapshot::default());
+        let report = model.close().report.unwrap();
+        assert_eq!(report.position, minutes(42));
+    }
+
+    #[test]
+    fn closing_during_a_seek_reports_the_target() {
+        let (mut model, now) = open_live();
+        model.command(UserCommand::Scrub(minutes(50)), now);
+        model.note_final_snapshot(&playing(Duration::from_secs(4)));
+        let report = model.close().report.unwrap();
+        assert_eq!(report.position, minutes(50));
+    }
+
+    #[test]
+    fn teardown_after_natural_completion_sends_no_second_stop() {
+        let (mut model, now) = open_live();
+        let ended = model.ingest_event(PlayerEvent::Ended, now);
+        assert_eq!(reports(&ended), vec![ReportKind::Stopped]);
+        let closing = model.close();
+        assert_eq!(stops(&closing), 0);
+        assert_eq!(closing.report, None);
+        assert_eq!(closing.directives, vec![Directive::Stop]);
+    }
+
+    #[test]
+    fn closing_a_replay_sends_its_own_stop() {
+        let (mut model, now) = open_live();
+        model.ingest_event(PlayerEvent::Ended, now);
+        let again = model.command(UserCommand::TogglePlay, now + Duration::from_secs(1));
+        assert_eq!(reports(&again), vec![ReportKind::Start]);
+        // Past the settle time, so the rewind target has been released.
+        model.ingest(
+            playing(Duration::from_secs(30)),
+            now + Duration::from_secs(3),
+        );
+        let closing = model.close();
+        assert_eq!(stops(&closing), 1);
+        assert_eq!(closing.report.unwrap().position, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn playback_that_never_started_reports_no_stop() {
+        let mut resolving = PlayerModel::new();
+        resolving.begin(item());
+        assert_eq!(resolving.close().report, None);
+
+        let mut loading = PlayerModel::new();
+        loading.begin(item());
+        loading.accept_plan(plan(PlaybackMethod::DirectPlay, Duration::ZERO));
+        loading.note_final_snapshot(&playing(Duration::from_secs(1)));
+        let closing = loading.close();
+        assert_eq!(stops(&closing), 0);
+        assert_eq!(closing.report, None);
+
+        let mut rejected = PlayerModel::new();
+        rejected.begin(item());
+        rejected.reject_plan(PlanFailure::incompatible("no stream"));
+        assert_eq!(rejected.close().report, None);
+
+        let mut missing = PlayerModel::new();
+        missing.begin(item());
+        missing.accept_plan(plan(PlaybackMethod::DirectPlay, Duration::ZERO));
+        missing.reject_engine(PlayerFailure::library_missing());
+        assert_eq!(missing.close().report, None);
+    }
+
     #[test]
     fn natural_completion_reports_stop_once() {
         let (mut model, now) = open_live();
@@ -1615,7 +1771,8 @@ mod tests {
         assert_eq!(ended, vec![Directive::Report(ReportKind::Stopped)]);
         assert!(model.controls_visible(now + Duration::from_secs(30)));
         let again = model.close();
-        assert_eq!(again, vec![Directive::Stop]);
+        assert_eq!(again.directives, vec![Directive::Stop]);
+        assert_eq!(again.report, None, "the stop was already reported");
     }
 
     #[test]

@@ -50,9 +50,21 @@ pub fn run() {
             eprintln!("failed to load Matinee fonts: {error}");
         }
         open_matinee(cx, services.clone(), review, size);
+        // Closing the last window on Linux and Windows quits after the window,
+        // and its Player, are already gone. This drain covers the stop report
+        // that window close started. The deadline is shared with the window's
+        // own quit handler, so exit waits at most `FINAL_WORK_BOUND` in total.
+        let runtime = services.runtime();
+        cx.on_app_quit(move |_| {
+            runtime.drain_final();
+            async {}
+        })
+        .detach();
     });
+    // Linux and Windows return here; macOS exits inside the quit handlers.
     // Window tasks have been aborted with their views. Dropping the last
-    // handle shuts the service runtime down and cancels anything still in flight.
+    // handle drains final work (already done by an orderly exit), then shuts
+    // the service runtime down and cancels anything still in flight.
     drop(runtime);
 }
 

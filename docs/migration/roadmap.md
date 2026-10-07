@@ -152,7 +152,10 @@ reference app, including the product rules in `docs/design-spec.md`.
 - Resume uses the plan start and the shipping 30-second completion tail.
   Reports are start, progress on pause/resume/seek, progress every 10
   seconds while playing, and stop on completion or close. A failed report
-  is a notice.
+  is a notice. Play after the end starts a new Start/Stop pair.
+- Leaving for the shell sends the final stop without waiting. An orderly
+  application exit gives it up to 2 seconds before the service runtime is
+  destroyed, then exits regardless. A killed or crashed process cannot.
 - A missing libmpv is an error state. Packaging remains Phase 4. The
   software frame path stays capped at 1080p.
 
