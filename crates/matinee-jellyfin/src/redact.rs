@@ -43,7 +43,10 @@ pub(crate) fn redact_url(value: &str) -> String {
     url.to_string()
 }
 
-pub(crate) fn redact_freeform(value: &str) -> String {
+/// Remove Jellyfin tokens, API keys, and passwords from free text.
+///
+/// Use this before an error message is stored or painted.
+pub fn redact_freeform(value: &str) -> String {
     let mut text = redact_token_header(value);
     for key in [
         "api_key",

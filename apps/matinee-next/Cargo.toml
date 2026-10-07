@@ -1,6 +1,6 @@
 [package]
 name = "matinee-next"
-description = "Native Matinee application. Owns the service runtime, the Jellyfin session, and Login."
+description = "Native Matinee application. Owns the service runtime, the Jellyfin session, Login, and the Player."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,11 +18,13 @@ path = "src/main.rs"
 [dependencies]
 atelier-app.workspace = true
 atelier-ui.workspace = true
+futures = "0.3"
 matinee-core.workspace = true
 matinee-jellyfin.workspace = true
+matinee-player.workspace = true
 matinee-secrets.workspace = true
 matinee-ui.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 url = "2"
 zeroize = "1"
 

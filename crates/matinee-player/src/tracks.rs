@@ -17,8 +17,12 @@ impl TrackId {
         self.0
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_raw(raw: u64) -> Self {
+    /// An id with this numeric value.
+    ///
+    /// The engine assigns real ids. Application tests use this to build a
+    /// snapshot without opening libmpv. The value is not a libmpv track id.
+    #[doc(hidden)]
+    pub fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
 }

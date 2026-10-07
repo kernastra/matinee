@@ -1,8 +1,8 @@
 //! Native Matinee application.
 //!
 //! The GPUI window talks to one service runtime. That runtime owns Jellyfin
-//! HTTP and vault work. Login is the first screen. Library screens are not
-//! in this crate yet.
+//! HTTP, playback reporting, and vault work. Login and the Player are the
+//! screens in this crate. Home and the other library screens are not.
 //!
 //! # Artwork
 //!
@@ -12,6 +12,7 @@
 //! runtime. Do not put `api_key` back on artwork URLs.
 
 mod model;
+mod player;
 mod runtime;
 mod session;
 mod store;
@@ -49,9 +50,21 @@ pub fn run() {
             eprintln!("failed to load Matinee fonts: {error}");
         }
         open_matinee(cx, services.clone(), review, size);
+        // Closing the last window on Linux and Windows quits after the window,
+        // and its Player, are already gone. This drain covers the stop report
+        // that window close started. The deadline is shared with the window's
+        // own quit handler, so exit waits at most `FINAL_WORK_BOUND` in total.
+        let runtime = services.runtime();
+        cx.on_app_quit(move |_| {
+            runtime.drain_final();
+            async {}
+        })
+        .detach();
     });
+    // Linux and Windows return here; macOS exits inside the quit handlers.
     // Window tasks have been aborted with their views. Dropping the last
-    // handle shuts the service runtime down and cancels anything still in flight.
+    // handle drains final work (already done by an orderly exit), then shuts
+    // the service runtime down and cancels anything still in flight.
     drop(runtime);
 }
 
@@ -63,6 +76,12 @@ fn review_scene() -> Option<ReviewScene> {
         Some("error") => Some(ReviewScene::Error),
         Some("loading") => Some(ReviewScene::Loading),
         Some("shell") => Some(ReviewScene::Shell),
+        Some("player-playing") => Some(ReviewScene::PlayerPlaying),
+        Some("player-paused") => Some(ReviewScene::PlayerPaused),
+        Some("player-controls") => Some(ReviewScene::PlayerControls),
+        Some("player-error") => Some(ReviewScene::PlayerError),
+        Some("player-audio") => Some(ReviewScene::PlayerAudio),
+        Some("player-subtitles") => Some(ReviewScene::PlayerSubtitles),
         _ => None,
     }
 }

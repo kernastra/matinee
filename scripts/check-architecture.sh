@@ -170,6 +170,13 @@ if matches=$(grep -RInE '\bblock_on\b' \
   echo "$matches" >&2
 fi
 
+# 11. The application plays through matinee-player. It does not load libmpv
+#     itself. The user-facing sentence may still name that library.
+if matches=$(grep -RInE 'libloading|mpv_|libmpv_sys|matinee_player::engine' apps --include='*.rs'); then
+  fail "application code must use the public matinee-player API, not libmpv:"
+  echo "$matches" >&2
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

@@ -1,10 +1,10 @@
 # Matinee Next — Architecture Overview
 
-Status: **Phase 3A (native runtime and Login) on the Phase 2 services**. The shipping app is still the Tauri + React
+Status: **Phase 3B (native Player) on the Phase 3A runtime**. The shipping app is still the Tauri + React
 app in `src/` and `src-tauri/`. It remains the reference implementation. Its
 calendar and Poster Studio commands are thin adapters over the shared crates.
-The native app opens Login and a minimal authenticated shell. Home, Player,
-and the other library screens are not built.
+The native app opens Login, a minimal authenticated shell, and the Player.
+Home and the other library screens are not built.
 
 Related documents:
 
@@ -13,7 +13,7 @@ Related documents:
 - [playback.md](playback.md) — native playback engine, frame surface, and licensing (all playback findings live there)
 - [domain.md](domain.md) — `matinee-core` types
 - [jellyfin.md](jellyfin.md) — Jellyfin client, session, and playback negotiation
-- [application.md](application.md) — native runtime, Login, session startup, and sign-out
+- [application.md](application.md) — native runtime, Login, session startup, sign-out, and Player
 - [secrets.md](secrets.md) — OS credential vault
 - [integrations.md](integrations.md) — Radarr and Sonarr
 - [studio.md](studio.md) — Poster Studio services
@@ -38,7 +38,7 @@ Applications live in `apps/`:
 |---|---|
 | `apps/atelier-gallery` | The component catalog (Storybook / SwiftUI Previews equivalent). Product-neutral; Matinee's theme is an opt-in cargo feature (`matinee-theme`, on by default in this repo) so components can be previewed under it. |
 | `apps/atelier-window-lab` | Manual inspection of native window chrome, insets, fullscreen, and scale. Not a component story. |
-| `apps/matinee-next` | Native Matinee window: one service runtime, Login, and a minimal authenticated shell. Not Home or Player. |
+| `apps/matinee-next` | Native Matinee window: one service runtime, Login, a minimal authenticated shell, and the Player. Not Home or Details. |
 | `apps/matinee-playback-lab` | Load, transport, tracks, and an external frame. Not the Matinee Player screen. |
 
 ```
@@ -49,6 +49,7 @@ apps/matinee-next ────┬─> atelier-app
                       ├─> matinee-ui
                       ├─> matinee-core
                       ├─> matinee-jellyfin ──> matinee-core
+                      ├─> matinee-player   (libmpv at runtime, no GPUI)
                       └─> matinee-secrets
 matinee-jellyfin ──────────> matinee-secrets     (session save/load only)
 matinee-integrations ──────> matinee-secrets
@@ -63,8 +64,9 @@ src-tauri ─────────────────> matinee-secrets, 
 The rules are enforced by `scripts/check-architecture.sh` (run in CI):
 no product terms in `atelier-*`, no playback concepts in `atelier-ui`, only
 `atelier-ui`/`atelier-app` may depend on `gpui`, layer direction is never
-inverted, the native UI does not name `reqwest` or call `block_on`, and the
-Tokio runtime is constructed only in `apps/matinee-next/src/runtime.rs`.
+inverted, the native UI does not name `reqwest` or call `block_on`, the
+Tokio runtime is constructed only in `apps/matinee-next/src/runtime.rs`,
+and application code does not load libmpv itself.
 
 ## Repository layout
 
@@ -85,7 +87,7 @@ apps/
   atelier-gallery/    story registry + stories/
   atelier-window-lab/ native window harness
   matinee-playback-lab/ playback harness (not the Player screen)
-  matinee-next/       Login, session startup, and the authenticated shell
+  matinee-next/       Login, the authenticated shell, and the Player
 scripts/check-architecture.sh
 src/, src-tauri/      Shipping Tauri + React app (adapters call the shared crates; own Cargo.lock)
 spikes/               Standalone experiments with their own [workspace] (e.g. native-playback)

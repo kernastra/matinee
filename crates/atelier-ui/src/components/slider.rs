@@ -163,6 +163,8 @@ pub struct Slider {
     value: f32,
     step: f32,
     disabled: bool,
+    /// Stretch to the parent width. The default is a fixed track.
+    fill: bool,
     on_change: Option<ChangeHandler>,
     inspected: bool,
 }
@@ -176,6 +178,7 @@ impl Slider {
             value,
             step: 0.0,
             disabled: false,
+            fill: false,
             on_change: None,
             inspected: false,
         }
@@ -194,6 +197,12 @@ impl Slider {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Use the parent's width instead of the default track width.
+    pub fn fill(mut self, fill: bool) -> Self {
+        self.fill = fill;
         self
     }
 
@@ -243,7 +252,8 @@ impl RenderOnce for Slider {
             .id(self.id.clone())
             .key_context(SLIDER_CONTEXT)
             .relative()
-            .w(px(WIDTH))
+            .when(self.fill, |this| this.w_full())
+            .when(!self.fill, |this| this.w(px(WIDTH)))
             .h(px(HIT_H))
             .when(enabled, |this| this.track_focus(&focus).cursor_pointer())
             .child(BoundsProbe {
