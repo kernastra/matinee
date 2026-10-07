@@ -15,10 +15,12 @@ use crate::session::{Startup, startup_notice};
 use crate::warning::insecure_http_warning;
 
 pub(crate) const LOGIN_COPY: &str = "Connect to your Jellyfin server to browse your library and pick up exactly where you left off.";
-pub(crate) const MIGRATION_NOTE: &str = "Native library screens are still being migrated.";
-pub(crate) const ITEM_ENTRY: &str = "Temporary item entry";
-pub(crate) const ITEM_ENTRY_NOTE: &str = "Phase 3C infrastructure. Paste an item ID from this server to open its Details. Home replaces this next.";
-pub(crate) const ITEM_ENTRY_ACTION: &str = "Open Details";
+/// Shown when the signed-in session cannot make a Jellyfin client.
+pub(crate) const UNAVAILABLE: &str =
+    "Could not reach Jellyfin. Check the server address and try again.";
+/// Login notice after Jellyfin stopped accepting the saved session.
+pub(crate) const SESSION_ENDED: &str =
+    "Your Jellyfin session has ended. Sign in again to keep browsing.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -52,6 +54,7 @@ impl fmt::Debug for SignInRequest {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub username: String,
@@ -66,7 +69,15 @@ pub enum ReviewScene {
     Warning,
     Error,
     Loading,
-    Shell,
+    Home,
+    HomeContinueWatching,
+    HomeEmpty,
+    HomePartialError,
+    HomeLoading,
+    HomeSmallWindow,
+    HomeLargeWindow,
+    HomeHeroResume,
+    HomeHeroFresh,
     PlayerPlaying,
     PlayerPaused,
     PlayerControls,
@@ -90,18 +101,31 @@ impl ReviewScene {
             Self::PlayerError => Some(crate::player::PlayerPreview::Error),
             Self::PlayerAudio => Some(crate::player::PlayerPreview::AudioMenu),
             Self::PlayerSubtitles => Some(crate::player::PlayerPreview::SubtitleMenu),
-            Self::Login
-            | Self::Focus
-            | Self::Warning
-            | Self::Error
-            | Self::Loading
-            | Self::Shell
-            | Self::DetailsMovie
-            | Self::DetailsMovieResume
-            | Self::DetailsSeries
-            | Self::DetailsSeason
-            | Self::DetailsLoading
-            | Self::DetailsError => None,
+            _ => None,
+        }
+    }
+
+    pub(crate) fn home_preview(self) -> Option<crate::home::HomePreview> {
+        use crate::home::HomePreview;
+        match self {
+            Self::Home | Self::HomeSmallWindow | Self::HomeLargeWindow | Self::HomeHeroResume => {
+                Some(HomePreview::Home)
+            }
+            Self::HomeContinueWatching => Some(HomePreview::ContinueWatching),
+            Self::HomeEmpty => Some(HomePreview::Empty),
+            Self::HomePartialError => Some(HomePreview::PartialError),
+            Self::HomeLoading => Some(HomePreview::Loading),
+            Self::HomeHeroFresh => Some(HomePreview::HeroFresh),
+            _ => None,
+        }
+    }
+
+    /// The window size a scene is reviewed at, unless one is given.
+    pub(crate) fn size(self) -> (f32, f32) {
+        match self {
+            Self::HomeSmallWindow => (960.0, 620.0),
+            Self::HomeLargeWindow => (1920.0, 1080.0),
+            _ => (1200.0, 760.0),
         }
     }
 
@@ -126,7 +150,6 @@ pub struct AppModel {
     server: String,
     username: String,
     password: String,
-    item_id: String,
 }
 
 impl AppModel {
@@ -158,19 +181,7 @@ impl AppModel {
                 model.username = "alex".into();
                 model.phase = Phase::Authenticating;
             }
-            ReviewScene::Shell
-            | ReviewScene::PlayerPlaying
-            | ReviewScene::PlayerPaused
-            | ReviewScene::PlayerControls
-            | ReviewScene::PlayerError
-            | ReviewScene::PlayerAudio
-            | ReviewScene::PlayerSubtitles
-            | ReviewScene::DetailsMovie
-            | ReviewScene::DetailsMovieResume
-            | ReviewScene::DetailsSeries
-            | ReviewScene::DetailsSeason
-            | ReviewScene::DetailsLoading
-            | ReviewScene::DetailsError => {
+            _ => {
                 model.apply_startup(Startup::Authenticated(review_session()));
             }
         }
@@ -185,7 +196,6 @@ impl AppModel {
             server: String::new(),
             username: String::new(),
             password: String::new(),
-            item_id: String::new(),
         }
     }
 
@@ -193,43 +203,26 @@ impl AppModel {
         self.session.as_ref()
     }
 
-    pub(crate) fn item_id(&self) -> &str {
-        &self.item_id
-    }
-
-    pub(crate) fn set_item_id(&mut self, value: String) {
-        if self.phase != Phase::Authenticated {
-            return;
-        }
-        self.item_id = value;
-    }
-
-    /// Open the temporary item entry, or explain why the id cannot be used.
-    pub(crate) fn begin_item(&mut self) -> Option<matinee_core::ItemId> {
-        if self.phase != Phase::Authenticated {
-            return None;
-        }
-        let trimmed = self.item_id.trim();
-        if trimmed.is_empty() {
-            self.notice = Some("Enter an item ID.".into());
-            return None;
-        }
-        match matinee_core::ItemId::parse(trimmed) {
-            Ok(id) => {
-                self.notice = None;
-                Some(id)
-            }
-            Err(_) => {
-                self.notice = Some("That item ID cannot be used.".into());
-                None
-            }
-        }
-    }
-
     /// The session could not make an HTTP client.
     pub(crate) fn note_unavailable(&mut self) {
-        self.notice =
-            Some("Could not reach Jellyfin. Check the server address and try again.".into());
+        self.notice = Some(UNAVAILABLE.into());
+    }
+
+    /// Jellyfin stopped accepting the session. Back to Login with the server
+    /// and username kept, so only the password needs typing. The caller
+    /// removes the dead session from the vault.
+    pub(crate) fn expire_session(&mut self) -> bool {
+        if self.phase != Phase::Authenticated {
+            return false;
+        }
+        if let Some(session) = self.session.take() {
+            self.server = session.server_url().to_string();
+            self.username = session.user().name().to_string();
+        }
+        self.password.zeroize();
+        self.notice = Some(SESSION_ENDED.into());
+        self.phase = Phase::Unauthenticated;
+        true
     }
 
     pub fn phase(&self) -> Phase {
@@ -301,10 +294,12 @@ impl AppModel {
         matches!(self.phase, Phase::Unauthenticated | Phase::Authenticating)
     }
 
-    pub fn shows_shell(&self) -> bool {
+    /// Signed in: Home (or the screens above it) is showing.
+    pub fn shows_home(&self) -> bool {
         matches!(self.phase, Phase::Authenticated | Phase::SigningOut)
     }
 
+    #[cfg(test)]
     pub fn identity(&self) -> Option<Identity> {
         self.session.as_ref().map(|session| Identity {
             username: session.user().name().to_string(),
@@ -427,12 +422,6 @@ impl AppModel {
                     lines.push(format!("Connected as {}", identity.username));
                     lines.push(identity.server);
                 }
-                lines.push(MIGRATION_NOTE.into());
-                lines.push(ITEM_ENTRY.into());
-                lines.push(ITEM_ENTRY_NOTE.into());
-                lines.push("Item ID".into());
-                lines.push(self.item_id.clone());
-                lines.push(ITEM_ENTRY_ACTION.into());
                 lines.push(self.button_label().into());
                 if let Some(notice) = &self.notice {
                     lines.push(notice.clone());
@@ -458,7 +447,6 @@ impl fmt::Debug for AppModel {
             .field("username", &self.username)
             .field("password", &"[redacted]")
             .field("notice", &self.notice)
-            .field("item_id", &self.item_id)
             .field("session", &self.session)
             .finish()
     }
@@ -527,14 +515,13 @@ mod tests {
     }
 
     #[test]
-    fn startup_with_a_session_shows_the_shell() {
+    fn startup_with_a_session_shows_home() {
         let mut model = AppModel::starting();
         model.apply_startup(Startup::Authenticated(sample_session()));
-        assert!(model.shows_shell());
+        assert!(model.shows_home());
         let lines = model.visible_lines().join("\n");
         assert!(lines.contains("Connected as alex"));
         assert!(lines.contains("http://jellyfin.local:8096"));
-        assert!(lines.contains(MIGRATION_NOTE));
         assert!(!lines.contains(TOKEN));
         assert!(!format!("{model:?}").contains(TOKEN));
     }
@@ -558,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn successful_sign_in_persists_and_enters_the_shell() {
+    fn successful_sign_in_persists_and_enters_home() {
         let store = MemoryStore::new();
         let mut model = ready_form();
         let request = model.begin_sign_in().unwrap();
@@ -579,7 +566,7 @@ mod tests {
         assert!(!format!("{password:?}").contains(PASSWORD));
         let saved = accept_authentication(&store, Ok(sample_session())).unwrap();
         model.apply_sign_in(Ok(saved));
-        assert!(model.shows_shell());
+        assert!(model.shows_home());
         assert!(model.password().is_empty());
         assert!(matches!(restore_session(&store), Startup::Authenticated(_)));
         let lines = model.visible_lines().join("\n");
@@ -623,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn save_failure_does_not_enter_the_shell() {
+    fn save_failure_does_not_enter_home() {
         let mut model = ready_form();
         assert!(model.begin_sign_in().is_some());
         model.apply_sign_in(Err(
@@ -655,7 +642,7 @@ mod tests {
         model.apply_sign_out(Err(
             "The credential vault could not complete the request.".into()
         ));
-        assert!(model.shows_shell());
+        assert!(model.shows_home());
         assert_eq!(model.identity().unwrap().username, "alex");
         assert!(model.notice().unwrap().contains("credential vault"));
         let lines = model.visible_lines().join("\n");
@@ -688,7 +675,7 @@ mod tests {
         assert!(model.begin_sign_in().is_some());
         model.apply_sign_in(Ok(sample_session()));
         model.apply_sign_in(Err("late".into()));
-        assert!(model.shows_shell());
+        assert!(model.shows_home());
         assert!(model.notice().is_none());
     }
 
@@ -700,7 +687,15 @@ mod tests {
             ReviewScene::Warning,
             ReviewScene::Error,
             ReviewScene::Loading,
-            ReviewScene::Shell,
+            ReviewScene::Home,
+            ReviewScene::HomeContinueWatching,
+            ReviewScene::HomeEmpty,
+            ReviewScene::HomePartialError,
+            ReviewScene::HomeLoading,
+            ReviewScene::HomeSmallWindow,
+            ReviewScene::HomeLargeWindow,
+            ReviewScene::HomeHeroResume,
+            ReviewScene::HomeHeroFresh,
             ReviewScene::PlayerPlaying,
             ReviewScene::PlayerPaused,
             ReviewScene::PlayerControls,
@@ -733,20 +728,42 @@ mod tests {
     }
 
     #[test]
-    fn playback_entry_requires_a_usable_item_id() {
+    fn an_ended_session_returns_to_login_with_the_form_kept() {
         let mut model = AppModel::starting();
         model.apply_startup(Startup::Authenticated(sample_session()));
-        assert!(model.begin_item().is_none());
-        assert_eq!(model.notice(), Some("Enter an item ID."));
-        model.set_item_id("nope/../secret".into());
-        assert!(model.begin_item().is_none());
-        assert_eq!(model.notice(), Some("That item ID cannot be used."));
-        model.set_item_id("item-1".into());
-        assert_eq!(model.begin_item().unwrap().as_str(), "item-1");
-        assert!(model.notice().is_none());
-        let lines = model.visible_lines().join("\n");
-        assert!(lines.contains(ITEM_ENTRY));
-        assert!(!lines.contains(TOKEN));
+        assert!(model.expire_session());
+        assert!(model.shows_login());
+        assert!(model.session().is_none());
+        assert_eq!(model.notice(), Some(SESSION_ENDED));
+        assert_eq!(model.server(), "http://jellyfin.local:8096");
+        assert_eq!(model.username(), "alex");
+        assert!(model.password().is_empty());
+        assert!(!model.expire_session(), "only once");
+        // Later reports, while the person is typing, change nothing.
+        model.set_password("new-phrase".into());
+        model.set_username("jordan".into());
+        assert!(!model.expire_session());
+        assert!(!model.expire_session());
+        assert_eq!(model.username(), "jordan");
+        assert_eq!(model.password(), "new-phrase");
+        assert_eq!(model.notice(), Some(SESSION_ENDED));
+        model.set_username("alex".into());
+        model.set_password(String::new());
+        assert!(!format!("{model:?}").contains(TOKEN));
+        // The kept form can sign in again at once, and a report arriving
+        // while that sign-in is in flight does not disturb it.
+        model.set_password(PASSWORD.into());
+        assert!(model.begin_sign_in().is_some());
+        assert!(!model.expire_session());
+        assert_eq!(model.phase(), Phase::Authenticating);
+        assert_eq!(model.password(), PASSWORD);
+        // Nor during sign-out, or before startup has finished.
+        let mut signing_out = AppModel::starting();
+        assert!(!signing_out.expire_session(), "starting");
+        signing_out.apply_startup(Startup::Authenticated(sample_session()));
+        assert!(signing_out.begin_sign_out());
+        assert!(!signing_out.expire_session());
+        assert_eq!(signing_out.phase(), Phase::SigningOut);
     }
 
     #[test]

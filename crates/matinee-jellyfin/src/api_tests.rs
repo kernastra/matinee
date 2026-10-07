@@ -374,6 +374,91 @@ fn home_feed_keeps_going_when_top_rated_or_favorites_fail() {
 }
 
 #[test]
+fn home_shelves_are_separate_requests_with_typed_failures() {
+    use matinee_core::HomeShelf;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    let transport = Mock::new(move |request| {
+        record.lock().expect("seen").push(request.url.clone());
+        if path_of(request) == "/Shows/NextUp" {
+            return Ok(HttpResponse {
+                status: 500,
+                body: b"boom".to_vec(),
+            });
+        }
+        if path_of(request).ends_with("/Items/Resume") {
+            return Ok(HttpResponse {
+                status: 401,
+                body: Vec::new(),
+            });
+        }
+        Ok(ok_json(&items_body(&[&item_json("m1", "One", "Movie")])))
+    });
+    let client = JellyfinClient::new(session(), transport);
+    assert!(matches!(
+        wait(client.home_shelf(HomeShelf::ContinueWatching)).unwrap_err(),
+        JellyfinError::Unauthorized
+    ));
+    assert!(matches!(
+        wait(client.home_shelf(HomeShelf::NextUp)).unwrap_err(),
+        JellyfinError::Server { status: 500, .. }
+    ));
+    for shelf in [
+        HomeShelf::RecentMovies,
+        HomeShelf::RecentSeries,
+        HomeShelf::Favorites,
+    ] {
+        assert_eq!(wait(client.home_shelf(shelf)).unwrap().len(), 1);
+    }
+    let urls: Vec<Url> = seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .map(|value| Url::parse(value).unwrap())
+        .collect();
+    assert_eq!(urls.len(), 5, "one request per shelf");
+    let next_up = urls
+        .iter()
+        .find(|url| url.path() == "/Shows/NextUp")
+        .unwrap();
+    assert_eq!(pair(next_up, "seriesId"), None, "every series, not one");
+    assert_eq!(pair(next_up, "enableResumable").as_deref(), Some("false"));
+    assert_eq!(pair(next_up, "limit").as_deref(), Some("12"));
+    // Jellyfin's `TvShowsController.GetNextUp` accepts `enableResumable`
+    // (default true). False drops a series whose next episode has a saved
+    // position; that episode is exactly what `/Items/Resume` lists for
+    // Continue Watching, so nothing is lost between the two rows.
+    assert_eq!(pair(next_up, "userId").as_deref(), Some("user-1"));
+    assert_eq!(pair(next_up, "enableUserData").as_deref(), Some("true"));
+    assert_eq!(pair(next_up, "enableImages").as_deref(), Some("true"));
+    assert!(pair(next_up, "fields").is_some_and(|fields| fields.contains("Overview")));
+    assert_eq!(pair(next_up, "enableRewatching"), None, "never rewatches");
+    assert_eq!(pair(next_up, "disableFirstEpisode"), None, "server default");
+    // The per-series Next Up used by Details keeps resumable episodes.
+    let series = ItemId::parse("series-1").unwrap();
+    let path = crate::query::next_up_path("user-1", &series);
+    let url = Url::parse(&format!("http://h{path}")).unwrap();
+    assert_eq!(pair(&url, "seriesId").as_deref(), Some("series-1"));
+    assert_eq!(pair(&url, "enableResumable").as_deref(), Some("true"));
+    assert!(urls.iter().any(|url| {
+        pair(url, "IncludeItemTypes").as_deref() == Some("Movie")
+            && pair(url, "SortBy").as_deref() == Some("DateCreated")
+    }));
+    assert!(urls.iter().any(|url| {
+        pair(url, "IncludeItemTypes").as_deref() == Some("Series")
+            && pair(url, "SortBy").as_deref() == Some("DateCreated")
+    }));
+    assert!(
+        urls.iter()
+            .any(|url| pair(url, "Filters").as_deref() == Some("IsFavorite"))
+    );
+    for url in &urls {
+        assert!(!url.as_str().contains("api_key"), "{url}");
+        assert!(!url.as_str().contains("token"), "{url}");
+    }
+}
+
+#[test]
 fn home_feed_issues_six_shipping_queries() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let record = Arc::clone(&seen);

@@ -14,7 +14,7 @@
 //! The cache is shared by every screen on the GPUI thread. It is bounded by
 //! decoded bytes; an evicted image is released from the window atlases.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -32,6 +32,10 @@ pub(crate) const ARTWORK_CACHE_BYTES: usize = 96 * 1024 * 1024;
 /// Requested widths. Jellyfin scales on the server, so decoded size follows.
 pub(crate) const BACKDROP_WIDTH: u32 = 1920;
 pub(crate) const POSTER_WIDTH: u32 = 480;
+/// Poster tiles in rows (Home shelves, Details' related titles). They are
+/// drawn at most about 180 points wide, so 360 pixels covers a 2x display
+/// at a little over half the decoded memory of [`POSTER_WIDTH`].
+pub(crate) const TILE_POSTER_WIDTH: u32 = 360;
 pub(crate) const THUMB_WIDTH: u32 = 480;
 pub(crate) const PORTRAIT_WIDTH: u32 = 240;
 
@@ -79,6 +83,17 @@ pub(crate) enum ArtworkLoad {
 pub(crate) struct ArtworkLoader {
     runtime: Arc<ServiceRuntime>,
     cache: Rc<RefCell<ArtworkCache>>,
+    stats: Rc<Cell<CacheStats>>,
+}
+
+/// Counters for reviewing how screens use the cache. Not shown in the UI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    /// Decoded bytes held now.
+    pub bytes: usize,
+    pub entries: usize,
 }
 
 impl ArtworkLoader {
@@ -86,13 +101,28 @@ impl ArtworkLoader {
         Self {
             runtime,
             cache: Rc::new(RefCell::new(ArtworkCache::new(ARTWORK_CACHE_BYTES))),
+            stats: Rc::default(),
+        }
+    }
+
+    pub(crate) fn stats(&self) -> CacheStats {
+        let cache = self.cache.borrow();
+        CacheStats {
+            bytes: cache.bytes,
+            entries: cache.entries.len(),
+            ..self.stats.get()
         }
     }
 
     pub(crate) fn load(&self, client: &Client, request: ArtworkRequest) -> ArtworkLoad {
+        let mut stats = self.stats.get();
         if let Some(image) = self.cache.borrow_mut().get(&request.url) {
+            stats.hits += 1;
+            self.stats.set(stats);
             return ArtworkLoad::Cached(image);
         }
+        stats.misses += 1;
+        self.stats.set(stats);
         let client = Arc::clone(client);
         let (task, result) = self
             .runtime
@@ -183,6 +213,12 @@ impl ArtworkCache {
         self.entries.iter().any(|(_, entry)| entry == image)
     }
 
+    /// Insert without a window, for tests that never painted the image.
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(loader: &ArtworkLoader, key: &str, image: DecodedImage) {
+        loader.cache.borrow_mut().insert(key, image);
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.entries.len()
@@ -255,6 +291,55 @@ mod tests {
             ),
             "the token travels in the header"
         );
+    }
+
+    #[test]
+    fn a_cached_image_is_reused_across_screens_without_a_fetch() {
+        use crate::test_support::client;
+        use matinee_core::{
+            ImageRole, ImageTag, ItemId, ItemIdentity, ItemKind, MediaItem, TechnicalMedia,
+        };
+
+        let runtime = Arc::new(ServiceRuntime::new().unwrap());
+        let loader = ArtworkLoader::new(Arc::clone(&runtime));
+        // Nothing listens here; a cache hit never connects.
+        let client = client("http://127.0.0.1:9");
+        let mut item = MediaItem {
+            identity: ItemIdentity {
+                id: ItemId::parse("movie-1").unwrap(),
+                name: "Movie".into(),
+            },
+            kind: ItemKind::Movie,
+            metadata: Default::default(),
+            artwork: Default::default(),
+            user: Default::default(),
+            hierarchy: Default::default(),
+            media: TechnicalMedia::default(),
+            people: Vec::new(),
+            chapters: Vec::new(),
+        };
+        item.artwork.backdrops = ImageTag::parse("back").into_iter().collect();
+        let urls = client.session().artwork();
+        // Home's hero and Details' backdrop build the same address.
+        let home = crate::tiles::backdrop_request(&item, &urls).unwrap();
+        let details = urls
+            .item_request(&item, ImageRole::Backdrop, BACKDROP_WIDTH)
+            .unwrap();
+        assert_eq!(home, details);
+        ArtworkCache::insert_for_test(&loader, &home.url, decoded());
+        assert!(matches!(
+            loader.load(&client, details),
+            ArtworkLoad::Cached(_)
+        ));
+        // Something not cached starts a fetch the caller owns.
+        let miss = urls.image_request(&ItemId::parse("other").unwrap(), ImageRole::Primary, 360);
+        match loader.load(&client, miss) {
+            ArtworkLoad::Pending { task, .. } => task.abort(),
+            ArtworkLoad::Cached(_) => panic!("never cached"),
+        }
+        let stats = loader.stats();
+        assert_eq!((stats.hits, stats.misses, stats.entries), (1, 1, 1));
+        assert_eq!(stats.bytes, decoded().byte_size());
     }
 
     #[test]

@@ -23,7 +23,7 @@ pub use capability::{
     native_playback,
 };
 pub use date::CalendarDate;
-pub use home::HomeFeed;
+pub use home::{HomeFeed, HomeShelf};
 pub use id::{IdError, ItemId, LibraryId, MediaSourceId, PlaySessionId, UserId};
 pub use images::{ImageRole, ImageTag, ItemArtwork};
 pub use item::{

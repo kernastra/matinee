@@ -1,6 +1,8 @@
 //! Home, library, details, search, and user-state writes.
 
-use matinee_core::{CollectionContext, HomeFeed, ItemId, LibraryKind, LibrarySort, MediaItem};
+use matinee_core::{
+    CollectionContext, HomeFeed, HomeShelf, ItemId, LibraryKind, LibrarySort, MediaItem,
+};
 use serde_json::json;
 
 use crate::client::{Endpoint, JellyfinClient};
@@ -10,7 +12,8 @@ use crate::error::JellyfinError;
 use crate::query::encode_component;
 use crate::query::{
     collection_items_path, collections_path, favorites_path, item_path, latest_path, library_path,
-    movies_path, resume_path, search_path, series_path, similar_path, top_rated_path,
+    movies_path, next_up_feed_path, resume_path, search_path, series_path, similar_path,
+    top_rated_path,
 };
 use crate::session::ServerInfo;
 use crate::transport::{CancelFlag, Method, Transport};
@@ -47,6 +50,21 @@ impl<T: Transport> JellyfinClient<T> {
             top_rated: empty_shelf("top rated", top_rated),
             favorites: empty_shelf("favorites", favorites),
         })
+    }
+
+    /// One native Home shelf. Each shelf is a separate request so a failure
+    /// stays with that shelf. Paths match the shipping Home queries; Next Up
+    /// is native (shipping Home has no such row).
+    pub async fn home_shelf(&self, shelf: HomeShelf) -> Result<Vec<MediaItem>, JellyfinError> {
+        let user_id = self.session().user().id().as_str();
+        let path = match shelf {
+            HomeShelf::ContinueWatching => resume_path(user_id),
+            HomeShelf::NextUp => next_up_feed_path(user_id),
+            HomeShelf::RecentMovies => movies_path(user_id),
+            HomeShelf::RecentSeries => series_path(user_id),
+            HomeShelf::Favorites => favorites_path(user_id),
+        };
+        self.items(Endpoint::Home, &path).await
     }
 
     pub async fn library_items(

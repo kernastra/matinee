@@ -83,6 +83,13 @@ The reference is `src/components/Details.tsx`, `SeriesDetails.tsx`,
   caller fetched itself, and `Pressable`, a focusable container for rows and
   tiles. Both have Gallery stories.
 
+Phase 3D: Details opens from Home cards and returns to the same Home. Its
+related-title tiles (collections, more like this) now request 360 px
+posters (`TILE_POSTER_WIDTH`) instead of 480; they are drawn 136 px wide,
+and the smaller address is shared with Home's poster cards. The hero poster
+stays at 480. `art_frame`, `progress_line`, and `backdrop_request` moved to
+`tiles.rs` so Home uses the same pieces.
+
 ## State
 
 `DetailsModel` owns everything Details shows:
@@ -119,9 +126,13 @@ behind in that case.
 
 ## Failures
 
-- The title: not found, signed out, Jellyfin unreachable, or unreadable.
-  Each has fixed copy, Try again, and Back. No server text, URL, or token
-  is painted.
+- The title: not found, Jellyfin unreachable, or unreadable. Each has
+  fixed copy, Try again, and Back. No server text, URL, or token is
+  painted.
+- Any request (title or section) answering 401/403 ends the session for
+  the whole app (Phase 3D): Details emits `DetailsEvent::SessionExpired`
+  and the shell returns to Login. It is never shown as a section being
+  unavailable. See [application.md](application.md#session-end).
 - A secondary section that fails says so quietly in its place (“More like
   this isn't available right now.”, “Episodes couldn't be loaded.” with Try
   again). The hero stays.

@@ -137,6 +137,22 @@ pub(crate) fn favorites_path(user_id: &str) -> String {
     )
 }
 
+/// Next up across every series in progress, for Home. Resumable episodes
+/// are left to Continue Watching so the two rows do not repeat each other.
+pub(crate) fn next_up_feed_path(user_id: &str) -> String {
+    format!(
+        "/Shows/NextUp?{}",
+        Query::new()
+            .pair("userId", user_id)
+            .pair("limit", "12")
+            .pair("fields", ITEM_FIELDS)
+            .pair("enableImages", "true")
+            .pair("enableUserData", "true")
+            .pair("enableResumable", "false")
+            .encode()
+    )
+}
+
 pub(crate) fn library_path(user_id: &str, kind: LibraryKind, sort: LibrarySort) -> String {
     let include = match kind {
         LibraryKind::Movies => "Movie",

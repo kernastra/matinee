@@ -94,10 +94,11 @@ variable axes, so the variable originals are not shipped (see "Known gaps").
 | `TextField` / `SearchField` | Single-line editing via GPUI's input handler (caret, selection, IME). Controlled `value`. Search adds an icon, a clear button, and Escape. |
 | `Switch` / `Checkbox` / `SegmentedControl` / `Slider` | Pointer and keyboard controls. The switch thumb uses `Spring::Snappy`. The slider is a generic value control with one finite ascending range (`min <= max`); reversed and non-finite ranges collapse to `0`. |
 | `focus_visible` | Keyboard focus draws `FocusRing`. Pointer interaction does not. |
-| `ScrollView`, `ScrollControl` | Wraps GPUI overflow scroll. Axes are vertical, horizontal, or both. Keyboard scrolling is opt-in so a list keeps the arrow keys. |
+| `ScrollView`, `ScrollControl` | Wraps GPUI overflow scroll. Axes are vertical, horizontal, or both. Keyboard scrolling is opt-in so a list keeps the arrow keys. Children are direct children of the scrolling element, in order (`.child` adds; it no longer replaces); `ScrollControl::reveal_child` scrolls the least amount that shows one, and the focus ring is added after the content so indices do not shift. `restrict_to_axis` stops GPUI from turning wheel motion on the other axis into motion on this one (for a page that holds horizontal rows). |
 | `List`, `ListRow` | One tab stop, single selection, disabled rows skipped, Enter activates. Does not scroll itself. |
 | `Image` | Fixed frame, fit or fill, asset path, pending placeholder, failure fallback. No fetch policy. |
 | `DecodedImage` | JPEG, PNG, or WebP bytes the caller fetched, decoded on any thread with a side limit, shown with `Image::decoded`. The owner calls `release` to free the atlas copy. |
+| `Rail`, `RailState` | A clipped horizontal row of focusable items. Left, Right, Home, and End move focus; a focused item is scrolled into view; a vertical wheel is left to the page (give the page `restrict_to_axis` too). The owner keeps `RailState`, so offsets survive the rail being hidden; Tab re-enters at the first item, and `last_focused` lets the owner return to the remembered one. |
 | `Pressable` | A tab stop with any content (a row, a tile). Click, Enter, and Space activate it; hover and pressed fills and the keyboard focus ring come from the theme. Layout is the caller's. |
 | `ProgressBar` | Determinate (clamped) and indeterminate. Reduced motion holds the indeterminate segment still. |
 | `Tooltip` | Text, GPUI's hover delay, no focus, no animation. |
@@ -194,7 +195,7 @@ crates.
   toggles the preview toolbar.
 - Pages today: Color, Typography, Spacing, Radius & Elevation, Motion, Icons,
   Button, Icon Button, Text Field, Search Field, Switch, Checkbox, Segmented
-  Control, Slider, Scroll View, List, Image, Pressable, Progress, Tooltip, Popover, Menu,
+  Control, Slider, Scroll View, List, Image, Pressable, Rail, Progress, Tooltip, Popover, Menu,
   Context Menu, Dialog, Sidebar, Toolbar, Split View, Empty State, Desktop
   Composition, Text, Surface.
 - A lightweight inspector under the story reports the interactive control's

@@ -201,6 +201,10 @@ impl PlayerScreen {
             return;
         }
         match result {
+            Err(PlanFailure::SessionEnded) => {
+                self.model.reject_plan(PlanFailure::SessionEnded);
+                cx.emit(PlayerSessionEnded);
+            }
             Err(failure) => self.model.reject_plan(failure),
             Ok(prepared) => {
                 if self.ensure_player(cx) {
@@ -994,6 +998,12 @@ fn plain_key(event: &KeyDownEvent) -> bool {
 pub(crate) struct LeavePlayer;
 
 impl EventEmitter<LeavePlayer> for PlayerScreen {}
+
+/// Preparing playback found that Jellyfin no longer accepts the session.
+/// Only preparation sends this; a failed progress report never does.
+pub(crate) struct PlayerSessionEnded;
+
+impl EventEmitter<PlayerSessionEnded> for PlayerScreen {}
 
 #[cfg(test)]
 mod tests {

@@ -99,7 +99,13 @@ pub(crate) enum PlanFailure {
     Info(String),
     Incompatible(String),
     Stream(String),
+    /// Jellyfin rejected the session while preparing playback. The screen
+    /// reports it so the shell can end the session; nothing has played.
+    SessionEnded,
 }
+
+/// Shown on the Player for a session that ended before playback began.
+pub(crate) const SESSION_ENDED_MESSAGE: &str = "Your Jellyfin session has ended.";
 
 impl PlanFailure {
     pub(crate) fn info(message: impl Into<String>) -> Self {
@@ -127,6 +133,10 @@ impl PlanFailure {
             Self::Stream(message) => PlayerFailure {
                 kind: FailureKind::Stream,
                 message,
+            },
+            Self::SessionEnded => PlayerFailure {
+                kind: FailureKind::PlaybackInfo,
+                message: SESSION_ENDED_MESSAGE.into(),
             },
         }
     }

@@ -170,6 +170,13 @@ pub const STORIES: &[Story] = &[
         render: stories::composition::pressable,
     },
     Story {
+        id: "rail",
+        title: "Rail",
+        summary: "A horizontal row of focusable items. Left and Right move focus, focused items scroll into view, and the vertical wheel stays with the page.",
+        section: Section::Components,
+        render: stories::rail::render,
+    },
+    Story {
         id: "external-frame",
         title: "External Frame",
         summary: "A latest BGRA picture from outside the framework. Fit letterboxes. Fill covers. Nothing here knows about codecs.",

@@ -38,7 +38,7 @@ mod screen;
 
 pub(crate) use model::{PlayerPreview, format_clock};
 pub(crate) use prepare::resume_start;
-pub(crate) use screen::{KeyOutcome, LeavePlayer, PlayerScreen};
+pub(crate) use screen::{KeyOutcome, LeavePlayer, PlayerScreen, PlayerSessionEnded};
 
 use std::time::Duration;
 

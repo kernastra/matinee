@@ -1,4 +1,5 @@
-//! Native window: startup, Login, the authenticated shell, and the Player.
+//! Native window: startup, Login, Home as the signed-in root, and the
+//! pages above it (Details, the Player).
 //!
 //! The view asks the service runtime to do vault and HTTP work, then applies
 //! the result to [`crate::model::AppModel`]. It does not poll HTTP futures.
@@ -17,21 +18,22 @@ use tokio::task::JoinHandle;
 
 use crate::artwork::{ArtworkLoader, Client};
 use crate::details::{DetailsEvent, DetailsScreen};
+use crate::home::{HomeEvent, HomeScreen};
 use crate::nav::Navigation;
-use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen};
+use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen, PlayerSessionEnded};
 use crate::runtime::ServiceRuntime;
 use crate::session::{accept_authentication, forget_session, restore_session};
 use crate::store::SharedStore;
 
-use crate::model::{
-    AppModel, ITEM_ENTRY, ITEM_ENTRY_ACTION, ITEM_ENTRY_NOTE, LOGIN_COPY, MIGRATION_NOTE, Phase,
-    ReviewScene,
-};
+use crate::model::{AppModel, LOGIN_COPY, Phase, ReviewScene};
 
 #[derive(Clone)]
 pub struct Services {
     runtime: Arc<ServiceRuntime>,
     store: SharedStore,
+    /// Orders vault writes that can overlap: removing an ended session and
+    /// saving the next sign-in. Whoever takes it first finishes first.
+    vault: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Services {
@@ -39,6 +41,7 @@ impl Services {
         Ok(Self {
             runtime: Arc::new(ServiceRuntime::new()?),
             store: SharedStore::new(KeyringStore::new()),
+            vault: Arc::default(),
         })
     }
 
@@ -46,6 +49,7 @@ impl Services {
         Ok(Self {
             runtime: Arc::new(ServiceRuntime::new()?),
             store: SharedStore::new(MemoryStore::new()),
+            vault: Arc::default(),
         })
     }
 
@@ -63,16 +67,21 @@ pub struct MatineeRoot {
     /// After sign-in starts, move focus onto the loading button once the
     /// fields have left the tab order.
     park_focus: bool,
-    /// Screens above the shell: Details, then the Player over it.
+    /// The signed-in root destination. Created once per sign-in and kept
+    /// while pages cover it, so its scroll and focus survive.
+    home: Option<Entity<HomeScreen>>,
+    /// Review scenes never create a live Home.
+    review: bool,
+    /// Screens above Home: Details, then the Player over it.
     pages: Navigation<Page>,
     /// Move focus into the top page on the next frame.
     focus_page: bool,
-    /// One Jellyfin client per signed-in session, shared by Details.
+    /// One Jellyfin client per signed-in session, shared by Home and Details.
     client: Option<Client>,
     artwork: ArtworkLoader,
 }
 
-/// A screen above the authenticated shell.
+/// A screen above Home.
 enum Page {
     Details(Entity<DetailsScreen>),
     Player(Entity<PlayerScreen>),
@@ -97,10 +106,18 @@ impl MatineeRoot {
             focus: cx.focus_handle(),
             task: None,
             park_focus: false,
+            home: None,
+            review: review.is_some(),
             pages: Navigation::default(),
             client: None,
             artwork,
         };
+        if let Some(scene) = review.and_then(ReviewScene::home_preview) {
+            let runtime = Arc::clone(&root.services.runtime);
+            let loader = root.artwork.clone();
+            let home = cx.new(|cx| HomeScreen::preview(runtime, loader, scene, cx));
+            root.adopt_home(home, window, cx);
+        }
         if review.is_none() {
             root.start_restore(cx);
         }
@@ -164,11 +181,14 @@ impl MatineeRoot {
             return;
         };
         let store = self.services.store.clone();
+        let vault = Arc::clone(&self.services.vault);
         let (server, username, password) = request.into_parts();
         let (task, rx) = self.services.runtime.spawn(async move {
             match ReqwestTransport::new() {
                 Ok(transport) => {
                     let result = authenticate(&transport, &server, &username, password).await;
+                    // After any removal of an ended session, never before it.
+                    let _vault = vault.lock().await;
                     accept_authentication(&store, result)
                 }
                 Err(error) => Err(error.to_string()),
@@ -196,7 +216,9 @@ impl MatineeRoot {
             return;
         }
         self.release_pages(cx);
-        self.client = None;
+        if let Some(home) = &self.home {
+            home.update(cx, |home, cx| home.set_signing_out(true, cx));
+        }
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -213,6 +235,11 @@ impl MatineeRoot {
             this.update(cx, |this, cx| {
                 this.task = None;
                 this.model.apply_sign_out(outcome);
+                if this.model.shows_login() {
+                    this.leave_home();
+                } else if let Some(home) = &this.home {
+                    home.update(cx, |home, cx| home.set_signing_out(false, cx));
+                }
                 cx.notify();
             })
             .ok();
@@ -221,8 +248,119 @@ impl MatineeRoot {
         cx.notify();
     }
 
-    /// The shared client for the signed-in session.
+    /// Jellyfin stopped accepting the session. Home, Details, or the
+    /// Player's preparation reported it; this is the one place that acts.
+    /// Every page closes (a Player that started sends its stop report,
+    /// which may fail), Home and the client go, and Login returns with the
+    /// server and username kept. The dead session is removed from the vault
+    /// so the next launch does not restore it. Server outages never land
+    /// here: only an authorization failure does.
+    ///
+    /// Idempotent. Several requests can report at once; the first call
+    /// moves to Login and the rest find `AppModel::expire_session` false
+    /// and do nothing: no second removal, no second transition, no touching
+    /// what the person has started typing. Reports from screens that are no
+    /// longer current are dropped by the callers (`is_current_*`).
+    fn expire_session(&mut self, cx: &mut Context<Self>) {
+        if !self.model.expire_session() {
+            return;
+        }
+        self.release_pages(cx);
+        self.leave_home();
+        let store = self.services.store.clone();
+        let vault = Arc::clone(&self.services.vault);
+        // Take the vault turn now, on this thread, so a sign-in started
+        // afterwards always saves after this removal.
+        let turn = Arc::clone(&vault).try_lock_owned();
+        // Final work: an orderly exit gives it a bounded chance to finish.
+        // It is not the window's in-flight slot, so signing in again does
+        // not abort it.
+        self.services.runtime.spawn_final(async move {
+            let _turn = match turn {
+                Ok(turn) => turn,
+                Err(_) => vault.lock_owned().await,
+            };
+            let _ = tokio::task::spawn_blocking(move || forget_session(&store)).await;
+        });
+        cx.notify();
+    }
+
+    fn is_current_home(&self, home: &Entity<HomeScreen>) -> bool {
+        self.home.as_ref() == Some(home)
+    }
+
+    fn is_current_details(&self, details: &Entity<DetailsScreen>) -> bool {
+        self.pages
+            .any(|page| matches!(page, Page::Details(open) if open == details))
+    }
+
+    fn is_current_player(&self, player: &Entity<PlayerScreen>) -> bool {
+        self.pages
+            .any(|page| matches!(page, Page::Player(open) if open == player))
+    }
+
+    /// Drop Home and the session's client. Home's in-flight requests and
+    /// artwork fetches are aborted with it.
+    fn leave_home(&mut self) {
+        self.home = None;
+        self.client = None;
+    }
+
+    /// Create Home for a signed-in session, once.
+    fn ensure_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.review || self.home.is_some() || !self.model.shows_home() {
+            return;
+        }
+        let Some(client) = self.client() else {
+            if self.model.notice().is_none() {
+                self.model.note_unavailable();
+            }
+            return;
+        };
+        let runtime = Arc::clone(&self.services.runtime);
+        let loader = self.artwork.clone();
+        let home = cx.new(|cx| HomeScreen::open(runtime, client, loader, cx));
+        self.adopt_home(home, window, cx);
+    }
+
+    fn adopt_home(
+        &mut self,
+        home: Entity<HomeScreen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
+            &home,
+            window,
+            |this, home, event: &HomeEvent, window, cx| match event {
+                // Reports from a Home that is no longer the root are stale.
+                _ if !this.is_current_home(home) => {}
+                HomeEvent::Open(item_id) => this.open_details(item_id.clone(), window, cx),
+                HomeEvent::Play(item_id) => this.open_player(item_id.clone(), window, cx),
+                HomeEvent::SignOut => this.start_sign_out(cx),
+                HomeEvent::SessionExpired => this.expire_session(cx),
+            },
+        )
+        .detach();
+        self.home = Some(home);
+        self.focus_page = true;
+    }
+
+    /// The root is showing again. Home refreshes only when playback
+    /// happened above it.
+    fn root_visible(&mut self, cx: &mut Context<Self>) {
+        let refresh = self.pages.take_root_stale();
+        if let Some(home) = &self.home {
+            home.update(cx, |home, cx| home.resume(refresh, cx));
+        }
+    }
+
+    /// The shared client for the signed-in session. Review scenes have
+    /// none, so nothing in them opens a socket.
     fn client(&mut self) -> Option<Client> {
+        if self.review {
+            return None;
+        }
         if self.client.is_none() {
             let session = self.model.session()?.clone();
             let transport = matinee_jellyfin::ReqwestTransport::new().ok()?;
@@ -233,15 +371,14 @@ impl MatineeRoot {
         self.client.clone()
     }
 
-    /// The temporary item-ID entry opens Details. Home replaces it next phase.
-    fn open_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item_id) = self.model.begin_item() else {
-            cx.notify();
-            return;
-        };
+    /// Home → Details for one item.
+    fn open_details(
+        &mut self,
+        item_id: matinee_core::ItemId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(client) = self.client() else {
-            self.model.note_unavailable();
-            cx.notify();
             return;
         };
         let runtime = Arc::clone(&self.services.runtime);
@@ -262,6 +399,11 @@ impl MatineeRoot {
             |this, details, event: &DetailsEvent, window, cx| match event {
                 DetailsEvent::Play(item_id) => this.open_player(item_id.clone(), window, cx),
                 DetailsEvent::Back => this.close_details(details, cx),
+                DetailsEvent::SessionExpired => {
+                    if this.is_current_details(details) {
+                        this.expire_session(cx);
+                    }
+                }
             },
         )
         .detach();
@@ -275,23 +417,28 @@ impl MatineeRoot {
             .pages
             .pop_if(|page| matches!(page, Page::Details(top) if top == details));
         if closed.is_some() {
+            if self.pages.is_empty() {
+                self.root_visible(cx);
+            }
             self.focus_page = true;
             cx.notify();
         }
     }
 
-    /// Details → Player. The Player plans, resumes, and reports on its own.
+    /// Details or Home → Player. The Player plans, resumes, and reports on
+    /// its own. Home is marked for a refresh, since progress will change.
     fn open_player(
         &mut self,
         item_id: matinee_core::ItemId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.model.session().cloned() else {
+        let Some(session) = self.model.session().cloned().filter(|_| !self.review) else {
             return;
         };
         let runtime = Arc::clone(&self.services.runtime);
         let player = cx.new(|cx| PlayerScreen::open(runtime, session, item_id, window, cx));
+        self.pages.mark_root_stale();
         self.push_player(player, cx);
     }
 
@@ -301,12 +448,18 @@ impl MatineeRoot {
             cx.notify();
         })
         .detach();
+        cx.subscribe(&player, |this, player, _: &PlayerSessionEnded, cx| {
+            if this.is_current_player(&player) {
+                this.expire_session(cx);
+            }
+        })
+        .detach();
         self.pages.push(Page::Player(player));
         self.focus_page = true;
         cx.notify();
     }
 
-    /// Player → Details (or the shell). The final stop report is started here
+    /// Player → Details (or Home). The final stop report is started here
     /// and not awaited: the service runtime stays alive. Only
     /// [`Self::prepare_exit`] waits for it. Details underneath refreshes so
     /// the new position shows without reopening it.
@@ -318,6 +471,8 @@ impl MatineeRoot {
         player.update(cx, |player, _| player.finish());
         if let Some(Page::Details(details)) = self.pages.top() {
             details.update(cx, |details, cx| details.resume(cx));
+        } else if self.pages.is_empty() {
+            self.root_visible(cx);
         }
         self.focus_page = true;
     }
@@ -352,6 +507,7 @@ impl Drop for MatineeRoot {
 
 impl Render for MatineeRoot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_home(window, cx);
         if self.focus_username {
             self.focus_username = false;
             window.on_next_frame(|window, _| {
@@ -367,6 +523,8 @@ impl Render for MatineeRoot {
                 }
                 Some(Page::Player(_)) => None,
                 Some(Page::Details(details)) => Some(details.read(cx).focus_handle().clone()),
+                // Home puts focus on a card or the hero itself, a frame later.
+                None if self.model.shows_home() && self.home.is_some() => None,
                 None => Some(self.focus.clone()),
             };
             if let Some(focus) = focus {
@@ -383,6 +541,10 @@ impl Render for MatineeRoot {
         };
         let details = match self.pages.top() {
             Some(Page::Details(details)) => Some(details.clone()),
+            _ => None,
+        };
+        let home = match (&self.home, self.pages.is_empty(), self.model.shows_home()) {
+            (Some(home), true, true) => Some(home.clone()),
             _ => None,
         };
         let playing = player.is_some();
@@ -425,7 +587,9 @@ impl Render for MatineeRoot {
                 }
                 on_fullscreen_escape(event, window, cx);
             }))
-            .when(self.pages.is_empty(), |root| root.child(atmosphere(&theme)))
+            .when(self.pages.is_empty() && home.is_none(), |root| {
+                root.child(atmosphere(&theme))
+            })
             .child(
                 v_stack(Space::S0)
                     .size_full()
@@ -441,6 +605,15 @@ impl Render for MatineeRoot {
                             .min_h(px(0.0))
                             .overflow_hidden()
                             .child(player)
+                            .into_any_element()
+                    } else if let Some(home) = home {
+                        div()
+                            .id("matinee-home-slot")
+                            .flex_1()
+                            .w_full()
+                            .min_h(px(0.0))
+                            .overflow_hidden()
+                            .child(home)
                             .into_any_element()
                     } else if let Some(details) = details {
                         div()
@@ -485,7 +658,7 @@ impl MatineeRoot {
             .p(Space::S6.px())
             .child(if self.model.phase() == Phase::Starting {
                 starting_mark().into_any_element()
-            } else if self.model.shows_shell() {
+            } else if self.model.shows_home() {
                 self.shell(cx).into_any_element()
             } else {
                 self.login(card, signing_in, cx).into_any_element()
@@ -598,82 +771,25 @@ impl MatineeRoot {
             )
     }
 
+    /// Signed in, but Home could not start (no HTTP client). Says so and
+    /// offers Sign out. Normally Home replaces this at once.
     fn shell(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let identity = self.model.identity();
-        let username = identity
-            .as_ref()
-            .map(|identity| format!("Connected as {}", identity.username))
-            .unwrap_or_else(|| "Connected".into());
-        let server = identity
-            .as_ref()
-            .map(|identity| identity.server.clone())
-            .unwrap_or_default();
         let notice = self.model.notice().map(str::to_string);
         let signing_out = self.model.phase() == Phase::SigningOut;
         let label = self.model.button_label();
-        let item_id = self.model.item_id().to_string();
-        let entity = cx.entity();
 
         Surface::new(SurfaceLevel::Elevated)
             .padding(Space::S8)
-            .w(px(460.0))
+            .w(px(420.0))
             .child(
                 v_stack(Space::S4)
                     .w_full()
                     .child(Text::new("Matinee").role(TextRole::Title))
-                    .child(Text::new(username).role(TextRole::Body))
-                    .child(
-                        Text::new(server)
-                            .role(TextRole::Metadata)
-                            .tone(TextTone::Muted),
-                    )
-                    .child(
-                        Text::new(MIGRATION_NOTE)
-                            .role(TextRole::Body)
-                            .tone(TextTone::Muted),
-                    )
-                    .child(
-                        v_stack(Space::S2)
-                            .w_full()
-                            .child(
-                                Text::new(ITEM_ENTRY)
-                                    .role(TextRole::Label)
-                                    .color(theme.colors.control.accent),
-                            )
-                            .child(
-                                Text::new(ITEM_ENTRY_NOTE)
-                                    .role(TextRole::Caption)
-                                    .tone(TextTone::Muted),
-                            )
-                            .child(
-                                TextField::new("item-id", item_id)
-                                    .fill()
-                                    .disabled(signing_out)
-                                    .label("Item ID")
-                                    .on_change({
-                                        let entity = entity.clone();
-                                        move |value, _, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.model.set_item_id(value.to_string());
-                                                cx.notify();
-                                            });
-                                        }
-                                    }),
-                            )
-                            .child(
-                                Button::new("open-item", ITEM_ENTRY_ACTION)
-                                    .variant(ButtonVariant::Primary)
-                                    .disabled(signing_out)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_details(window, cx);
-                                    })),
-                            ),
-                    )
                     .when_some(notice, |stack, notice| {
                         stack.child(
                             Text::new(notice)
-                                .role(TextRole::Caption)
+                                .role(TextRole::Body)
                                 .color(theme.colors.text.danger),
                         )
                     })
@@ -778,4 +894,152 @@ pub fn open_matinee(
         },
     )
     .expect("failed to open window");
+}
+
+#[cfg(test)]
+mod tests {
+    //! Home's scroll-owning objects across pages, on the headless GPUI test
+    //! platform. Pixel layout is GPUI's; what is asserted here is that the
+    //! very objects holding the offsets survive, with their offsets.
+
+    use atelier_ui::gpui::{self, TestAppContext, VisualTestContext, point};
+
+    use super::*;
+    use crate::details::DetailsPreview;
+    use crate::player::PlayerPreview;
+
+    fn open(cx: &mut TestAppContext) -> (Entity<MatineeRoot>, &mut VisualTestContext) {
+        let services = Services::memory().unwrap();
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            MatineeRoot::new(services, Some(ReviewScene::Home), window, cx)
+        });
+        cx.run_until_parked();
+        (root, cx)
+    }
+
+    fn home_of(root: &Entity<MatineeRoot>, cx: &mut VisualTestContext) -> Entity<HomeScreen> {
+        root.read_with(cx, |root, _| root.home.clone().expect("Home is the root"))
+    }
+
+    fn push_details(
+        root: &Entity<MatineeRoot>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<DetailsScreen> {
+        let details = root.update_in(cx, |root, window, cx| {
+            let runtime = Arc::clone(&root.services.runtime);
+            let loader = root.artwork.clone();
+            let details =
+                cx.new(|cx| DetailsScreen::preview(runtime, loader, DetailsPreview::Movie, cx));
+            root.push_details(details.clone(), window, cx);
+            details
+        });
+        cx.run_until_parked();
+        details
+    }
+
+    /// Scroll Home's page and every row, and return what was set.
+    fn scroll_home(home: &Entity<HomeScreen>, cx: &mut VisualTestContext) -> (f32, Vec<f32>) {
+        let (page, rails) = home.read_with(cx, |home, _| home.scroll_state());
+        assert!(!rails.is_empty(), "rows were drawn");
+        page.set_offset(point(px(0.0), px(-150.0)));
+        let page_y = f32::from(page.offset().y);
+        assert!(page_y < 0.0, "the page has room to scroll");
+        let rows = rails
+            .iter()
+            .map(|(_, rail)| {
+                rail.scroll().set_offset(point(px(-120.0), px(0.0)));
+                f32::from(rail.scroll().offset().x)
+            })
+            .collect();
+        cx.run_until_parked();
+        (page_y, rows)
+    }
+
+    fn assert_kept(
+        home: &Entity<HomeScreen>,
+        cx: &mut VisualTestContext,
+        before: &(f32, Vec<f32>),
+    ) {
+        let (page, rails) = home.read_with(cx, |home, _| home.scroll_state());
+        assert_eq!(f32::from(page.offset().y), before.0, "page offset kept");
+        let rows: Vec<f32> = rails
+            .iter()
+            .map(|(_, rail)| f32::from(rail.scroll().offset().x))
+            .collect();
+        assert_eq!(rows, before.1, "row offsets kept");
+    }
+
+    #[gpui::test]
+    fn home_and_its_scroll_state_survive_details(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let home = home_of(&root, cx);
+        let (page, rails) = home.read_with(cx, |home, _| home.scroll_state());
+        let before = scroll_home(&home, cx);
+
+        let details = push_details(&root, cx);
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+
+        assert_eq!(home_of(&root, cx), home, "the same Home entity");
+        assert_kept(&home, cx, &before);
+        // The handles held before are the live ones: moving them moves Home.
+        page.set_offset(point(px(0.0), px(-60.0)));
+        let (live, live_rails) = home.read_with(cx, |home, _| home.scroll_state());
+        assert_eq!(f32::from(live.offset().y), -60.0);
+        assert_eq!(live_rails.len(), rails.len());
+    }
+
+    #[gpui::test]
+    fn home_and_its_scroll_state_survive_details_and_the_player(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let home = home_of(&root, cx);
+        let before = scroll_home(&home, cx);
+
+        let details = push_details(&root, cx);
+        root.update_in(cx, |root, window, cx| {
+            let runtime = Arc::clone(&root.services.runtime);
+            let player =
+                cx.new(|cx| PlayerScreen::preview(runtime, PlayerPreview::Paused, window, cx));
+            root.pages.mark_root_stale();
+            root.push_player(player, cx);
+        });
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.release_player(cx));
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+
+        assert_eq!(home_of(&root, cx), home, "the same Home entity");
+        assert!(root.read_with(cx, |root, _| root.pages.is_empty()));
+        assert_kept(&home, cx, &before);
+    }
+
+    #[gpui::test]
+    fn a_session_end_from_a_closed_page_is_ignored(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let details = push_details(&root, cx);
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+        // The closed Details reports late: it is no longer current.
+        details.update(cx, |_, cx| cx.emit(DetailsEvent::SessionExpired));
+        cx.run_until_parked();
+        assert!(root.read_with(cx, |root, _| root.model.shows_home()));
+        // The current Home reports twice: one transition, then nothing.
+        let home = home_of(&root, cx);
+        home.update(cx, |_, cx| {
+            cx.emit(HomeEvent::SessionExpired);
+            cx.emit(HomeEvent::SessionExpired);
+        });
+        cx.run_until_parked();
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login());
+            assert!(root.home.is_none());
+            assert!(root.pages.is_empty());
+            assert_eq!(root.model.notice(), Some(crate::model::SESSION_ENDED));
+        });
+        // The old Home reporting again changes nothing.
+        home.update(cx, |_, cx| cx.emit(HomeEvent::SessionExpired));
+        cx.run_until_parked();
+        assert!(root.read_with(cx, |root, _| root.model.shows_login()));
+    }
 }

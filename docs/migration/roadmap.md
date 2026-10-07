@@ -159,7 +159,7 @@ reference app, including the product rules in `docs/design-spec.md`.
 - A missing libmpv is an error state. Packaging remains Phase 4. The
   software frame path stays capped at 1080p.
 
-**Phase 3C: Native Details — in review.**
+**Phase 3C: Native Details — landed.**
 
 - The temporary item entry now opens Details; Play and Resume open the
   Phase 3B Player, and Back from the Player refreshes Details in place.
@@ -175,7 +175,33 @@ reference app, including the product rules in `docs/design-spec.md`.
   beginning, logo artwork, chapter images and chapter seek, people and
   collection browsing, autoplay. See [details.md](../architecture/details.md).
 
-Phase 3D (Home) and later screens are not started. The compatibility
+**Phase 3D: Native Home — in review.**
+
+- Home is the signed-in root: a restored session or a successful sign-in
+  lands on it, and Details and the Player open above it. The temporary
+  item-ID entry is removed.
+- Five independently loaded shelves (Continue Watching, Next Up, Recently
+  Added Movies, Recently Added Series, Favorites) through
+  `JellyfinClient::home_shelf`, all requested at once, each with its own
+  loading, empty, and failure state and stale-answer tickets.
+- A deterministic, pinned hero with Resume/Play (the existing Player) and
+  Details. No rotation.
+- Home stays alive under pages: page and row scroll positions survive, focus
+  returns to the opened card, and shelves refresh after playback only.
+- An authorization failure on any authenticated request (Home, Details,
+  or the Player's preparation) ends the session once, application-wide:
+  Login with the form kept, the dead session removed. Reports after
+  playback has started stay non-fatal.
+- Atelier `Rail` (horizontal row, arrow-key focus movement, reveal on
+  focus, vertical wheel left to the page) with a Gallery story;
+  `ScrollView` keeps every child so `ScrollControl::reveal_child` can
+  address them, and `restrict_to_axis` keeps a sideways swipe over a row
+  from scrolling the page.
+- Deferred: library shortcuts and "View all" (Library is Phase 3E), Top
+  rated and the editorial showcases, Coming soon, hero rotation. See
+  [home.md](../architecture/home.md).
+
+Phase 3E (Library) and later screens are not started. The compatibility
 builders that still put `api_key` on artwork URLs stay for the shipping
 app; the native app is guarded against them.
 
