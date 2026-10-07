@@ -3,7 +3,7 @@
 Status: **Phase 3C (native Details) on the Phase 3A runtime and the Phase 3B Player**. The shipping app is still the Tauri + React
 app in `src/` and `src-tauri/`. It remains the reference implementation. Its
 calendar and Poster Studio commands are thin adapters over the shared crates.
-The native app opens Login, a minimal authenticated shell, and the Player.
+The native app opens Login, then Home, with Details and the Player above it.
 Home and the other library screens are not built.
 
 Related documents:
@@ -38,7 +38,7 @@ Applications live in `apps/`:
 |---|---|
 | `apps/atelier-gallery` | The component catalog (Storybook / SwiftUI Previews equivalent). Product-neutral; Matinee's theme is an opt-in cargo feature (`matinee-theme`, on by default in this repo) so components can be previewed under it. |
 | `apps/atelier-window-lab` | Manual inspection of native window chrome, insets, fullscreen, and scale. Not a component story. |
-| `apps/matinee-next` | Native Matinee window: one service runtime, Login, a minimal authenticated shell, Details, and the Player. Not Home. |
+| `apps/matinee-next` | Native Matinee window: one service runtime, Login, Home, Details, and the Player. |
 | `apps/matinee-playback-lab` | Load, transport, tracks, and an external frame. Not the Matinee Player screen. |
 
 ```
@@ -87,7 +87,7 @@ apps/
   atelier-gallery/    story registry + stories/
   atelier-window-lab/ native window harness
   matinee-playback-lab/ playback harness (not the Player screen)
-  matinee-next/       Login, the authenticated shell, and the Player
+  matinee-next/       Login, Home, Details, and the Player
 scripts/check-architecture.sh
 src/, src-tauri/      Shipping Tauri + React app (adapters call the shared crates; own Cargo.lock)
 spikes/               Standalone experiments with their own [workspace] (e.g. native-playback)
@@ -141,7 +141,7 @@ sudo apt-get install pkg-config libdbus-1-dev libxkbcommon-dev libxkbcommon-x11-
 cargo +1.90.0 run -p atelier-gallery            # opens the Gallery
 cargo +1.90.0 run -p atelier-gallery -- button  # opens a specific story by id
 cargo +1.90.0 run -p atelier-window-lab         # native window harness
-cargo +1.90.0 run -p matinee-next               # Login, then a minimal signed-in shell
+cargo +1.90.0 run -p matinee-next               # Login, then Home
 cargo +1.90.0 run -p matinee-playback-lab -- --demo   # playback harness
 ATELIER_REDUCED_MOTION=1 cargo +1.90.0 run -p atelier-gallery
 

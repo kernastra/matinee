@@ -3,7 +3,8 @@
 `apps/matinee-next` is the native Matinee window. Phase 3A gives it one
 service runtime, Login, and a minimal authenticated shell. Phase 3B adds
 the Player on that same runtime. Phase 3C adds Details, the first screen
-that loads Jellyfin artwork, and a small navigation stack. It is not Home,
+that loads Jellyfin artwork, and a small navigation stack. Phase 3D adds
+Home, which replaces the minimal shell as the signed-in root. It is not
 Library, Search, Calendar, Settings, or Poster Studio.
 
 The shipping Tauri app remains the usable reference. This binary does not
@@ -17,7 +18,10 @@ GPUI window
   → ServiceRuntime (one Tokio runtime)
   → matinee-jellyfin (ReqwestTransport, persist, playback plan, reports)
   → matinee-secrets (KeyringStore in production, MemoryStore in tests and review)
-  → Navigation<Page> (shell at the base; Details, then the Player, above it)
+  → HomeModel + HomeScreen (the signed-in root; kept alive under pages)
+       → JellyfinClient::home_shelf, one request per shelf
+       → ArtworkLoader (shared)
+  → Navigation<Page> (Home at the base; Details, then the Player, above it)
   → DetailsModel + DetailsScreen
        → ArtworkLoader (shared, bounded cache) → JellyfinClient::fetch_artwork
   → PlayerModel + PlayerScreen
@@ -25,7 +29,7 @@ GPUI window
        → ExternalFrameSurface
 ```
 
-Details is described in [details.md](details.md).
+Home is described in [home.md](home.md), Details in [details.md](details.md).
 
 `PlayerModel` in `apps/matinee-next` is the playback model. `PlayerScreen`
 paints it and forwards input. The GPUI view does not choose a source, invent
@@ -69,7 +73,7 @@ Player's final Jellyfin stop report. It is started with
 `ServiceRuntime::spawn_final`, which counts it as pending until it finishes
 or is cancelled.
 
-- **Player → shell** (Back, Escape, sign-out). `MatineeRoot::release_player`
+- **Player → Details or Home** (Back, Escape, sign-out, session end). `MatineeRoot::release_player`
   calls `PlayerScreen::finish`, which starts the stop report and returns.
   Nothing waits: the runtime stays alive and delivers it in the background.
 - **Window close.** `Window::on_window_should_close` calls the same
@@ -120,7 +124,7 @@ server is offline.
 | Vault result | Visible state |
 |---|---|
 | No entry | Login |
-| A session `load_session` accepts | Authenticated shell |
+| A session `load_session` accepts | Home |
 | `CorruptSession` | Login, with the corrupt-session sentence. The payload stays in the vault. |
 | Any other vault error | Login, with the credential-failure sentence |
 
@@ -167,7 +171,7 @@ wiped.
 
 ## Persistence and sign-out
 
-A successful `authenticate` is followed by `save_session` before the shell
+A successful `authenticate` is followed by `save_session` before Home
 appears. If the save fails, the phase stays `Unauthenticated` and the notice
 is the vault error. The UI does not claim the sign-in succeeded.
 
@@ -176,30 +180,46 @@ password and username, and returns to Login. If removal fails, the notice
 is shown and the phase returns to `Authenticated` with the same session.
 `SigningOut` is only the in-flight removal. It is not another screen.
 
-The shell shows Matinee, “Connected as &lt;username&gt;”, the server, Sign
-out, and a temporary item entry. The entry is labeled temporary Phase 3C
-infrastructure and opens Details for the item, where Play and Resume open
-the Player. Home replaces it next. It takes a Jellyfin item ID typed by the
-person at the keyboard. It does not embed a server address, user ID, media ID, token, or
-library name. An empty field asks for an item ID. An ID `ItemId` cannot
-parse is rejected before any request. The shell does not render the access
-token.
+Signed in, the window shows Home. Its top bar has the MATINEE wordmark, the
+signed-in name, Refresh, and Sign out (“Signing out…” while the vault
+removal runs). The Phase 3C temporary item-ID entry is removed; Home is the
+way into Details. If the session cannot make an HTTP client, a small panel
+says Jellyfin could not be reached and offers Sign out instead of Home.
+Nothing renders the access token.
+
+### Session end
+
+When a Home request answers 401 or 403, Home reports
+`HomeEvent::SessionExpired`. `MatineeRoot::expire_session` finishes every
+page (a Player sends its stop report, which may itself fail), drops Home and
+the session's client, removes the saved session from the vault on the
+service runtime, and shows Login with the server and username kept and the
+notice “Your Jellyfin session has ended. Sign in again to keep browsing.”
+Only an authorization failure does this; an unreachable server leaves the
+session alone. Details still shows its own “session has ended” failure with
+Back; it does not sign out by itself.
 
 ## Navigation
 
-`MatineeRoot` keeps a `Navigation<Page>` stack above the authenticated
-shell. A page is Details or the Player. The temporary item entry pushes
-Details; Details' Play pushes the Player. Back, Escape, or the Player's own
-Leave removes the top page. When the Player is removed, its final stop
-report starts (see Shutdown) and the Details underneath is told it is
-visible again: it refreshes the title's user data and, for a series, next
-up and the visible season, then focuses Play. Sign-out, window close, and
-exit finish every page. Home, Library, Search, and the other screens become
-further page kinds; the stack itself does not change.
+Home is the root destination: `MatineeRoot` keeps it as `home`, created once
+per sign-in and dropped on sign-out or session end. A `Navigation<Page>`
+stack sits above it. A page is Details or the Player. A Home card pushes
+Details; Details' Play, or the Home hero's Play, pushes the Player. Back,
+Escape, or the Player's own Leave removes the top page. When the Player is
+removed, its final stop report starts (see Shutdown) and the page
+underneath is told it is visible again: Details refreshes the title's user
+data and, for a series, next up and the visible season, then focuses Play.
+When the stack empties, Home is told it is visible again; it refreshes its
+shelves only if the Player was opened since it last showed
+(`Navigation::mark_root_stale` / `take_root_stale`), and returns focus to
+the card that was opened. Home's scroll positions are untouched. Sign-out,
+window close, and exit finish every page. Library, Search, and the other
+screens become further page kinds (or root destinations); the stack itself
+does not change.
 
 ## Player
 
-Opening the Player from the shell:
+Opening the Player (from Details or the Home hero):
 
 1. `item_details` and `playback_plan` run on `ServiceRuntime`. Source
    selection stays in `matinee-jellyfin`: valid DirectPlay, then genuine
@@ -261,7 +281,7 @@ Controls sit on the picture: title and episode context, timeline, position,
 duration, play/pause, ±10 seconds, volume, mute, audio, subtitles,
 fullscreen, and Back. Fullscreen is `Window::toggle_fullscreen` from Phase
 1C. Escape closes an open track menu, then leaves fullscreen, then returns
-to the shell. Space, Left, Right, Up, and Down apply when the video surface
+to Details or Home. Space, Left, Right, Up, and Down apply when the video surface
 is focused and no menu is open. M and F apply when no menu is open. A
 focused button, slider, or menu keeps its own keys. Controls show on
 pointer and keyboard activity, hide after 5 seconds while playing, and stay
@@ -281,7 +301,8 @@ not load poster or backdrop artwork.
 
 ## Artwork
 
-Details is the first native screen that loads Jellyfin artwork. Addresses
+Details was the first native screen to load Jellyfin artwork; Home uses the
+same loader and cache (sizes and memory in [home.md](home.md)). Addresses
 are `ArtworkRequest`s built with `ArtworkUrls::item_request`,
 `person_request`, or `image_request`: no token in the URL, and the image
 tag on it so a cached copy changes when the artwork does.
@@ -302,4 +323,7 @@ an answer for a slot that is gone is dropped.
 
 `scripts/check-architecture.sh` rejects the `api_key` URL builders and the
 raw access token in `apps/matinee-next`, and any `fetch_artwork` call
-outside `artwork.rs`. The Login and Player screens load no artwork.
+outside `artwork.rs`. It also keeps Jellyfin client construction in the
+shell (`view.rs`) and the Player, Player construction in the shell, and
+Home's shelf requests in `home/load.rs`. The Login and Player screens load
+no artwork.

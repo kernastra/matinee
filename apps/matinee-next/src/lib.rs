@@ -1,9 +1,9 @@
 //! Native Matinee application.
 //!
 //! The GPUI window talks to one service runtime. That runtime owns Jellyfin
-//! HTTP, playback reporting, artwork fetches, and vault work. Login, Details,
-//! and the Player are the screens in this crate. Home and the other library
-//! screens are not.
+//! HTTP, playback reporting, artwork fetches, and vault work. Login, Home,
+//! Details, and the Player are the screens in this crate. Library, Search,
+//! Calendar, Settings, and Poster Studio are not yet.
 //!
 //! # Artwork
 //!
@@ -15,6 +15,7 @@
 
 mod artwork;
 mod details;
+mod home;
 mod model;
 mod nav;
 mod player;
@@ -23,6 +24,7 @@ mod session;
 mod store;
 #[cfg(test)]
 mod test_support;
+mod tiles;
 mod view;
 mod warning;
 
@@ -42,8 +44,8 @@ pub fn run() {
         Services::production().expect("service runtime")
     };
     let runtime = Arc::clone(&services.runtime());
-    let size = if review.is_some() {
-        review_size()
+    let size = if let Some(scene) = review {
+        review_size(scene.size())
     } else {
         (1200.0, 760.0)
     };
@@ -82,7 +84,15 @@ fn review_scene() -> Option<ReviewScene> {
         Some("warning") => Some(ReviewScene::Warning),
         Some("error") => Some(ReviewScene::Error),
         Some("loading") => Some(ReviewScene::Loading),
-        Some("shell") => Some(ReviewScene::Shell),
+        Some("home") => Some(ReviewScene::Home),
+        Some("home-continue-watching") => Some(ReviewScene::HomeContinueWatching),
+        Some("home-empty") => Some(ReviewScene::HomeEmpty),
+        Some("home-partial-error") => Some(ReviewScene::HomePartialError),
+        Some("home-loading") => Some(ReviewScene::HomeLoading),
+        Some("home-small-window") => Some(ReviewScene::HomeSmallWindow),
+        Some("home-large-window") => Some(ReviewScene::HomeLargeWindow),
+        Some("home-hero-resume") => Some(ReviewScene::HomeHeroResume),
+        Some("home-hero-fresh") => Some(ReviewScene::HomeHeroFresh),
         Some("player-playing") => Some(ReviewScene::PlayerPlaying),
         Some("player-paused") => Some(ReviewScene::PlayerPaused),
         Some("player-controls") => Some(ReviewScene::PlayerControls),
@@ -99,15 +109,16 @@ fn review_scene() -> Option<ReviewScene> {
     }
 }
 
-fn review_size() -> (f32, f32) {
+/// `MATINEE_PREVIEW_SIZE=WxH`, or the scene's own size.
+fn review_size(default: (f32, f32)) -> (f32, f32) {
     let Ok(raw) = std::env::var("MATINEE_PREVIEW_SIZE") else {
-        return (1200.0, 760.0);
+        return default;
     };
     let Some((width, height)) = raw.split_once('x') else {
-        return (1200.0, 760.0);
+        return default;
     };
     (
-        width.parse().unwrap_or(1200.0),
-        height.parse().unwrap_or(760.0),
+        width.parse().unwrap_or(default.0),
+        height.parse().unwrap_or(default.1),
     )
 }

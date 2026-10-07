@@ -83,6 +83,13 @@ The reference is `src/components/Details.tsx`, `SeriesDetails.tsx`,
   caller fetched itself, and `Pressable`, a focusable container for rows and
   tiles. Both have Gallery stories.
 
+Phase 3D: Details opens from Home cards and returns to the same Home. Its
+related-title tiles (collections, more like this) now request 360 px
+posters (`TILE_POSTER_WIDTH`) instead of 480; they are drawn 136 px wide,
+and the smaller address is shared with Home's poster cards. The hero poster
+stays at 480. `art_frame`, `progress_line`, and `backdrop_request` moved to
+`tiles.rs` so Home uses the same pieces.
+
 ## State
 
 `DetailsModel` owns everything Details shows:

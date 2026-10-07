@@ -13,5 +13,6 @@ mod model;
 mod preview;
 mod screen;
 
+pub(crate) use model::{PlayAction, meta_line, progress_fraction, runtime_label, summary};
 pub(crate) use preview::DetailsPreview;
 pub(crate) use screen::{DetailsEvent, DetailsScreen};

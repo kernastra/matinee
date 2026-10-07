@@ -118,6 +118,40 @@ impl ScrollControl {
         ));
     }
 
+    /// Scroll the least amount that shows the view's `index`-th direct
+    /// child, on the next layout. Nothing happens for an index past the end.
+    pub fn reveal_child(&self, index: usize) {
+        self.handle.scroll_to_item(index);
+    }
+
+    /// Move about one viewport along `axis`. `Both` pages vertically.
+    pub fn page(&self, axis: ScrollAxis, forward: bool) {
+        self.scroll_page(axis == ScrollAxis::Horizontal, forward);
+    }
+
+    /// Whether there is content before the current offset along `axis`.
+    pub fn can_scroll_back(&self, axis: ScrollAxis) -> bool {
+        let offset = self.offset();
+        let value = if axis == ScrollAxis::Horizontal {
+            offset.x
+        } else {
+            offset.y
+        };
+        f32::from(value) < -0.5
+    }
+
+    /// Whether there is content past the current offset along `axis`.
+    pub fn can_scroll_forward(&self, axis: ScrollAxis) -> bool {
+        let offset = self.offset();
+        let max = self.max_offset();
+        let (value, extent) = if axis == ScrollAxis::Horizontal {
+            (offset.x, max.width)
+        } else {
+            (offset.y, max.height)
+        };
+        f32::from(value) > -f32::from(extent) + 0.5
+    }
+
     pub(crate) fn handle(&self) -> &ScrollHandle {
         &self.handle
     }
@@ -165,6 +199,10 @@ struct ScrollState {
 
 /// A clipping scroll container. Place a [`crate::List`] inside it; the list
 /// does not scroll on its own.
+///
+/// Children are direct children of the scrolling element, so
+/// [`ScrollControl::reveal_child`] can address them by index. Stack them with
+/// the usual flex styles.
 #[derive(IntoElement)]
 pub struct ScrollView {
     id: ElementId,
@@ -172,7 +210,7 @@ pub struct ScrollView {
     focusable: bool,
     control: Option<ScrollControl>,
     base: Div,
-    child: Option<gpui::AnyElement>,
+    children: Vec<gpui::AnyElement>,
 }
 
 impl ScrollView {
@@ -183,7 +221,7 @@ impl ScrollView {
             focusable: false,
             control: None,
             base: div(),
-            child: None,
+            children: Vec::new(),
         }
     }
 
@@ -210,7 +248,7 @@ impl ScrollView {
     }
 
     pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.child = Some(child.into_any_element());
+        self.children.push(child.into_any_element());
         self
     }
 }
@@ -223,9 +261,7 @@ impl Styled for ScrollView {
 
 impl ParentElement for ScrollView {
     fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
-        if let Some(child) = elements.into_iter().last() {
-            self.child = Some(child);
-        }
+        self.children.extend(elements);
     }
 }
 
@@ -313,10 +349,11 @@ impl RenderOnce for ScrollView {
                 });
         }
 
-        view.when(focus_visible(focused, cx), |this| {
-            this.child(FocusRing::new(cx.theme().radius.get(Radius::Medium), 0.0))
-        })
-        .children(self.child)
+        // The ring comes after the content so child indices stay stable.
+        view.children(self.children)
+            .when(focus_visible(focused, cx), |this| {
+                this.child(FocusRing::new(cx.theme().radius.get(Radius::Medium), 0.0))
+            })
     }
 }
 

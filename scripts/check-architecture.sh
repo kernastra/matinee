@@ -201,6 +201,30 @@ if matches=$(grep -RInE '\b(playback_plan|report_playback)\b' apps/matinee-next/
   echo "$matches" >&2
 fi
 
+# 14. One Jellyfin client per signed-in session, built by the shell (the
+#     Player keeps the one it has always made for its reports). Screens such
+#     as Home and Details receive that client; they never build HTTP clients.
+if matches=$(grep -RInE '(ReqwestTransport|JellyfinClient)::new\(' apps/matinee-next/src --include='*.rs' \
+  | grep -vE '^apps/matinee-next/src/(view\.rs|player/screen\.rs|test_support\.rs):'); then
+  fail "Jellyfin clients are built only by the shell (view.rs) and the Player:"
+  echo "$matches" >&2
+fi
+
+# 15. Screens emit intent; only the shell opens the Player. Home and Details
+#     never construct it.
+if matches=$(grep -RIn 'PlayerScreen::open' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/view.rs:'); then
+  fail "only apps/matinee-next/src/view.rs opens the Player:"
+  echo "$matches" >&2
+fi
+
+# 16. Home shelves are requested in one place, on the service runtime.
+if matches=$(grep -RIn 'home_shelf(' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/home/load.rs:'); then
+  fail "Home shelves are fetched only by apps/matinee-next/src/home/load.rs:"
+  echo "$matches" >&2
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

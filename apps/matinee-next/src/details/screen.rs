@@ -21,11 +21,12 @@ use super::model::{
     episode_heading, eyebrow, genre_line, meta_line, progress_fraction, score_line, summary,
 };
 use crate::artwork::{
-    Artwork, ArtworkLoad, ArtworkLoader, BACKDROP_WIDTH, Client, PORTRAIT_WIDTH, POSTER_WIDTH,
-    THUMB_WIDTH,
+    Artwork, ArtworkLoad, ArtworkLoader, Client, PORTRAIT_WIDTH, POSTER_WIDTH, THUMB_WIDTH,
+    TILE_POSTER_WIDTH,
 };
 use crate::player::format_clock;
 use crate::runtime::ServiceRuntime;
+use crate::tiles::{art_frame, backdrop_request, progress_line, stable_index};
 
 /// What the shell does for this screen.
 pub(crate) enum DetailsEvent {
@@ -197,13 +198,13 @@ impl DetailsScreen {
         if let Some(contexts) = self.model.collections().ready() {
             for context in contexts {
                 for title in &context.items {
-                    wanted.extend(urls.item_request(title, ImageRole::Primary, POSTER_WIDTH));
+                    wanted.extend(urls.item_request(title, ImageRole::Primary, TILE_POSTER_WIDTH));
                 }
             }
         }
         if let Some(similar) = self.model.similar().ready() {
             for title in similar {
-                wanted.extend(urls.item_request(title, ImageRole::Primary, POSTER_WIDTH));
+                wanted.extend(urls.item_request(title, ImageRole::Primary, TILE_POSTER_WIDTH));
             }
         }
         wanted
@@ -299,15 +300,6 @@ impl Drop for DetailsScreen {
             task.abort();
         }
     }
-}
-
-/// Item backdrop, or the series backdrop for an episode or season.
-fn backdrop_request(item: &MediaItem, urls: &ArtworkUrls<'_>) -> Option<ArtworkRequest> {
-    urls.item_request(item, ImageRole::Backdrop, BACKDROP_WIDTH)
-        .or_else(|| {
-            let series = item.hierarchy.series_id.as_ref()?;
-            Some(urls.image_request(series, ImageRole::Backdrop, BACKDROP_WIDTH))
-        })
 }
 
 /// Poster for a title, still frame for an episode.
@@ -941,7 +933,7 @@ impl DetailsScreen {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let art = self.art(
-            urls.item_request(title, ImageRole::Primary, POSTER_WIDTH)
+            urls.item_request(title, ImageRole::Primary, TILE_POSTER_WIDTH)
                 .as_ref(),
         );
         let target = title.id().clone();
@@ -981,13 +973,6 @@ impl DetailsScreen {
 const POSTER_TILE: (f32, f32) = (136.0, 204.0);
 const PORTRAIT: f32 = 88.0;
 
-/// A small stable number for element ids derived from an item id.
-fn stable_index(id: &ItemId) -> usize {
-    id.as_str().bytes().fold(0usize, |hash, byte| {
-        hash.wrapping_mul(31).wrapping_add(byte as usize)
-    })
-}
-
 fn series_status(seasons: &Section<Vec<MediaItem>>) -> &'static str {
     match seasons {
         Section::Loading => "Finding where you left off…",
@@ -1007,70 +992,6 @@ fn credit_line(label: &str, names: &[String]) -> impl IntoElement {
                 .role(TextRole::Label)
                 .tone(TextTone::Secondary),
         )
-}
-
-/// A quiet progress line: amber over a faint track.
-fn progress_line(theme: &Theme, fraction: f32, width: f32) -> impl IntoElement {
-    let fraction = fraction.clamp(0.0, 1.0);
-    div()
-        .w(px(width))
-        .h(px(3.0))
-        .rounded(px(theme.radius.get(Radius::Full)))
-        .bg(theme.colors.text.primary.with_alpha(0.18))
-        .child(
-            div()
-                .h_full()
-                .w(px(width * fraction))
-                .rounded(px(theme.radius.get(Radius::Full)))
-                .bg(theme.colors.control.accent),
-        )
-}
-
-/// Artwork in a fixed frame. Loading and missing art are calm surfaces;
-/// missing art carries the title so the frame still says something.
-fn art_frame(
-    theme: &Theme,
-    id: impl Into<ElementId>,
-    art: &Artwork,
-    width: f32,
-    height: f32,
-    radius: Radius,
-    title: &str,
-) -> AnyElement {
-    match art {
-        Artwork::Ready(image) => Image::decoded(id, image.clone())
-            .frame(width, height)
-            .fit(ImageFit::Fill)
-            .radius(radius)
-            .label(title.to_string())
-            .into_any_element(),
-        Artwork::Loading => div()
-            .id(id)
-            .flex_none()
-            .w(px(width))
-            .h(px(height))
-            .rounded(px(theme.radius.get(radius)))
-            .bg(theme.colors.surface.elevated)
-            .into_any_element(),
-        Artwork::Missing | Artwork::Failed => div()
-            .id(id)
-            .flex_none()
-            .w(px(width))
-            .h(px(height))
-            .p(Space::S3.px())
-            .flex()
-            .items_end()
-            .rounded(px(theme.radius.get(radius)))
-            .bg(theme.colors.surface.elevated)
-            .border(px(1.0))
-            .border_color(theme.colors.border.subtle)
-            .child(
-                Text::new(title.to_string())
-                    .role(TextRole::Caption)
-                    .tone(TextTone::Muted),
-            )
-            .into_any_element(),
-    }
 }
 
 fn backdrop_layer(

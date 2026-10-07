@@ -28,6 +28,7 @@ pub const LIST_CONTEXT: &str = "List";
 pub const SIDEBAR_CONTEXT: &str = "Sidebar";
 pub const MENU_CONTEXT: &str = "Menu";
 pub const SCROLL_CONTEXT: &str = "ScrollView";
+pub const RAIL_CONTEXT: &str = "Rail";
 pub const DIALOG_CONTEXT: &str = "Dialog";
 pub const POPOVER_CONTEXT: &str = "Popover";
 
@@ -78,7 +79,7 @@ actions!(atelier, [FocusNext, FocusPrevious]);
 actions!(atelier_overlay, [Dismiss, Activate]);
 
 /// Installs bindings for text fields, adjustable controls, lists, menus,
-/// scroll views, and overlay dismissal.
+/// rails, scroll views, and overlay dismissal.
 pub fn install_component_keybindings(cx: &mut App, keys: &ComponentKeymap) {
     let text = Some(TEXT_FIELD_CONTEXT);
     let mut bindings = vec![
@@ -167,6 +168,14 @@ pub fn install_component_keybindings(cx: &mut App, keys: &ComponentKeymap) {
         ]);
     }
     bindings.push(KeyBinding::new("space", Activate, Some(MENU_CONTEXT)));
+
+    let rail = Some(RAIL_CONTEXT);
+    bindings.extend([
+        KeyBinding::new("left", NudgeLeft, rail),
+        KeyBinding::new("right", NudgeRight, rail),
+        KeyBinding::new("home", NudgeToStart, rail),
+        KeyBinding::new("end", NudgeToEnd, rail),
+    ]);
 
     let scroll = Some(SCROLL_CONTEXT);
     bindings.extend([

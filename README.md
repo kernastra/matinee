@@ -134,7 +134,7 @@ The **Advanced** panel exposes the assembled prompt, permits an editable copy or
 
 ## Local-First Scope
 
-Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. The released v0.5.6 app keeps Jellyfin login state session-scoped. The in-progress native app (`apps/matinee-next`) stores one Jellyfin session in the operating-system credential vault and does not store the password. Radarr, Sonarr, and image-provider secrets use that same vault. The native window is Login and a minimal signed-in shell; it is not a replacement for the released app.
+Matinee connects directly to services you configure and keeps its preferences, custom artwork assignments, generated images, and retained diagnostics on your computer. The released v0.5.6 app keeps Jellyfin login state session-scoped. The in-progress native app (`apps/matinee-next`) stores one Jellyfin session in the operating-system credential vault and does not store the password. Radarr, Sonarr, and image-provider secrets use that same vault. The native window is Login, Home, Details, and the Player; it is not a replacement for the released app.
 
 Poster Studio makes one provider request per deliberate generation attempt and never silently retries a rejected image. Codex jobs run in a restricted temporary workspace, successful job files are cleaned up automatically, and failed diagnostics are retained locally for seven days to support troubleshooting.
 

@@ -7,6 +7,7 @@ pub mod external_frame;
 pub mod icon_buttons;
 pub mod icons;
 pub mod motion;
+pub mod rail;
 pub mod search_field;
 pub mod segmented;
 pub mod shape;

@@ -1,24 +1,44 @@
 //! Where the signed-in window is.
 //!
-//! The authenticated shell is the base. Screens stack above it: Details over
-//! the shell, the Player over Details. Back removes the top screen, and the screen
-//! underneath is told it is visible again so it can refresh. Home and the
-//! library screens will become further page kinds; the stack does not change.
+//! Home is the authenticated root destination. It is not on this stack: it
+//! is created once per sign-in, stays alive underneath, and keeps its state
+//! while pages cover it. Pages stack above it: Details over Home, the Player
+//! over Details (or over Home, from the hero). Back removes the top page,
+//! and the page or root underneath is told it is visible again. Library,
+//! Search, and the other screens will become further page kinds (or root
+//! destinations); the stack does not change.
 
-/// A stack of pages above the shell. Empty means the shell is showing.
+/// A stack of pages above the root. Empty means the root is showing.
 pub(crate) struct Navigation<T> {
     stack: Vec<T>,
+    /// Playback happened since the root was last showing.
+    root_stale: bool,
 }
 
 impl<T> Default for Navigation<T> {
     fn default() -> Self {
-        Self { stack: Vec::new() }
+        Self {
+            stack: Vec::new(),
+            root_stale: false,
+        }
     }
 }
 
 impl<T> Navigation<T> {
     pub(crate) fn push(&mut self, page: T) {
         self.stack.push(page);
+    }
+
+    /// Note that something above the root changed what the root shows (the
+    /// Player reported progress).
+    pub(crate) fn mark_root_stale(&mut self) {
+        self.root_stale = true;
+    }
+
+    /// Once the root is showing again: whether it should refresh. Clears
+    /// the mark, so one return refreshes once.
+    pub(crate) fn take_root_stale(&mut self) -> bool {
+        self.stack.is_empty() && std::mem::take(&mut self.root_stale)
     }
 
     /// Remove the top page when `matches` accepts it. The caller finishes it
@@ -41,6 +61,7 @@ impl<T> Navigation<T> {
 
     /// Every page, top first, for sign-out and exit.
     pub(crate) fn drain(&mut self) -> impl Iterator<Item = T> + '_ {
+        self.root_stale = false;
         self.stack.drain(..).rev()
     }
 }
@@ -56,9 +77,9 @@ mod tests {
     }
 
     #[test]
-    fn back_walks_player_then_details_then_shell() {
+    fn back_walks_player_then_details_then_root() {
         let mut nav = Navigation::default();
-        assert!(nav.is_empty(), "the shell is the base");
+        assert!(nav.is_empty(), "the root is the base");
         nav.push(Page::Details("movie-1"));
         nav.push(Page::Player("movie-1"));
         assert_eq!(nav.pop_if(|_| true), Some(Page::Player("movie-1")));
@@ -84,5 +105,19 @@ mod tests {
             drained,
             vec![Page::Player("movie-1"), Page::Details("movie-1")]
         );
+    }
+
+    #[test]
+    fn playback_above_the_root_refreshes_it_once_on_return() {
+        let mut nav = Navigation::default();
+        nav.push(Page::Details("movie-1"));
+        assert!(!nav.take_root_stale(), "Details alone changes nothing");
+        nav.push(Page::Player("movie-1"));
+        nav.mark_root_stale();
+        nav.pop_if(|_| true);
+        assert!(!nav.take_root_stale(), "Details still covers the root");
+        nav.pop_if(|_| true);
+        assert!(nav.take_root_stale());
+        assert!(!nav.take_root_stale(), "once");
     }
 }
