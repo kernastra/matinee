@@ -224,7 +224,26 @@ reference app, including the product rules in `docs/design-spec.md`.
 - Deferred: year and other filters, card context actions, search (Phase
   3F). See [library.md](../architecture/library.md).
 
-Phase 3F (Search) and later screens are not started. The compatibility
+**Phase 3F: Native Search — in review.**
+
+- Search is a third root destination beside Home and Library, in the app
+  bar. It is retained: text, results, scroll, and the focused title survive
+  Details, the Player, and other roots, and it reconciles only the title that
+  was opened after playback. Opening it focuses the field.
+- A pure `SearchModel` keeps the typed input, the effective query, and the
+  shown query apart; a 300 ms debounce; Enter to search now; two-character
+  minimum; query-generation tickets so stale answers never apply; server-side
+  pages of 60 with one request in flight.
+- Typed `SearchQuery` and `JellyfinClient::search_page` (Movie, Series,
+  Episode; `StartIndex`/`Limit`/total). The unpaged `search_library` is gone.
+- Reuses Atelier's `VirtualGrid`, `SearchField`, and the Library poster card
+  (moved to a shared `media_grid` module). Atelier gains one generic hook:
+  `TextField` and `SearchField` accept an owner's `FocusHandle`.
+- Deferred: People, Collections, a type label on cards, review scenes for
+  Search. See [search.md](../architecture/search.md), which includes the
+  shipping audit.
+
+Phase 3G (Calendar) and later screens are not started. The compatibility
 builders that still put `api_key` on artwork URLs stay for the shipping
 app; the native app is guarded against them.
 

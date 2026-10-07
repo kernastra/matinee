@@ -2,10 +2,12 @@
 //! `Window::dispatch_keystroke`, which drives the input handler. Do not use
 //! `simulate_input`: it splits on `""` and then fails to parse an empty key.
 
-use atelier_ui::{ComponentKeymap, TextField, install_component_keybindings, move_focus_forward};
+use atelier_ui::{
+    ComponentKeymap, SearchField, TextField, install_component_keybindings, move_focus_forward,
+};
 use gpui::{
-    ClipboardItem, Context, Entity, IntoElement, Keystroke, ParentElement, Render, SharedString,
-    Styled, TestAppContext, VisualTestContext, Window, div,
+    ClipboardItem, Context, Entity, FocusHandle, IntoElement, Keystroke, ParentElement, Render,
+    SharedString, Styled, TestAppContext, VisualTestContext, Window, div,
 };
 
 struct Harness {
@@ -185,5 +187,86 @@ fn masked_entry_keeps_the_value_and_does_not_copy_it(cx: &mut TestAppContext) {
         view.read_with(cx, |this, _| this.value.to_string()),
         "Yo",
         "paste must insert into a masked field"
+    );
+}
+
+/// An owner that holds the field's focus handle, as a search screen does.
+struct Owned {
+    focus: Option<FocusHandle>,
+    value: SharedString,
+}
+
+impl Render for Owned {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let entity = cx.entity();
+        let mut field =
+            SearchField::new("owned-search", self.value.clone()).on_change(move |value, _, cx| {
+                entity.update(cx, |this, cx| {
+                    this.value = value;
+                    cx.notify();
+                });
+            });
+        if let Some(focus) = self.focus.clone() {
+            field = field.focus_handle(focus);
+        }
+        div().size_full().flex().items_start().child(field)
+    }
+}
+
+#[gpui::test]
+fn an_owners_focus_handle_moves_focus_into_the_field(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        install_component_keybindings(
+            cx,
+            &ComponentKeymap {
+                primary: "ctrl",
+                word: "ctrl",
+                emacs_line_keys: false,
+                character_palette: false,
+            },
+        );
+    });
+    let (view, window) = cx.add_window_view(|_, cx| Owned {
+        focus: Some(cx.focus_handle()),
+        value: SharedString::default(),
+    });
+    window.run_until_parked();
+    let handle = view.read_with(window, |owned, _| owned.focus.clone().expect("handle"));
+    window.update(|window, _| window.focus(&handle));
+    window.run_until_parked();
+    assert!(
+        window.update(|window, _| handle.is_focused(window)),
+        "the owner's handle is the field's focus"
+    );
+    type_chars(window, "ab");
+    assert_eq!(
+        view.read_with(window, |owned, _| owned.value.to_string()),
+        "ab"
+    );
+}
+
+#[gpui::test]
+fn without_a_handle_the_field_keeps_its_own_focus(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        install_component_keybindings(
+            cx,
+            &ComponentKeymap {
+                primary: "ctrl",
+                word: "ctrl",
+                emacs_line_keys: false,
+                character_palette: false,
+            },
+        );
+    });
+    let (view, window) = cx.add_window_view(|_, _| Owned {
+        focus: None,
+        value: SharedString::default(),
+    });
+    window.run_until_parked();
+    focus(window);
+    type_chars(window, "xy");
+    assert_eq!(
+        view.read_with(window, |owned, _| owned.value.to_string()),
+        "xy"
     );
 }

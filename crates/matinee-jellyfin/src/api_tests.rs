@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use matinee_core::{
     ImageRole, ImageTag, ItemHierarchy, ItemId, ItemIdentity, ItemKind, ItemMetadata, LibraryKind,
-    LibrarySort, MediaItem, PlaySessionId, PlaybackMethod, PlaybackOptions, PlaybackPlan,
-    PlaybackReport, ReportKind, StreamAuthorization, TechnicalMedia, User, UserId, UserItemState,
+    LibraryPageRequest, LibrarySort, MediaItem, PlaySessionId, PlaybackMethod, PlaybackOptions,
+    PlaybackPlan, PlaybackReport, ReportKind, SearchQuery, StreamAuthorization, TechnicalMedia,
+    User, UserId, UserItemState,
 };
 use serde_json::Value;
 use url::Url;
@@ -654,29 +655,60 @@ fn clear_progress_writes_zeroes_and_keeps_the_rest() {
 }
 
 #[test]
-fn search_includes_episodes_and_can_be_cancelled() {
+fn search_pages_movies_series_and_episodes_on_the_server() {
     let transport = Mock::new(|request| {
         assert_eq!(query_value(request, "SearchTerm").as_deref(), Some("a&b=c"));
         assert_eq!(
             query_value(request, "IncludeItemTypes").as_deref(),
             Some("Movie,Series,Episode")
         );
+        assert_eq!(query_value(request, "StartIndex").as_deref(), Some("40"));
+        assert_eq!(query_value(request, "Limit").as_deref(), Some("20"));
+        assert_eq!(
+            query_value(request, "EnableTotalRecordCount").as_deref(),
+            Some("true")
+        );
         assert!(query_value(request, "b").is_none());
-        Ok(ok_json(&items_body(&[&item_json(
-            "movie-1", "Movie", "Movie",
-        )])))
+        Ok(ok_json(&format!(
+            r#"{{"Items":[{}],"TotalRecordCount":57,"StartIndex":40}}"#,
+            item_json("movie-1", "Movie", "Movie")
+        )))
     });
     let client = JellyfinClient::new(session(), transport);
-    let found = wait(client.search_library("a&b=c", None)).unwrap();
-    assert_eq!(found.len(), 1);
+    let query = SearchQuery::parse(" a&b=c ").unwrap();
+    let page = LibraryPageRequest {
+        start: 40,
+        limit: 20,
+    };
+    let found = wait(client.search_page(&query, page, None)).unwrap();
+    assert_eq!(found.items.len(), 1);
+    assert_eq!(found.start, 40);
+    assert_eq!(found.total, Some(57), "the server's count, for paging");
     let flag = CancelFlag::new();
     flag.cancel();
     let idle = Mock::new(|_| panic!("cancelled search must not send"));
     let client = JellyfinClient::new(session(), idle);
     assert!(matches!(
-        wait(client.search_library("later", Some(&flag))).unwrap_err(),
+        wait(client.search_page(&query, page, Some(&flag))).unwrap_err(),
         JellyfinError::Cancelled
     ));
+}
+
+#[test]
+fn search_page_never_returns_more_than_asked() {
+    let transport = Mock::new(|_| {
+        Ok(ok_json(&format!(
+            r#"{{"Items":[{},{}],"TotalRecordCount":2}}"#,
+            item_json("movie-1", "Movie", "Movie"),
+            item_json("movie-2", "Movie", "Movie")
+        )))
+    });
+    let client = JellyfinClient::new(session(), transport);
+    let query = SearchQuery::parse("mo").unwrap();
+    let page = LibraryPageRequest { start: 0, limit: 1 };
+    let found = wait(client.search_page(&query, page, None)).unwrap();
+    assert_eq!(found.items.len(), 1, "the page size is the server's limit");
+    assert_eq!(found.total, Some(2));
 }
 
 #[test]

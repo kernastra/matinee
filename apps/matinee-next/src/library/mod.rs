@@ -8,7 +8,7 @@
 
 mod load;
 pub(crate) mod model;
-mod preview;
+pub(crate) mod preview;
 mod screen;
 
 pub(crate) use preview::LibraryPreview;

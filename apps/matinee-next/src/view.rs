@@ -24,6 +24,7 @@ use crate::library::{LibraryEvent, LibraryScreen};
 use crate::nav::{Navigation, Root, RootDestination, StaleRoots};
 use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen, PlayerSessionEnded};
 use crate::runtime::ServiceRuntime;
+use crate::search::{SearchEvent, SearchScreen};
 use crate::session::{accept_authentication, forget_session, restore_session};
 use crate::store::SharedStore;
 
@@ -75,6 +76,8 @@ pub struct MatineeRoot {
     /// The other root destination, created the first time it is chosen and
     /// kept like Home.
     library: Option<Entity<LibraryScreen>>,
+    /// Search, created the first time it is chosen and kept like Library.
+    search: Option<Entity<SearchScreen>>,
     /// Which root shows when no page covers it.
     root: RootDestination,
     /// Roots that reload what playback changed when they next show.
@@ -117,6 +120,7 @@ impl MatineeRoot {
             park_focus: false,
             home: None,
             library: None,
+            search: None,
             root: RootDestination::Home,
             stale: StaleRoots::default(),
             review: review.is_some(),
@@ -241,6 +245,9 @@ impl MatineeRoot {
         if let Some(library) = &self.library {
             library.update(cx, |library, cx| library.set_signing_out(true, cx));
         }
+        if let Some(search) = &self.search {
+            search.update(cx, |search, cx| search.set_signing_out(true, cx));
+        }
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -265,6 +272,9 @@ impl MatineeRoot {
                     }
                     if let Some(library) = &this.library {
                         library.update(cx, |library, cx| library.set_signing_out(false, cx));
+                    }
+                    if let Some(search) = &this.search {
+                        search.update(cx, |search, cx| search.set_signing_out(false, cx));
                     }
                 }
                 cx.notify();
@@ -320,6 +330,10 @@ impl MatineeRoot {
         self.library.as_ref() == Some(library)
     }
 
+    fn is_current_search(&self, search: &Entity<SearchScreen>) -> bool {
+        self.search.as_ref() == Some(search)
+    }
+
     fn is_current_details(&self, details: &Entity<DetailsScreen>) -> bool {
         self.pages
             .any(|page| matches!(page, Page::Details(open) if open == details))
@@ -335,6 +349,7 @@ impl MatineeRoot {
     fn leave_home(&mut self) {
         self.home = None;
         self.library = None;
+        self.search = None;
         self.root = RootDestination::Home;
         self.stale.clear();
         self.client = None;
@@ -438,6 +453,46 @@ impl MatineeRoot {
         self.library.clone()
     }
 
+    fn adopt_search(
+        &mut self,
+        search: Entity<SearchScreen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
+            &search,
+            window,
+            |this, search, event: &SearchEvent, window, cx| match event {
+                // Reports from a Search that is no longer current are stale.
+                _ if !this.is_current_search(search) => {}
+                SearchEvent::Open(item_id) => this.open_details(item_id.clone(), window, cx),
+                SearchEvent::Navigate(destination) => this.navigate(*destination, None, window, cx),
+                SearchEvent::SignOut => this.start_sign_out(cx),
+                SearchEvent::SessionExpired => this.expire_session(cx),
+            },
+        )
+        .detach();
+        self.search = Some(search);
+        self.focus_page = true;
+    }
+
+    /// Search for a signed-in session, created the first time it is chosen.
+    /// Review scenes have no socket, so Search is not offered there.
+    fn ensure_search(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<SearchScreen>> {
+        if self.search.is_none() && self.model.shows_home() {
+            let client = self.client()?;
+            let runtime = Arc::clone(&self.services.runtime);
+            let loader = self.artwork.clone();
+            let search = cx.new(|cx| SearchScreen::open(runtime, client, loader, cx));
+            self.adopt_search(search, window, cx);
+        }
+        self.search.clone()
+    }
+
     /// Move between root destinations from the app bar or Home's "View
     /// all". Pages are not touched (the bar is only on roots). Each root
     /// keeps its state; a root that missed playback reloads what it changed.
@@ -471,6 +526,14 @@ impl MatineeRoot {
                     library.resume(playback, cx);
                 });
             }
+            RootDestination::Search => {
+                let Some(search) = self.ensure_search(window, cx) else {
+                    return;
+                };
+                self.root = destination;
+                let playback = self.stale.take(Root::Search);
+                search.update(cx, |search, cx| search.show(playback, cx));
+            }
         }
         self.focus_page = true;
         cx.notify();
@@ -493,6 +556,12 @@ impl MatineeRoot {
                 let playback = self.stale.take(Root::Library);
                 if let Some(library) = &self.library {
                     library.update(cx, |library, cx| library.resume(playback, cx));
+                }
+            }
+            Root::Search => {
+                let playback = self.stale.take(Root::Search);
+                if let Some(search) = &self.search {
+                    search.update(cx, |search, cx| search.resume(playback, cx));
                 }
             }
         }
@@ -786,6 +855,7 @@ impl MatineeRoot {
         match self.root.root() {
             Root::Home => self.home.clone().map(AnyView::from),
             Root::Library => self.library.clone().map(AnyView::from),
+            Root::Search => self.search.clone().map(AnyView::from),
         }
     }
 

@@ -18,10 +18,12 @@ mod artwork;
 mod details;
 mod home;
 mod library;
+mod media_grid;
 mod model;
 mod nav;
 mod player;
 mod runtime;
+mod search;
 mod session;
 mod store;
 #[cfg(test)]

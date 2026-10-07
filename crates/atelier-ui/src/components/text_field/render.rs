@@ -37,7 +37,8 @@ impl RenderOnce for TextField {
             move |_, cx| FieldState::new(initial, cx)
         });
 
-        let focused = model.read(cx).focus.is_focused(window) && !self.disabled;
+        model.update(cx, |state, _| state.external_focus.clone_from(&self.focus));
+        let focused = model.read(cx).focus_handle().is_focused(window) && !self.disabled;
         model.update(cx, |state, cx| {
             state.disabled = self.disabled;
             state.masked = self.masked;
@@ -91,7 +92,7 @@ impl RenderOnce for TextField {
         let style = theme.typography.style(TextRole::Body);
         let family = theme.typography.family(TextRole::Body);
         let radius = theme.radius.get(Radius::Medium);
-        let focus_handle = model.read(cx).focus.clone();
+        let focus_handle = model.read(cx).focus_handle();
 
         let field = div()
             .id(self.id.clone())
@@ -321,7 +322,7 @@ impl Element for FieldText {
         cx: &mut App,
     ) {
         if self.focused && !self.disabled {
-            let focus = self.model.read(cx).focus.clone();
+            let focus = self.model.read(cx).focus_handle();
             window.handle_input(
                 &focus,
                 ElementInputHandler::new(bounds, self.model.clone()),

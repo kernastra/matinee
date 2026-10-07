@@ -18,6 +18,8 @@ pub(super) struct FieldState {
     pub(super) reversed: bool,
     pub(super) marked: Option<Range<usize>>,
     pub(super) focus: FocusHandle,
+    /// The owner's handle, when it gave one (see `TextField::focus_handle`).
+    pub(super) external_focus: Option<FocusHandle>,
     pub(super) disabled: bool,
     pub(super) masked: bool,
     pub(super) layout: RefCell<Option<gpui::ShapedLine>>,
@@ -30,6 +32,13 @@ pub(super) struct FieldState {
 }
 
 impl FieldState {
+    /// The handle keyboard focus and text input use: the owner's, or the field's own.
+    pub(super) fn focus_handle(&self) -> FocusHandle {
+        self.external_focus
+            .clone()
+            .unwrap_or_else(|| self.focus.clone())
+    }
+
     pub(super) fn new(value: String, cx: &mut Context<Self>) -> Self {
         Self {
             content: value.into(),
@@ -37,6 +46,7 @@ impl FieldState {
             reversed: false,
             marked: None,
             focus: cx.focus_handle().tab_index(0).tab_stop(true),
+            external_focus: None,
             disabled: false,
             masked: false,
             layout: RefCell::new(None),
