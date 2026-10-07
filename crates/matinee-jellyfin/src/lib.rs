@@ -44,7 +44,7 @@ mod ticks;
 mod transport;
 mod url;
 
-pub use artwork::{ArtworkRequest, ArtworkUrls};
+pub use artwork::{ArtworkRequest, ArtworkUrls, MAX_ARTWORK_BYTES};
 pub use auth::{Password, authenticate};
 pub use client::JellyfinClient;
 pub use error::JellyfinError;

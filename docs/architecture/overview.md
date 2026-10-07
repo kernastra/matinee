@@ -1,6 +1,6 @@
 # Matinee Next — Architecture Overview
 
-Status: **Phase 3B (native Player) on the Phase 3A runtime**. The shipping app is still the Tauri + React
+Status: **Phase 3C (native Details) on the Phase 3A runtime and the Phase 3B Player**. The shipping app is still the Tauri + React
 app in `src/` and `src-tauri/`. It remains the reference implementation. Its
 calendar and Poster Studio commands are thin adapters over the shared crates.
 The native app opens Login, a minimal authenticated shell, and the Player.
@@ -38,7 +38,7 @@ Applications live in `apps/`:
 |---|---|
 | `apps/atelier-gallery` | The component catalog (Storybook / SwiftUI Previews equivalent). Product-neutral; Matinee's theme is an opt-in cargo feature (`matinee-theme`, on by default in this repo) so components can be previewed under it. |
 | `apps/atelier-window-lab` | Manual inspection of native window chrome, insets, fullscreen, and scale. Not a component story. |
-| `apps/matinee-next` | Native Matinee window: one service runtime, Login, a minimal authenticated shell, and the Player. Not Home or Details. |
+| `apps/matinee-next` | Native Matinee window: one service runtime, Login, a minimal authenticated shell, Details, and the Player. Not Home. |
 | `apps/matinee-playback-lab` | Load, transport, tracks, and an external frame. Not the Matinee Player screen. |
 
 ```

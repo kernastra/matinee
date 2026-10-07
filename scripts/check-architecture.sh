@@ -177,6 +177,30 @@ if matches=$(grep -RInE 'libloading|mpv_|libmpv_sys|matinee_player::engine' apps
   echo "$matches" >&2
 fi
 
+# 12. Native artwork carries no token. The application builds artwork
+#     addresses with ArtworkUrls::image_request, item_request, or
+#     person_request and fetches them only through its artwork loader, which
+#     sends the session header. The api_key builders and the raw token stay
+#     out of the native app.
+if matches=$(grep -RInE '\.access_token\(\)|(urls|artwork\(\))\.(image|backdrop|backdrop_image|chapter_image|user_image|person_image)\(' \
+  apps/matinee-next/src --include='*.rs'); then
+  fail "token-bearing artwork URLs or the raw access token in matinee-next:"
+  echo "$matches" >&2
+fi
+if matches=$(grep -RIn 'fetch_artwork' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/artwork.rs:'); then
+  fail "artwork is fetched only by apps/matinee-next/src/artwork.rs:"
+  echo "$matches" >&2
+fi
+
+# 13. Playback planning and reporting belong to the Player. Other screens
+#     open it; they do not choose sources or report progress themselves.
+if matches=$(grep -RInE '\b(playback_plan|report_playback)\b' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/player/'); then
+  fail "playback planning or reporting outside apps/matinee-next/src/player:"
+  echo "$matches" >&2
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

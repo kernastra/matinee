@@ -22,6 +22,7 @@ pub(crate) enum Endpoint {
     Series,
     UserData,
     Playback,
+    Artwork,
 }
 
 impl Endpoint {
@@ -35,6 +36,7 @@ impl Endpoint {
             Self::Series => "series",
             Self::UserData => "user-data",
             Self::Playback => "playback",
+            Self::Artwork => "artwork",
         }
     }
 }

@@ -1013,3 +1013,111 @@ fn stream_urls_drop_credentials_and_stay_on_the_server() {
 fn normalize_rejects_a_scheme_relative_address() {
     assert!(crate::normalize_server_url("//jellyfin.local").is_err());
 }
+
+#[test]
+fn artwork_is_fetched_with_the_session_header_and_no_token_in_the_url() {
+    let mock = Mock::new(|_| {
+        Ok(HttpResponse {
+            status: 200,
+            body: vec![0x89, b'P', b'N', b'G'],
+        })
+    });
+    let calls = Arc::clone(&mock.calls);
+    let client = JellyfinClient::new(session(), mock);
+    let mut item = bare_item("movie-1", "Movie", ItemKind::Movie);
+    assert!(
+        client
+            .session()
+            .artwork()
+            .item_request(&item, ImageRole::Backdrop, 1600)
+            .is_none(),
+        "no backdrop tag means no request"
+    );
+    item.artwork.primary = ImageTag::parse("poster-tag");
+    let request = client
+        .session()
+        .artwork()
+        .item_request(&item, ImageRole::Primary, 480)
+        .unwrap();
+    assert!(!request.url.contains("api_key"));
+    assert!(!request.url.contains("token"));
+    assert!(request.url.contains("tag=poster-tag"));
+
+    let bytes = wait(client.fetch_artwork(&request, None)).unwrap();
+    assert_eq!(bytes, vec![0x89, b'P', b'N', b'G']);
+    let sent = calls.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].url, request.url);
+    let authorization = sent[0]
+        .headers
+        .iter()
+        .find(|(name, _)| name == "Authorization")
+        .map(|(_, value)| value.as_str())
+        .unwrap();
+    assert!(authorization.contains("Token=\"token with spaces\""));
+    assert!(!format!("{:?}", sent[0]).contains("token with spaces"));
+}
+
+#[test]
+fn artwork_off_the_server_or_too_large_is_refused() {
+    let mock = Mock::new(|request| {
+        Ok(HttpResponse {
+            status: if request.url.contains("missing") {
+                404
+            } else {
+                200
+            },
+            body: vec![0; crate::MAX_ARTWORK_BYTES + 1],
+        })
+    });
+    let calls = Arc::clone(&mock.calls);
+    let client = JellyfinClient::new(session(), mock);
+    let foreign = crate::ArtworkRequest {
+        url: "http://elsewhere.example/Items/movie-1/Images/Primary".into(),
+    };
+    assert!(matches!(
+        wait(client.fetch_artwork(&foreign, None)),
+        Err(JellyfinError::InvalidUrl { .. })
+    ));
+    assert!(calls.lock().unwrap().is_empty(), "nothing was sent");
+    let large = client.session().artwork().image_request(
+        &ItemId::parse("movie-1").unwrap(),
+        ImageRole::Primary,
+        480,
+    );
+    assert!(matches!(
+        wait(client.fetch_artwork(&large, None)),
+        Err(JellyfinError::Malformed { .. })
+    ));
+    let missing = client.session().artwork().image_request(
+        &ItemId::parse("missing").unwrap(),
+        ImageRole::Primary,
+        480,
+    );
+    assert!(matches!(
+        wait(client.fetch_artwork(&missing, None)),
+        Err(JellyfinError::NotFound)
+    ));
+}
+
+#[test]
+fn cast_portraits_have_a_native_request() {
+    use matinee_core::{Credit, Person};
+    let current = session();
+    let mut person = Person {
+        id: ItemId::parse("person-1").ok(),
+        name: "Ada".into(),
+        role: Some("Captain".into()),
+        credit: Credit::Actor,
+        image: None,
+    };
+    assert!(current.artwork().person_request(&person, 240).is_none());
+    person.image = ImageTag::parse("face");
+    let request = current.artwork().person_request(&person, 240).unwrap();
+    assert!(
+        request
+            .url
+            .starts_with("http://jellyfin.local:8096/Items/person-1/Images/Primary?")
+    );
+    assert!(!request.url.contains("api_key"));
+}

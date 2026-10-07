@@ -999,86 +999,14 @@ impl EventEmitter<LeavePlayer> for PlayerScreen {}
 mod tests {
     //! The final stop report on the real client path, against a local server.
 
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use matinee_core::{ItemId, PlaybackMethod, PlaybackReport, ReportKind, User, UserId};
-    use matinee_jellyfin::{JellyfinClient, ReqwestTransport, Session};
+    use matinee_core::{ItemId, PlaybackMethod, PlaybackReport, ReportKind};
 
     use super::send_report;
     use crate::runtime::{Drain, ServiceRuntime};
-
-    enum Reply {
-        NoContent,
-        ServerError,
-        Hang,
-    }
-
-    /// A one-request Jellyfin stand-in on loopback. Each request's head and
-    /// body arrive on the receiver.
-    fn fake_jellyfin(reply: Reply) -> (String, mpsc::Receiver<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = format!("http://{}", listener.local_addr().unwrap());
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            let mut request = Vec::new();
-            let mut buffer = [0u8; 4096];
-            loop {
-                let Ok(read) = stream.read(&mut buffer) else {
-                    return;
-                };
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..read]);
-                let text = String::from_utf8_lossy(&request);
-                if let Some(head_end) = text.find("\r\n\r\n") {
-                    let length = text[..head_end]
-                        .lines()
-                        .find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("content-length")
-                                .then(|| value.trim().parse::<usize>().ok())?
-                        })
-                        .unwrap_or(0);
-                    if request.len() >= head_end + 4 + length {
-                        break;
-                    }
-                }
-            }
-            let _ = tx.send(String::from_utf8_lossy(&request).into_owned());
-            let response: &[u8] = match reply {
-                Reply::NoContent => b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n",
-                Reply::ServerError => {
-                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
-                }
-                Reply::Hang => {
-                    std::thread::sleep(Duration::from_secs(30));
-                    return;
-                }
-            };
-            let _ = stream.write_all(response);
-        });
-        (address, rx)
-    }
-
-    fn client(address: &str) -> std::sync::Arc<JellyfinClient<ReqwestTransport>> {
-        let session = Session::new(
-            address,
-            "fixture-token",
-            User::new(UserId::parse("user-1").unwrap(), "alex", None),
-        )
-        .unwrap();
-        std::sync::Arc::new(JellyfinClient::new(
-            session,
-            ReqwestTransport::new().unwrap(),
-        ))
-    }
+    use crate::test_support::{Reply, client, fake_jellyfin};
 
     fn final_report() -> PlaybackReport {
         PlaybackReport {
@@ -1112,7 +1040,7 @@ mod tests {
 
     #[test]
     fn orderly_exit_delivers_the_final_stop_before_teardown() {
-        let (address, requests) = fake_jellyfin(Reply::NoContent);
+        let (address, requests) = fake_jellyfin(vec![Reply::Status(204, Vec::new())]);
         let runtime = ServiceRuntime::new().unwrap();
         let (drain, outcome) = send_final_and_drain(&runtime, &address, Duration::from_secs(5));
         assert_eq!(drain, Drain::Settled);
@@ -1127,7 +1055,7 @@ mod tests {
 
     #[test]
     fn a_failed_final_stop_does_not_stop_the_exit() {
-        let (address, _requests) = fake_jellyfin(Reply::ServerError);
+        let (address, _requests) = fake_jellyfin(vec![Reply::Status(500, Vec::new())]);
         let runtime = ServiceRuntime::new().unwrap();
         let (drain, outcome) = send_final_and_drain(&runtime, &address, Duration::from_secs(5));
         assert_eq!(drain, Drain::Settled);
@@ -1137,7 +1065,7 @@ mod tests {
 
     #[test]
     fn a_hanging_final_stop_is_abandoned_at_the_bound() {
-        let (address, requests) = fake_jellyfin(Reply::Hang);
+        let (address, requests) = fake_jellyfin(vec![Reply::Hang]);
         let runtime = ServiceRuntime::new().unwrap();
         let started = std::time::Instant::now();
         let bound = Duration::from_millis(300);

@@ -16,8 +16,9 @@ use crate::warning::insecure_http_warning;
 
 pub(crate) const LOGIN_COPY: &str = "Connect to your Jellyfin server to browse your library and pick up exactly where you left off.";
 pub(crate) const MIGRATION_NOTE: &str = "Native library screens are still being migrated.";
-pub(crate) const PLAYER_ENTRY: &str = "Temporary playback entry";
-pub(crate) const PLAYER_ENTRY_NOTE: &str = "Phase 3B infrastructure. Paste an item ID from this server. Home and Details are not here yet.";
+pub(crate) const ITEM_ENTRY: &str = "Temporary item entry";
+pub(crate) const ITEM_ENTRY_NOTE: &str = "Phase 3C infrastructure. Paste an item ID from this server to open its Details. Home replaces this next.";
+pub(crate) const ITEM_ENTRY_ACTION: &str = "Open Details";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -72,6 +73,12 @@ pub enum ReviewScene {
     PlayerError,
     PlayerAudio,
     PlayerSubtitles,
+    DetailsMovie,
+    DetailsMovieResume,
+    DetailsSeries,
+    DetailsSeason,
+    DetailsLoading,
+    DetailsError,
 }
 
 impl ReviewScene {
@@ -88,7 +95,26 @@ impl ReviewScene {
             | Self::Warning
             | Self::Error
             | Self::Loading
-            | Self::Shell => None,
+            | Self::Shell
+            | Self::DetailsMovie
+            | Self::DetailsMovieResume
+            | Self::DetailsSeries
+            | Self::DetailsSeason
+            | Self::DetailsLoading
+            | Self::DetailsError => None,
+        }
+    }
+
+    pub(crate) fn details_preview(self) -> Option<crate::details::DetailsPreview> {
+        use crate::details::DetailsPreview;
+        match self {
+            Self::DetailsMovie => Some(DetailsPreview::Movie),
+            Self::DetailsMovieResume => Some(DetailsPreview::MovieResume),
+            Self::DetailsSeries => Some(DetailsPreview::Series),
+            Self::DetailsSeason => Some(DetailsPreview::Season),
+            Self::DetailsLoading => Some(DetailsPreview::Loading),
+            Self::DetailsError => Some(DetailsPreview::Error),
+            _ => None,
         }
     }
 }
@@ -138,7 +164,13 @@ impl AppModel {
             | ReviewScene::PlayerControls
             | ReviewScene::PlayerError
             | ReviewScene::PlayerAudio
-            | ReviewScene::PlayerSubtitles => {
+            | ReviewScene::PlayerSubtitles
+            | ReviewScene::DetailsMovie
+            | ReviewScene::DetailsMovieResume
+            | ReviewScene::DetailsSeries
+            | ReviewScene::DetailsSeason
+            | ReviewScene::DetailsLoading
+            | ReviewScene::DetailsError => {
                 model.apply_startup(Startup::Authenticated(review_session()));
             }
         }
@@ -172,8 +204,8 @@ impl AppModel {
         self.item_id = value;
     }
 
-    /// Open the temporary player entry, or explain why the id cannot be used.
-    pub(crate) fn begin_playback(&mut self) -> Option<matinee_core::ItemId> {
+    /// Open the temporary item entry, or explain why the id cannot be used.
+    pub(crate) fn begin_item(&mut self) -> Option<matinee_core::ItemId> {
         if self.phase != Phase::Authenticated {
             return None;
         }
@@ -192,6 +224,12 @@ impl AppModel {
                 None
             }
         }
+    }
+
+    /// The session could not make an HTTP client.
+    pub(crate) fn note_unavailable(&mut self) {
+        self.notice =
+            Some("Could not reach Jellyfin. Check the server address and try again.".into());
     }
 
     pub fn phase(&self) -> Phase {
@@ -390,11 +428,11 @@ impl AppModel {
                     lines.push(identity.server);
                 }
                 lines.push(MIGRATION_NOTE.into());
-                lines.push(PLAYER_ENTRY.into());
-                lines.push(PLAYER_ENTRY_NOTE.into());
+                lines.push(ITEM_ENTRY.into());
+                lines.push(ITEM_ENTRY_NOTE.into());
                 lines.push("Item ID".into());
                 lines.push(self.item_id.clone());
-                lines.push("Play".into());
+                lines.push(ITEM_ENTRY_ACTION.into());
                 lines.push(self.button_label().into());
                 if let Some(notice) = &self.notice {
                     lines.push(notice.clone());
@@ -426,7 +464,7 @@ impl fmt::Debug for AppModel {
     }
 }
 
-fn review_session() -> Session {
+pub(crate) fn review_session() -> Session {
     Session::new(
         "http://jellyfin.local:8096",
         "fixture-token",
@@ -669,6 +707,12 @@ mod tests {
             ReviewScene::PlayerError,
             ReviewScene::PlayerAudio,
             ReviewScene::PlayerSubtitles,
+            ReviewScene::DetailsMovie,
+            ReviewScene::DetailsMovieResume,
+            ReviewScene::DetailsSeries,
+            ReviewScene::DetailsSeason,
+            ReviewScene::DetailsLoading,
+            ReviewScene::DetailsError,
         ] {
             let model = AppModel::review(scene);
             let rendered = model.visible_lines().join("\n");
@@ -692,16 +736,16 @@ mod tests {
     fn playback_entry_requires_a_usable_item_id() {
         let mut model = AppModel::starting();
         model.apply_startup(Startup::Authenticated(sample_session()));
-        assert!(model.begin_playback().is_none());
+        assert!(model.begin_item().is_none());
         assert_eq!(model.notice(), Some("Enter an item ID."));
         model.set_item_id("nope/../secret".into());
-        assert!(model.begin_playback().is_none());
+        assert!(model.begin_item().is_none());
         assert_eq!(model.notice(), Some("That item ID cannot be used."));
         model.set_item_id("item-1".into());
-        assert_eq!(model.begin_playback().unwrap().as_str(), "item-1");
+        assert_eq!(model.begin_item().unwrap().as_str(), "item-1");
         assert!(model.notice().is_none());
         let lines = model.visible_lines().join("\n");
-        assert!(lines.contains(PLAYER_ENTRY));
+        assert!(lines.contains(ITEM_ENTRY));
         assert!(!lines.contains(TOKEN));
     }
 

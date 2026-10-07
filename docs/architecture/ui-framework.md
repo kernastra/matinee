@@ -97,6 +97,8 @@ variable axes, so the variable originals are not shipped (see "Known gaps").
 | `ScrollView`, `ScrollControl` | Wraps GPUI overflow scroll. Axes are vertical, horizontal, or both. Keyboard scrolling is opt-in so a list keeps the arrow keys. |
 | `List`, `ListRow` | One tab stop, single selection, disabled rows skipped, Enter activates. Does not scroll itself. |
 | `Image` | Fixed frame, fit or fill, asset path, pending placeholder, failure fallback. No fetch policy. |
+| `DecodedImage` | JPEG, PNG, or WebP bytes the caller fetched, decoded on any thread with a side limit, shown with `Image::decoded`. The owner calls `release` to free the atlas copy. |
+| `Pressable` | A tab stop with any content (a row, a tile). Click, Enter, and Space activate it; hover and pressed fills and the keyboard focus ring come from the theme. Layout is the caller's. |
 | `ProgressBar` | Determinate (clamped) and indeterminate. Reduced motion holds the indeterminate segment still. |
 | `Tooltip` | Text, GPUI's hover delay, no focus, no animation. |
 | `Popover` | Anchored layer. Outside press and Escape dismiss. Focus returns to the trigger. |
@@ -192,7 +194,7 @@ crates.
   toggles the preview toolbar.
 - Pages today: Color, Typography, Spacing, Radius & Elevation, Motion, Icons,
   Button, Icon Button, Text Field, Search Field, Switch, Checkbox, Segmented
-  Control, Slider, Scroll View, List, Image, Progress, Tooltip, Popover, Menu,
+  Control, Slider, Scroll View, List, Image, Pressable, Progress, Tooltip, Popover, Menu,
   Context Menu, Dialog, Sidebar, Toolbar, Split View, Empty State, Desktop
   Composition, Text, Surface.
 - A lightweight inspector under the story reports the interactive control's

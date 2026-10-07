@@ -140,8 +140,8 @@ reference app, including the product rules in `docs/design-spec.md`.
 
 **Phase 3B: Native Player — landed.**
 
-- The authenticated shell has a temporary item-ID entry. It is not Home or
-  Details. No server address, user ID, media ID, token, or library name is
+- The authenticated shell has a temporary item-ID entry (Phase 3C points
+  it at Details). It is not Home. No server address, user ID, media ID, token, or library name is
   hard-coded.
 - `PlayerModel` owns playback state. `PlayerScreen` paints it. The engine
   is the existing `matinee-player`. Frames go through `ExternalFrameSurface`
@@ -159,10 +159,25 @@ reference app, including the product rules in `docs/design-spec.md`.
 - A missing libmpv is an error state. Packaging remains Phase 4. The
   software frame path stays capped at 1080p.
 
-Phase 3C and later screens are not started. The next native screen that
-loads artwork uses `ArtworkRequest` and `Session::authorization_header`. The
-compatibility builders that still put `api_key` on the URL stay until that
-loader exists. The Player does not load artwork.
+**Phase 3C: Native Details — in review.**
+
+- The temporary item entry now opens Details; Play and Resume open the
+  Phase 3B Player, and Back from the Player refreshes Details in place.
+- Movies and episodes: backdrop, poster or still, title, tagline,
+  metadata, scores, genres, overview, credits, Play/Resume with a quiet
+  progress line, technical labels, cast, chapters, collections, and more
+  like this. Series: next-up Play/Resume, a season picker, and episode rows.
+- First native artwork: `ArtworkRequest` plus `fetch_artwork` with the
+  session header, decoded off the UI thread into Atelier's `DecodedImage`,
+  a 96 MiB shared cache, and cancellation when a slot goes away.
+- A small `Navigation<Page>` stack: shell, Details, Player.
+- Deferred: watchlist, played toggles, clear progress, play from the
+  beginning, logo artwork, chapter images and chapter seek, people and
+  collection browsing, autoplay. See [details.md](../architecture/details.md).
+
+Phase 3D (Home) and later screens are not started. The compatibility
+builders that still put `api_key` on artwork URLs stay for the shipping
+app; the native app is guarded against them.
 
 ## Phase 4: Distribution and cut-over (proposed)
 
