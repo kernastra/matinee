@@ -32,7 +32,7 @@ pub use item::{
 pub use library::{CollectionContext, LibraryKind, LibrarySort};
 pub use media::{
     AudioStream, Delivery, DynamicRange, MediaSource, MediaStream, SubtitleStream, TechnicalMedia,
-    VideoStream,
+    TechnicalSummary, VideoStream,
 };
 pub use playback::{
     PlaybackMethod, PlaybackOptions, PlaybackPlan, PlaybackReport, ReportKind, StreamAuthorization,

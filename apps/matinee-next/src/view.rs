@@ -15,13 +15,17 @@ use matinee_secrets::{KeyringStore, MemoryStore};
 use matinee_ui::palette::FADED_TEAL;
 use tokio::task::JoinHandle;
 
+use crate::artwork::{ArtworkLoader, Client};
+use crate::details::{DetailsEvent, DetailsScreen};
+use crate::nav::Navigation;
 use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen};
 use crate::runtime::ServiceRuntime;
 use crate::session::{accept_authentication, forget_session, restore_session};
 use crate::store::SharedStore;
 
 use crate::model::{
-    AppModel, LOGIN_COPY, MIGRATION_NOTE, PLAYER_ENTRY, PLAYER_ENTRY_NOTE, Phase, ReviewScene,
+    AppModel, ITEM_ENTRY, ITEM_ENTRY_ACTION, ITEM_ENTRY_NOTE, LOGIN_COPY, MIGRATION_NOTE, Phase,
+    ReviewScene,
 };
 
 #[derive(Clone)]
@@ -59,8 +63,19 @@ pub struct MatineeRoot {
     /// After sign-in starts, move focus onto the loading button once the
     /// fields have left the tab order.
     park_focus: bool,
-    player: Option<Entity<PlayerScreen>>,
-    focus_player: bool,
+    /// Screens above the shell: Details, then the Player over it.
+    pages: Navigation<Page>,
+    /// Move focus into the top page on the next frame.
+    focus_page: bool,
+    /// One Jellyfin client per signed-in session, shared by Details.
+    client: Option<Client>,
+    artwork: ArtworkLoader,
+}
+
+/// A screen above the authenticated shell.
+enum Page {
+    Details(Entity<DetailsScreen>),
+    Player(Entity<PlayerScreen>),
 }
 
 impl MatineeRoot {
@@ -73,30 +88,38 @@ impl MatineeRoot {
         let model = review
             .map(AppModel::review)
             .unwrap_or_else(AppModel::starting);
-        let player = review.and_then(ReviewScene::player_preview).map(|scene| {
-            cx.new(|cx| PlayerScreen::preview(Arc::clone(&services.runtime), scene, window, cx))
-        });
+        let artwork = ArtworkLoader::new(Arc::clone(&services.runtime));
         let mut root = Self {
             services,
             focus_username: review == Some(ReviewScene::Focus),
-            focus_player: player.is_some(),
+            focus_page: false,
             model,
             focus: cx.focus_handle(),
             task: None,
             park_focus: false,
-            player,
+            pages: Navigation::default(),
+            client: None,
+            artwork,
         };
         if review.is_none() {
             root.start_restore(cx);
         }
-        if let Some(player) = root.player.clone() {
-            root.watch_player(&player, cx);
+        if let Some(scene) = review.and_then(ReviewScene::details_preview) {
+            let runtime = Arc::clone(&root.services.runtime);
+            let loader = root.artwork.clone();
+            let details = cx.new(|cx| DetailsScreen::preview(runtime, loader, scene, cx));
+            root.push_details(details, window, cx);
+        }
+        if let Some(scene) = review.and_then(ReviewScene::player_preview) {
+            let runtime = Arc::clone(&root.services.runtime);
+            let player = cx.new(|cx| PlayerScreen::preview(runtime, scene, window, cx));
+            root.push_player(player, cx);
         }
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |_, cx| {
             // Close the Player before the window goes, so its stop report does
             // not depend on drop order. The window still closes.
-            weak.update(cx, |root, cx| root.release_player(cx)).ok();
+            weak.update(cx, |root, cx| root.release_pages(cx)).ok();
             true
         });
         cx.on_app_quit(|root, cx| {
@@ -172,7 +195,8 @@ impl MatineeRoot {
         if !self.model.begin_sign_out() {
             return;
         }
-        self.release_player(cx);
+        self.release_pages(cx);
+        self.client = None;
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -197,43 +221,114 @@ impl MatineeRoot {
         cx.notify();
     }
 
-    fn open_player(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(item_id) = self.model.begin_playback() else {
+    /// The shared client for the signed-in session.
+    fn client(&mut self) -> Option<Client> {
+        if self.client.is_none() {
+            let session = self.model.session()?.clone();
+            let transport = matinee_jellyfin::ReqwestTransport::new().ok()?;
+            self.client = Some(Arc::new(matinee_jellyfin::JellyfinClient::new(
+                session, transport,
+            )));
+        }
+        self.client.clone()
+    }
+
+    /// The temporary item-ID entry opens Details. Home replaces it next phase.
+    fn open_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item_id) = self.model.begin_item() else {
             cx.notify();
             return;
         };
-        let Some(session) = self.model.session().cloned() else {
+        let Some(client) = self.client() else {
+            self.model.note_unavailable();
+            cx.notify();
             return;
         };
-        let player = cx.new(|cx| {
-            PlayerScreen::open(
-                Arc::clone(&self.services.runtime),
-                session,
-                item_id,
-                window,
-                cx,
-            )
-        });
-        self.watch_player(&player, cx);
-        window.focus(player.read(cx).focus_handle());
-        self.player = Some(player);
+        let runtime = Arc::clone(&self.services.runtime);
+        let loader = self.artwork.clone();
+        let details = cx.new(|cx| DetailsScreen::open(runtime, client, loader, item_id, cx));
+        self.push_details(details, window, cx);
+    }
+
+    fn push_details(
+        &mut self,
+        details: Entity<DetailsScreen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
+            &details,
+            window,
+            |this, details, event: &DetailsEvent, window, cx| match event {
+                DetailsEvent::Play(item_id) => this.open_player(item_id.clone(), window, cx),
+                DetailsEvent::Back => this.close_details(details, cx),
+            },
+        )
+        .detach();
+        self.pages.push(Page::Details(details));
+        self.focus_page = true;
         cx.notify();
     }
 
-    fn watch_player(&self, player: &Entity<PlayerScreen>, cx: &mut Context<Self>) {
-        cx.subscribe(player, |this, _, _: &LeavePlayer, cx| {
+    fn close_details(&mut self, details: &Entity<DetailsScreen>, cx: &mut Context<Self>) {
+        let closed = self
+            .pages
+            .pop_if(|page| matches!(page, Page::Details(top) if top == details));
+        if closed.is_some() {
+            self.focus_page = true;
+            cx.notify();
+        }
+    }
+
+    /// Details → Player. The Player plans, resumes, and reports on its own.
+    fn open_player(
+        &mut self,
+        item_id: matinee_core::ItemId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.model.session().cloned() else {
+            return;
+        };
+        let runtime = Arc::clone(&self.services.runtime);
+        let player = cx.new(|cx| PlayerScreen::open(runtime, session, item_id, window, cx));
+        self.push_player(player, cx);
+    }
+
+    fn push_player(&mut self, player: Entity<PlayerScreen>, cx: &mut Context<Self>) {
+        cx.subscribe(&player, |this, _, _: &LeavePlayer, cx| {
             this.release_player(cx);
             cx.notify();
         })
         .detach();
+        self.pages.push(Page::Player(player));
+        self.focus_page = true;
+        cx.notify();
     }
 
-    /// Player → shell, and the first step of window close and application
-    /// exit. The final stop report is started here and not awaited: the
-    /// service runtime stays alive. Only [`Self::prepare_exit`] waits for it.
+    /// Player → Details (or the shell). The final stop report is started here
+    /// and not awaited: the service runtime stays alive. Only
+    /// [`Self::prepare_exit`] waits for it. Details underneath refreshes so
+    /// the new position shows without reopening it.
     fn release_player(&mut self, cx: &mut Context<Self>) {
-        if let Some(player) = self.player.take() {
-            player.update(cx, |player, _| player.finish());
+        let Some(Page::Player(player)) = self.pages.pop_if(|page| matches!(page, Page::Player(_)))
+        else {
+            return;
+        };
+        player.update(cx, |player, _| player.finish());
+        if let Some(Page::Details(details)) = self.pages.top() {
+            details.update(cx, |details, cx| details.resume(cx));
+        }
+        self.focus_page = true;
+    }
+
+    /// Window close, sign-out, and exit: finish every page, top first.
+    fn release_pages(&mut self, cx: &mut Context<Self>) {
+        let pages: Vec<Page> = self.pages.drain().collect();
+        for page in pages {
+            if let Page::Player(player) = page {
+                player.update(cx, |player, _| player.finish());
+            }
         }
     }
 
@@ -242,7 +337,7 @@ impl MatineeRoot {
     /// GPUI thread waits for final reports, bounded by
     /// [`crate::runtime::FINAL_WORK_BOUND`]. Exit continues either way.
     fn prepare_exit(&mut self, cx: &mut Context<Self>) {
-        self.release_player(cx);
+        self.release_pages(cx);
         self.services.runtime.drain_final();
     }
 }
@@ -264,24 +359,33 @@ impl Render for MatineeRoot {
                 window.focus_next();
             });
         }
-        if self.focus_player {
-            self.focus_player = false;
-            let menu_open = self
-                .player
-                .as_ref()
-                .is_some_and(|player| player.read(cx).menu_open());
-            if !menu_open && let Some(player) = self.player.clone() {
-                let focus = player.read(cx).focus_handle().clone();
-                window.on_next_frame(move |window, _| {
-                    window.focus(&focus);
-                });
+        if self.focus_page {
+            self.focus_page = false;
+            let focus = match self.pages.top() {
+                Some(Page::Player(player)) if !player.read(cx).menu_open() => {
+                    Some(player.read(cx).focus_handle().clone())
+                }
+                Some(Page::Player(_)) => None,
+                Some(Page::Details(details)) => Some(details.read(cx).focus_handle().clone()),
+                None => Some(self.focus.clone()),
+            };
+            if let Some(focus) = focus {
+                window.on_next_frame(move |window, _| window.focus(&focus));
             }
         }
 
         let theme = cx.theme().clone();
         let chrome = resolve_chrome(Platform::current(), ChromeIntent::PlatformDefault);
         let signing_in = self.model.fields_locked();
-        let playing = self.player.is_some();
+        let player = match self.pages.top() {
+            Some(Page::Player(player)) => Some(player.clone()),
+            _ => None,
+        };
+        let details = match self.pages.top() {
+            Some(Page::Details(details)) => Some(details.clone()),
+            _ => None,
+        };
+        let playing = player.is_some();
         let fullscreen = window.is_fullscreen();
         if signing_in && self.park_focus {
             self.park_focus = false;
@@ -304,14 +408,12 @@ impl Render for MatineeRoot {
             .text_color(theme.colors.text.primary)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event, window, cx| {
-                if this.player.is_some() {
-                    let outcome = this
-                        .player
-                        .as_ref()
-                        .map(|player| {
-                            player.update(cx, |player, cx| player.on_key(event, window, cx))
-                        })
-                        .unwrap_or(KeyOutcome::Ignored);
+                let player = match this.pages.top() {
+                    Some(Page::Player(player)) => Some(player.clone()),
+                    _ => None,
+                };
+                if let Some(player) = player {
+                    let outcome = player.update(cx, |player, cx| player.on_key(event, window, cx));
                     if matches!(outcome, KeyOutcome::Leave) {
                         this.release_player(cx);
                         cx.notify();
@@ -323,7 +425,7 @@ impl Render for MatineeRoot {
                 }
                 on_fullscreen_escape(event, window, cx);
             }))
-            .when(!playing, |root| root.child(atmosphere(&theme)))
+            .when(self.pages.is_empty(), |root| root.child(atmosphere(&theme)))
             .child(
                 v_stack(Space::S0)
                     .size_full()
@@ -331,14 +433,23 @@ impl Render for MatineeRoot {
                         chrome.band_height > 0.0 && !(playing && fullscreen),
                         |column| column.child(titlebar(&theme, chrome)),
                     )
-                    .child(if playing {
+                    .child(if let Some(player) = player {
                         div()
                             .id("matinee-player-slot")
                             .flex_1()
                             .w_full()
                             .min_h(px(0.0))
                             .overflow_hidden()
-                            .child(self.player.clone().unwrap())
+                            .child(player)
+                            .into_any_element()
+                    } else if let Some(details) = details {
+                        div()
+                            .id("matinee-details-slot")
+                            .flex_1()
+                            .w_full()
+                            .min_h(px(0.0))
+                            .overflow_hidden()
+                            .child(details)
                             .into_any_element()
                     } else {
                         ScrollView::vertical("matinee-scroll")
@@ -526,12 +637,12 @@ impl MatineeRoot {
                         v_stack(Space::S2)
                             .w_full()
                             .child(
-                                Text::new(PLAYER_ENTRY)
+                                Text::new(ITEM_ENTRY)
                                     .role(TextRole::Label)
                                     .color(theme.colors.control.accent),
                             )
                             .child(
-                                Text::new(PLAYER_ENTRY_NOTE)
+                                Text::new(ITEM_ENTRY_NOTE)
                                     .role(TextRole::Caption)
                                     .tone(TextTone::Muted),
                             )
@@ -551,11 +662,11 @@ impl MatineeRoot {
                                     }),
                             )
                             .child(
-                                Button::new("play-item", "Play")
+                                Button::new("open-item", ITEM_ENTRY_ACTION)
                                     .variant(ButtonVariant::Primary)
                                     .disabled(signing_out)
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_player(window, cx);
+                                        this.open_details(window, cx);
                                     })),
                             ),
                     )

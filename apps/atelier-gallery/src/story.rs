@@ -158,9 +158,16 @@ pub const STORIES: &[Story] = &[
     Story {
         id: "image",
         title: "Image",
-        summary: "Fixed frames with fit, fill, a loading placeholder, and a failure fallback.",
+        summary: "Fixed frames with fit, fill, decoded bytes, a loading placeholder, and a failure fallback.",
         section: Section::Components,
         render: stories::composition::image,
+    },
+    Story {
+        id: "pressable",
+        title: "Pressable",
+        summary: "A tab stop with any content: a row or a tile. Click, Enter, and Space activate it. Disabled content is skipped.",
+        section: Section::Components,
+        render: stories::composition::pressable,
     },
     Story {
         id: "external-frame",

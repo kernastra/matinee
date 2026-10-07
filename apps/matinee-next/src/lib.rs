@@ -1,21 +1,28 @@
 //! Native Matinee application.
 //!
 //! The GPUI window talks to one service runtime. That runtime owns Jellyfin
-//! HTTP, playback reporting, and vault work. Login and the Player are the
-//! screens in this crate. Home and the other library screens are not.
+//! HTTP, playback reporting, artwork fetches, and vault work. Login, Details,
+//! and the Player are the screens in this crate. Home and the other library
+//! screens are not.
 //!
 //! # Artwork
 //!
-//! Login does not load Jellyfin artwork. The next screen that does must build
-//! an [`matinee_jellyfin::ArtworkRequest`] and send
-//! [`matinee_jellyfin::Session::authorization_header`] from the service
-//! runtime. Do not put `api_key` back on artwork URLs.
+//! Screens ask [`artwork::ArtworkLoader`] for a
+//! [`matinee_jellyfin::ArtworkRequest`]. The loader fetches it on the
+//! service runtime with [`matinee_jellyfin::Session::authorization_header`]
+//! and decodes it off the UI thread. Do not put `api_key` back on artwork
+//! URLs.
 
+mod artwork;
+mod details;
 mod model;
+mod nav;
 mod player;
 mod runtime;
 mod session;
 mod store;
+#[cfg(test)]
+mod test_support;
 mod view;
 mod warning;
 
@@ -82,6 +89,12 @@ fn review_scene() -> Option<ReviewScene> {
         Some("player-error") => Some(ReviewScene::PlayerError),
         Some("player-audio") => Some(ReviewScene::PlayerAudio),
         Some("player-subtitles") => Some(ReviewScene::PlayerSubtitles),
+        Some("details-movie") => Some(ReviewScene::DetailsMovie),
+        Some("details-movie-resume") => Some(ReviewScene::DetailsMovieResume),
+        Some("details-series") => Some(ReviewScene::DetailsSeries),
+        Some("details-season") => Some(ReviewScene::DetailsSeason),
+        Some("details-loading") => Some(ReviewScene::DetailsLoading),
+        Some("details-error") => Some(ReviewScene::DetailsError),
         _ => None,
     }
 }

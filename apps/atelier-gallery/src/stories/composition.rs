@@ -126,7 +126,8 @@ pub fn list(window: &mut Window, cx: &mut App) -> AnyElement {
         .into_any_element()
 }
 
-pub fn image(_window: &mut Window, _cx: &mut App) -> AnyElement {
+pub fn image(_window: &mut Window, cx: &mut App) -> AnyElement {
+    let decoded = decoded_sample(cx);
     v_stack(Space::S6)
         .child(example(
             "Fit and fill",
@@ -147,7 +148,102 @@ pub fn image(_window: &mut Window, _cx: &mut App) -> AnyElement {
                 .child(Image::pending("pending").frame(96.0, 72.0).label("Loading"))
                 .child(Image::failed("failed").frame(96.0, 72.0).label("Unavailable")),
         ))
+        .child(example(
+            "Decoded bytes",
+            "An application fetches bytes itself and decodes them off the UI thread. Damaged or unsupported bytes become a failure.",
+            h_stack(Space::S4)
+                .child(match decoded {
+                    Some(image) => Image::decoded("decoded", image)
+                        .frame(120.0, 72.0)
+                        .fit(ImageFit::Fill)
+                        .label("Decoded"),
+                    None => Image::failed("decoded").frame(120.0, 72.0).label("Unavailable"),
+                })
+                .child(
+                    match DecodedImage::decode(b"not an image", MAX_DECODED_SIDE) {
+                        Ok(image) => Image::decoded("damaged", image),
+                        Err(_) => Image::failed("damaged"),
+                    }
+                    .frame(96.0, 72.0)
+                    .label("Damaged bytes"),
+                ),
+        ))
         .into_any_element()
+}
+
+pub fn pressable(_window: &mut Window, cx: &mut App) -> AnyElement {
+    let theme = cx.theme().clone();
+    let row = |id: &'static str,
+               index: usize,
+               title: &'static str,
+               detail: &'static str,
+               disabled: bool| {
+        Pressable::new(id, title)
+            .disabled(disabled)
+            .on_press(|_, _, _| {})
+            .w(px(420.0))
+            .p(Space::S2.px())
+            .child(
+                h_stack(Space::S3)
+                    .items_center()
+                    .child(
+                        Image::sample((id, index), index)
+                            .frame(96.0, 54.0)
+                            .fit(ImageFit::Fill),
+                    )
+                    .child(
+                        v_stack(Space::S1)
+                            .child(Text::new(title).role(TextRole::Label))
+                            .child(
+                                Text::new(detail)
+                                    .role(TextRole::Caption)
+                                    .tone(TextTone::Muted),
+                            ),
+                    ),
+            )
+    };
+    v_stack(Space::S6)
+        .child(example(
+            "Rows",
+            "Tab moves between rows. Enter or Space activates the focused row. A pointer press activates without a focus ring.",
+            v_stack(Space::S1)
+                .child(row("row-one", 0, "First row", "Image, title, and detail", false))
+                .child(row("row-two", 1, "Second row", "Hover and pressed fills come from the theme", false))
+                .child(row("row-three", 2, "Disabled row", "Visible, not a tab stop", true)),
+        ))
+        .child(example(
+            "Tile",
+            "The same control as a poster tile. Layout belongs to the caller.",
+            Pressable::new("tile", "Tile")
+                .on_press(|_, _, _| {})
+                .w(px(140.0))
+                .p(Space::S1.px())
+                .child(
+                    v_stack(Space::S2)
+                        .child(Image::sample("tile-art", 3).frame(132.0, 198.0).fit(ImageFit::Fill))
+                        .child(
+                            Text::new("Tile title")
+                                .role(TextRole::Label)
+                                .color(theme.colors.text.primary),
+                        ),
+                ),
+        ))
+        .into_any_element()
+}
+
+/// A bundled sample decoded once from its encoded bytes, the way an
+/// application decodes fetched artwork.
+fn decoded_sample(cx: &mut App) -> Option<DecodedImage> {
+    thread_local! {
+        static DECODED: std::cell::OnceCell<Option<DecodedImage>> = const { std::cell::OnceCell::new() };
+    }
+    DECODED.with(|cell| {
+        cell.get_or_init(|| {
+            let bytes = cx.asset_source().load(&sample_asset(2)).ok()??;
+            DecodedImage::decode(&bytes, MAX_DECODED_SIDE).ok()
+        })
+        .clone()
+    })
 }
 
 pub fn progress(_window: &mut Window, _cx: &mut App) -> AnyElement {

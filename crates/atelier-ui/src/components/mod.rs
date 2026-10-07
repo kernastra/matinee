@@ -11,6 +11,7 @@ mod keybindings;
 mod list;
 mod menu;
 mod popover;
+mod pressable;
 mod progress;
 mod scroll_view;
 mod search_field;
@@ -39,7 +40,10 @@ pub use external_frame::{
 };
 pub use focus_ring::{FOCUS_RING_GAP, FOCUS_RING_WIDTH, FocusRing};
 pub use icon::{Icon, IconName, IconSize, UiAssets};
-pub use image::{Image, ImageContent, ImageFit, SAMPLE_COUNT, sample_asset};
+pub use image::{
+    DecodeError, DecodedImage, Image, ImageContent, ImageFit, MAX_DECODED_SIDE, SAMPLE_COUNT,
+    sample_asset,
+};
 pub use keybindings::{
     Activate, ComponentKeymap, Copy, Cut, Dismiss, FocusNext, FocusPrevious, Paste, SelectAll,
     install_component_keybindings,
@@ -47,6 +51,7 @@ pub use keybindings::{
 pub use list::{List, ListRow};
 pub use menu::{ContextMenu, Menu, MenuEntry, MenuItem, MenuSeparator};
 pub use popover::Popover;
+pub use pressable::Pressable;
 pub use progress::{ProgressBar, clamp_progress};
 pub use scroll_view::{ScrollAxis, ScrollControl, ScrollView, clamp_scroll_offset};
 pub use search_field::SearchField;

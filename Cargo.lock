@@ -3279,6 +3279,7 @@ dependencies = [
  "atelier-app",
  "atelier-ui",
  "futures",
+ "image",
  "matinee-core",
  "matinee-jellyfin",
  "matinee-player",

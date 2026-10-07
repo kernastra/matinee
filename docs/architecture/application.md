@@ -2,8 +2,9 @@
 
 `apps/matinee-next` is the native Matinee window. Phase 3A gives it one
 service runtime, Login, and a minimal authenticated shell. Phase 3B adds
-the Player on that same runtime. It is not Home, Details, Library, Search,
-Calendar, Settings, or Poster Studio.
+the Player on that same runtime. Phase 3C adds Details, the first screen
+that loads Jellyfin artwork, and a small navigation stack. It is not Home,
+Library, Search, Calendar, Settings, or Poster Studio.
 
 The shipping Tauri app remains the usable reference. This binary does not
 replace it.
@@ -16,10 +17,15 @@ GPUI window
   → ServiceRuntime (one Tokio runtime)
   → matinee-jellyfin (ReqwestTransport, persist, playback plan, reports)
   → matinee-secrets (KeyringStore in production, MemoryStore in tests and review)
+  → Navigation<Page> (shell at the base; Details, then the Player, above it)
+  → DetailsModel + DetailsScreen
+       → ArtworkLoader (shared, bounded cache) → JellyfinClient::fetch_artwork
   → PlayerModel + PlayerScreen
        → matinee-player (existing engine; no second backend)
        → ExternalFrameSurface
 ```
+
+Details is described in [details.md](details.md).
 
 `PlayerModel` in `apps/matinee-next` is the playback model. `PlayerScreen`
 paints it and forwards input. The GPUI view does not choose a source, invent
@@ -171,12 +177,25 @@ is shown and the phase returns to `Authenticated` with the same session.
 `SigningOut` is only the in-flight removal. It is not another screen.
 
 The shell shows Matinee, “Connected as &lt;username&gt;”, the server, Sign
-out, and a temporary playback entry. The entry is labeled temporary Phase
-3B infrastructure. It takes a Jellyfin item ID typed by the person at the
-keyboard. It does not embed a server address, user ID, media ID, token, or
+out, and a temporary item entry. The entry is labeled temporary Phase 3C
+infrastructure and opens Details for the item, where Play and Resume open
+the Player. Home replaces it next. It takes a Jellyfin item ID typed by the
+person at the keyboard. It does not embed a server address, user ID, media ID, token, or
 library name. An empty field asks for an item ID. An ID `ItemId` cannot
 parse is rejected before any request. The shell does not render the access
 token.
+
+## Navigation
+
+`MatineeRoot` keeps a `Navigation<Page>` stack above the authenticated
+shell. A page is Details or the Player. The temporary item entry pushes
+Details; Details' Play pushes the Player. Back, Escape, or the Player's own
+Leave removes the top page. When the Player is removed, its final stop
+report starts (see Shutdown) and the Details underneath is told it is
+visible again: it refreshes the title's user data and, for a series, next
+up and the visible season, then focuses Play. Sign-out, window close, and
+exit finish every page. Home, Library, Search, and the other screens become
+further page kinds; the stack itself does not change.
 
 ## Player
 
@@ -257,11 +276,30 @@ engine id; the negotiated index stays until Off.
 
 The picture uses `ImageFit::Fit` at the window's content size, including
 960×620, 1200×760, 1440×900, and fullscreen. The software path remains the
-1080p BGRA cap documented in [playback.md](playback.md). This screen does
+1080p BGRA cap documented in [playback.md](playback.md). The Player does
 not load poster or backdrop artwork.
 
 ## Artwork
 
-Login and the Player do not load artwork. The next native screen that does
-must build `ArtworkRequest` and send `Session::authorization_header` from
-the service runtime. Do not put `api_key` back on those URLs.
+Details is the first native screen that loads Jellyfin artwork. Addresses
+are `ArtworkRequest`s built with `ArtworkUrls::item_request`,
+`person_request`, or `image_request`: no token in the URL, and the image
+tag on it so a cached copy changes when the artwork does.
+`apps/matinee-next/src/artwork.rs` owns fetching. `ArtworkLoader::load`
+answers from a shared cache or runs `JellyfinClient::fetch_artwork` on the
+service runtime, which sends `Session::authorization_header`, refuses an
+address on another server, and caps the body at 16 MiB. Bytes are decoded
+on a blocking thread into an Atelier `DecodedImage` (JPEG, PNG, WebP; the
+longest side is capped). A 404 is “missing”, not an error; a failed fetch
+or decode is “failed”. Both show a designed placeholder.
+
+The cache is bounded by decoded bytes (96 MiB), least-recently-used, and
+lives on the GPUI thread. An evicted image is released from every window
+atlas; a screen releases images it holds that the cache did not keep when
+it is dropped. The screen that asked owns the fetch task: dropping the
+screen, or leaving the slot (another season, another title), aborts it, and
+an answer for a slot that is gone is dropped.
+
+`scripts/check-architecture.sh` rejects the `api_key` URL builders and the
+raw access token in `apps/matinee-next`, and any `fetch_artwork` call
+outside `artwork.rs`. The Login and Player screens load no artwork.
