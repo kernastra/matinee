@@ -31,6 +31,7 @@ pub const SCROLL_CONTEXT: &str = "ScrollView";
 pub const RAIL_CONTEXT: &str = "Rail";
 pub const DIALOG_CONTEXT: &str = "Dialog";
 pub const POPOVER_CONTEXT: &str = "Popover";
+pub const GRID_CONTEXT: &str = "VirtualGrid";
 
 actions!(
     atelier_field,
@@ -79,7 +80,7 @@ actions!(atelier, [FocusNext, FocusPrevious]);
 actions!(atelier_overlay, [Dismiss, Activate]);
 
 /// Installs bindings for text fields, adjustable controls, lists, menus,
-/// rails, scroll views, and overlay dismissal.
+/// rails, grids, scroll views, and overlay dismissal.
 pub fn install_component_keybindings(cx: &mut App, keys: &ComponentKeymap) {
     let text = Some(TEXT_FIELD_CONTEXT);
     let mut bindings = vec![
@@ -175,6 +176,20 @@ pub fn install_component_keybindings(cx: &mut App, keys: &ComponentKeymap) {
         KeyBinding::new("right", NudgeRight, rail),
         KeyBinding::new("home", NudgeToStart, rail),
         KeyBinding::new("end", NudgeToEnd, rail),
+    ]);
+
+    let grid = Some(GRID_CONTEXT);
+    bindings.extend([
+        KeyBinding::new("up", NudgeUp, grid),
+        KeyBinding::new("down", NudgeDown, grid),
+        KeyBinding::new("left", NudgeLeft, grid),
+        KeyBinding::new("right", NudgeRight, grid),
+        KeyBinding::new("pageup", NudgePageUp, grid),
+        KeyBinding::new("pagedown", NudgePageDown, grid),
+        KeyBinding::new("home", NudgeToStart, grid),
+        KeyBinding::new("end", NudgeToEnd, grid),
+        KeyBinding::new("enter", Activate, grid),
+        KeyBinding::new("space", Activate, grid),
     ]);
 
     let scroll = Some(SCROLL_CONTEXT);

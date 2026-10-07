@@ -37,6 +37,37 @@ pub(crate) struct ServerInfoDto {
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct ItemsDto {
     pub(crate) items: Option<Vec<ItemDto>>,
+    #[serde(default)]
+    pub(crate) total_record_count: Option<i64>,
+}
+
+/// A user view (a library), from `/Users/{id}/Views`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct ViewsDto {
+    pub(crate) items: Option<Vec<ViewDto>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct ViewDto {
+    pub(crate) id: String,
+    pub(crate) name: Option<String>,
+    pub(crate) collection_type: Option<String>,
+}
+
+/// A genre, from `/Genres`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct GenresDto {
+    pub(crate) items: Option<Vec<GenreDto>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct GenreDto {
+    pub(crate) id: String,
+    pub(crate) name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -13,6 +13,8 @@ mod preview;
 mod screen;
 
 pub(crate) use preview::HomePreview;
+#[cfg(test)]
+pub(crate) use screen::browse_target;
 pub(crate) use screen::{HomeEvent, HomeScreen};
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use atelier_ui::gpui::{EventEmitter, KeyDownEvent, linear_color_stop, linear_gradient};
 use atelier_ui::prelude::*;
-use matinee_core::{HomeShelf, ImageRole, ItemId, ItemKind, MediaItem};
+use matinee_core::{HomeShelf, ImageRole, ItemId, ItemKind, LibraryKind, LibrarySort, MediaItem};
 use matinee_jellyfin::{ArtworkRequest, ArtworkUrls, Session};
 use tokio::task::JoinHandle;
 
@@ -25,10 +25,12 @@ use super::model::{
     Applied, FocusTarget, HeroPick, HeroState, HomeFailure, HomeModel, PageState, Request,
     ShelfState, card_detail, card_title, remaining_label,
 };
+use crate::app_bar::{AppBar, BarAction, app_bar};
 use crate::artwork::{
     Artwork, ArtworkLoad, ArtworkLoader, BACKDROP_WIDTH, Client, THUMB_WIDTH, TILE_POSTER_WIDTH,
 };
 use crate::details::{PlayAction, meta_line, progress_fraction, summary};
+use crate::nav::RootDestination;
 use crate::runtime::ServiceRuntime;
 use crate::tiles::{art_frame, backdrop_request, progress_line, stable_index};
 
@@ -38,6 +40,10 @@ pub(crate) enum HomeEvent {
     Open(ItemId),
     /// Open the Player for this item, from the hero.
     Play(ItemId),
+    /// Go to another root destination from the app bar.
+    Navigate(RootDestination),
+    /// "View all" on a row: Library for that kind, in the row's order.
+    Browse(LibraryKind, LibrarySort),
     SignOut,
     /// Jellyfin no longer accepts the session.
     SessionExpired,
@@ -692,46 +698,24 @@ impl HomeScreen {
             .into_any_element()
     }
 
-    /// The wordmark, a refresh affordance, and Sign out. No links to
-    /// screens that do not exist natively yet.
+    /// The app bar: wordmark, Home, Movies, Series, name, Refresh, Sign out.
     fn top_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = self.session.user().name().to_string();
-        h_stack(Space::S3)
-            .w_full()
-            .items_center()
-            .child(
-                Text::new("MATINEE")
-                    .role(TextRole::Metadata)
-                    .color(theme.colors.control.accent),
-            )
-            .child(div().flex_1())
-            .child(
-                Text::new(name)
-                    .role(TextRole::Caption)
-                    .tone(TextTone::Secondary),
-            )
-            .child(
-                Button::new("home-refresh", "Refresh")
-                    .variant(ButtonVariant::Subtle)
-                    .size(ButtonSize::Small)
-                    .disabled(self.model.is_loading() || self.signing_out)
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-            )
-            .child(
-                Button::new(
-                    "home-sign-out",
-                    if self.signing_out {
-                        "Signing out…"
-                    } else {
-                        "Sign out"
-                    },
-                )
-                .variant(ButtonVariant::Subtle)
-                .size(ButtonSize::Small)
-                .loading(self.signing_out)
-                .show_label_while_loading(true)
-                .on_click(cx.listener(|_, _, _, cx| cx.emit(HomeEvent::SignOut))),
-            )
+        app_bar(
+            theme,
+            AppBar {
+                active: RootDestination::Home,
+                name: self.session.user().name().to_string(),
+                refresh_disabled: self.model.is_loading(),
+                signing_out: self.signing_out,
+            },
+            cx,
+            |this, action, _, cx| match action {
+                BarAction::Go(RootDestination::Home) => {}
+                BarAction::Go(destination) => cx.emit(HomeEvent::Navigate(destination)),
+                BarAction::Refresh => this.refresh(cx),
+                BarAction::SignOut => cx.emit(HomeEvent::SignOut),
+            },
+        )
     }
 
     fn hero_copy(
@@ -933,6 +917,25 @@ impl HomeScreen {
                         .items_center()
                         .child(Text::new(shelf.title()).role(TextRole::Heading))
                         .child(div().flex_1())
+                        .when_some(
+                            browse_target(shelf).filter(|_| {
+                                matches!(self.model.shelf(shelf), ShelfState::Ready(_))
+                                    && !self.model.items(shelf).is_empty()
+                            }),
+                            |row, kind| {
+                                row.child(
+                                    Button::new(("home-view-all", shelf as usize), "View all")
+                                        .variant(ButtonVariant::Subtle)
+                                        .size(ButtonSize::Small)
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            cx.emit(HomeEvent::Browse(
+                                                kind,
+                                                LibrarySort::DateCreated,
+                                            ));
+                                        })),
+                                )
+                            },
+                        )
                         .when_some(rail.filter(|_| pager), |row, rail| {
                             row.child(pager_buttons(shelf, rail, cx))
                         }),
@@ -1120,6 +1123,17 @@ impl HomeScreen {
                     ),
             )
             .into_any_element()
+    }
+}
+
+/// The Library a row's "View all" opens. Recently Added rows are the
+/// newest titles of one kind, so they open that kind sorted by date added.
+/// Continue Watching, Next Up, and Favorites have no Library equivalent.
+pub(crate) fn browse_target(shelf: HomeShelf) -> Option<LibraryKind> {
+    match shelf {
+        HomeShelf::RecentMovies => Some(LibraryKind::Movies),
+        HomeShelf::RecentSeries => Some(LibraryKind::Series),
+        _ => None,
     }
 }
 

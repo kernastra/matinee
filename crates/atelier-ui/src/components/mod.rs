@@ -27,6 +27,7 @@ mod text;
 mod text_field;
 mod toolbar;
 mod tooltip;
+mod virtual_grid;
 
 pub use crate::overlay::{Alignment, DialogActionRole, Placement};
 pub use button::{
@@ -68,3 +69,6 @@ pub use text::{Text, TextTone};
 pub use text_field::TextField;
 pub use toolbar::Toolbar;
 pub use tooltip::{Tooltip, WithTooltip};
+pub use virtual_grid::{
+    GridCell, GridLayout, GridSizing, GridStep, GridViewport, VirtualGrid, VirtualGridState,
+};

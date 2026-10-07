@@ -177,6 +177,13 @@ pub const STORIES: &[Story] = &[
         render: stories::rail::render,
     },
     Story {
+        id: "virtual-grid",
+        title: "Virtual Grid",
+        summary: "A responsive grid that builds only the rows near the viewport. One tab stop, arrow-key focus that scrolls into view, and resize that keeps the focused item.",
+        section: Section::Components,
+        render: stories::virtual_grid::render,
+    },
+    Story {
         id: "external-frame",
         title: "External Frame",
         summary: "A latest BGRA picture from outside the framework. Fit letterboxes. Fill covers. Nothing here knows about codecs.",

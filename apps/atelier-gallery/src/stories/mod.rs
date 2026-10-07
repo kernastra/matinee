@@ -18,6 +18,7 @@ pub mod switch;
 pub mod text;
 pub mod text_field;
 pub mod typography;
+pub mod virtual_grid;
 
 use atelier_ui::{prelude::*, tokens::Color};
 

@@ -5,6 +5,9 @@
 //!
 //! Up and Down move the cursor, Home and End jump, Enter and Space activate,
 //! and Escape dismisses. Disabled rows are skipped and do not activate.
+//!
+//! A long menu can be given a [`Menu::max_height`]: its rows then scroll
+//! inside the panel, and the keyboard cursor is scrolled into view.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,8 +15,8 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnchoredPositionMode, App, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Pixels, Point, RenderOnce, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div, point, px,
+    ParentElement, Pixels, Point, RenderOnce, ScrollHandle, StatefulInteractiveElement, Styled,
+    Window, anchored, deferred, div, point, px,
 };
 
 use crate::{
@@ -129,6 +132,7 @@ pub enum MenuEntry {
 struct MenuState {
     focus: FocusHandle,
     cursor: RefCell<Option<usize>>,
+    scroll: ScrollHandle,
 }
 
 /// The menu panel. It claims focus from a parent gate when one is pending.
@@ -138,6 +142,7 @@ pub struct Menu {
     entries: Vec<Entry>,
     on_dismiss: Option<DismissHandler>,
     gate: Option<GateShare>,
+    max_height: Option<f32>,
 }
 
 impl Menu {
@@ -147,7 +152,14 @@ impl Menu {
             entries: Vec::new(),
             on_dismiss: None,
             gate: None,
+            max_height: None,
         }
+    }
+
+    /// Scroll the rows inside the panel once they are taller than this.
+    pub fn max_height(mut self, height: f32) -> Self {
+        self.max_height = Some(height);
+        self
     }
 
     pub fn entries(mut self, entries: impl IntoIterator<Item = MenuEntry>) -> Self {
@@ -186,6 +198,7 @@ impl RenderOnce for Menu {
         let model = window.use_keyed_state(self.id.clone(), cx, |_, cx| MenuState {
             focus: cx.focus_handle().tab_index(0).tab_stop(true),
             cursor: RefCell::new(None),
+            scroll: ScrollHandle::new(),
         });
         let focus = model.read(cx).focus.clone();
         if let Some(gate) = &self.gate {
@@ -200,6 +213,16 @@ impl RenderOnce for Menu {
             })
             .collect();
         let disabled: Vec<bool> = items.iter().map(|item| item.disabled).collect();
+        // Where each item sits among the panel's rows, separators included,
+        // so the cursor can be scrolled into view.
+        let rows: Rc<Vec<usize>> = Rc::new(
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| matches!(entry, Entry::Item(_)))
+                .map(|(row, _)| row)
+                .collect(),
+        );
         if model.read(cx).cursor.borrow().is_none() {
             *model.read(cx).cursor.borrow_mut() = move_enabled(&disabled, None, NavStep::First);
         }
@@ -225,22 +248,34 @@ impl RenderOnce for Menu {
             .on_action({
                 let model = model.clone();
                 let disabled = disabled.clone();
-                move |_: &NudgeUp, _, cx| step(&model, &disabled, cursor, NavStep::Previous, cx)
+                let rows = Rc::clone(&rows);
+                move |_: &NudgeUp, _, cx| {
+                    step(&model, &disabled, &rows, cursor, NavStep::Previous, cx)
+                }
             })
             .on_action({
                 let model = model.clone();
                 let disabled = disabled.clone();
-                move |_: &NudgeDown, _, cx| step(&model, &disabled, cursor, NavStep::Next, cx)
+                let rows = Rc::clone(&rows);
+                move |_: &NudgeDown, _, cx| {
+                    step(&model, &disabled, &rows, cursor, NavStep::Next, cx)
+                }
             })
             .on_action({
                 let model = model.clone();
                 let disabled = disabled.clone();
-                move |_: &NudgeToStart, _, cx| step(&model, &disabled, cursor, NavStep::First, cx)
+                let rows = Rc::clone(&rows);
+                move |_: &NudgeToStart, _, cx| {
+                    step(&model, &disabled, &rows, cursor, NavStep::First, cx)
+                }
             })
             .on_action({
                 let model = model.clone();
                 let disabled = disabled.clone();
-                move |_: &NudgeToEnd, _, cx| step(&model, &disabled, cursor, NavStep::Last, cx)
+                let rows = Rc::clone(&rows);
+                move |_: &NudgeToEnd, _, cx| {
+                    step(&model, &disabled, &rows, cursor, NavStep::Last, cx)
+                }
             })
             .on_action({
                 let items = items.clone();
@@ -253,11 +288,18 @@ impl RenderOnce for Menu {
             panel = panel.on_action(move |_: &Dismiss, window, cx| dismiss(window, cx));
         }
 
+        let mut list = div().id("menu-rows").flex().flex_col();
+        if let Some(height) = self.max_height {
+            list = list
+                .max_h(px(height))
+                .overflow_y_scroll()
+                .track_scroll(&model.read(cx).scroll);
+        }
         let mut item_index = 0;
         for entry in self.entries {
             match entry {
                 Entry::Separator => {
-                    panel = panel.child(
+                    list = list.child(
                         div()
                             .my(Space::S1.px())
                             .h(px(1.0))
@@ -267,7 +309,7 @@ impl RenderOnce for Menu {
                 Entry::Item(item) => {
                     let index = item_index;
                     item_index += 1;
-                    panel = panel.child(render_item(
+                    list = list.child(render_item(
                         index,
                         &item,
                         cursor == Some(index),
@@ -279,13 +321,14 @@ impl RenderOnce for Menu {
                 }
             }
         }
-        panel
+        panel.child(list)
     }
 }
 
 fn step(
     model: &gpui::Entity<MenuState>,
     disabled: &[bool],
+    rows: &[usize],
     cursor: Option<usize>,
     nav: NavStep,
     cx: &mut App,
@@ -299,6 +342,9 @@ fn step(
     focus::note_keyboard_navigation(cx);
     model.update(cx, |state, cx| {
         *state.cursor.borrow_mut() = Some(next);
+        if let Some(row) = rows.get(next) {
+            state.scroll.scroll_to_item(*row);
+        }
         cx.notify();
     });
 }

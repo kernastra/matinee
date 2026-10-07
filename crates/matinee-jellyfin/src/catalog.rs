@@ -1,19 +1,21 @@
 //! Home, library, details, search, and user-state writes.
 
 use matinee_core::{
-    CollectionContext, HomeFeed, HomeShelf, ItemId, LibraryKind, LibrarySort, MediaItem,
+    CollectionContext, HomeFeed, HomeShelf, ItemId, LibraryContent, LibraryGenre, LibraryId,
+    LibraryKind, LibraryPage, LibraryPageRequest, LibraryQuery, LibrarySort, LibraryView,
+    MediaItem,
 };
 use serde_json::json;
 
 use crate::client::{Endpoint, JellyfinClient};
 use crate::convert::{item_from_dto, items_from_dtos};
-use crate::dto::{ItemDto, ItemsDto};
+use crate::dto::{GenresDto, ItemDto, ItemsDto, ViewDto, ViewsDto};
 use crate::error::JellyfinError;
 use crate::query::encode_component;
 use crate::query::{
-    collection_items_path, collections_path, favorites_path, item_path, latest_path, library_path,
-    movies_path, next_up_feed_path, resume_path, search_path, series_path, similar_path,
-    top_rated_path,
+    collection_items_path, collections_path, favorites_path, genres_path, item_path, latest_path,
+    library_page_path, library_path, movies_path, next_up_feed_path, resume_path, search_path,
+    series_path, similar_path, top_rated_path, views_path,
 };
 use crate::session::ServerInfo;
 use crate::transport::{CancelFlag, Method, Transport};
@@ -75,6 +77,71 @@ impl<T: Transport> JellyfinClient<T> {
         let user_id = self.session().user().id().as_str();
         self.items(Endpoint::Library, &library_path(user_id, kind, sort))
             .await
+    }
+
+    /// One page of a typed library query, sorted and filtered by the
+    /// server. The total is the server's count for the whole query.
+    pub async fn library_page(
+        &self,
+        query: &LibraryQuery,
+        page: LibraryPageRequest,
+    ) -> Result<LibraryPage, JellyfinError> {
+        let user_id = self.session().user().id().as_str();
+        let dto: ItemsDto = self
+            .get_json(
+                Endpoint::Library,
+                &library_page_path(user_id, query, page),
+                "items",
+            )
+            .await?;
+        let items = dto.items.ok_or_else(|| JellyfinError::malformed("items"))?;
+        let mut items = items_from_dtos(items)?;
+        items.truncate(page.limit);
+        Ok(LibraryPage {
+            items,
+            start: page.start,
+            total: dto
+                .total_record_count
+                .and_then(|total| usize::try_from(total).ok()),
+        })
+    }
+
+    /// The person's movie, series, and mixed libraries, in server order.
+    /// Music, books, photos, and the like are left out.
+    pub async fn library_views(&self) -> Result<Vec<LibraryView>, JellyfinError> {
+        let user_id = self.session().user().id().as_str();
+        let dto: ViewsDto = self
+            .get_json(Endpoint::Library, &views_path(user_id), "views")
+            .await?;
+        let views = dto.items.ok_or_else(|| JellyfinError::malformed("views"))?;
+        Ok(views.into_iter().filter_map(view_from_dto).collect())
+    }
+
+    /// Genres among titles of `kind`, optionally inside one library.
+    pub async fn library_genres(
+        &self,
+        kind: LibraryKind,
+        view: Option<&LibraryId>,
+    ) -> Result<Vec<LibraryGenre>, JellyfinError> {
+        let user_id = self.session().user().id().as_str();
+        let dto: GenresDto = self
+            .get_json(
+                Endpoint::Library,
+                &genres_path(user_id, kind, view.map(LibraryId::as_str)),
+                "genres",
+            )
+            .await?;
+        let genres = dto
+            .items
+            .ok_or_else(|| JellyfinError::malformed("genres"))?;
+        Ok(genres
+            .into_iter()
+            .filter_map(|genre| {
+                let name = genre.name?.trim().to_string();
+                let id = ItemId::parse(genre.id.trim()).ok()?;
+                (!name.is_empty()).then_some(LibraryGenre { id, name })
+            })
+            .collect())
     }
 
     pub async fn item_details(&self, item_id: &ItemId) -> Result<MediaItem, JellyfinError> {
@@ -210,6 +277,21 @@ fn empty_shelf(shelf: &str, result: Result<Vec<MediaItem>, JellyfinError>) -> Ve
             Vec::new()
         }
     }
+}
+
+fn view_from_dto(dto: ViewDto) -> Option<LibraryView> {
+    let content = match dto.collection_type.as_deref().map(str::trim) {
+        Some("movies") => LibraryContent::Movies,
+        Some("tvshows") => LibraryContent::Series,
+        None | Some("") | Some("mixed") => LibraryContent::Mixed,
+        Some(_) => return None,
+    };
+    let id = LibraryId::parse(dto.id.trim()).ok()?;
+    let name = dto
+        .name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())?;
+    Some(LibraryView { id, name, content })
 }
 
 fn map_server_info(dto: crate::dto::ServerInfoDto) -> ServerInfo {

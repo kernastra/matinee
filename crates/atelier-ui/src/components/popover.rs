@@ -54,6 +54,7 @@ pub struct Popover {
     on_dismiss: Option<DismissHandler>,
     trigger: Option<AnyElement>,
     body: Option<Body>,
+    menu_max_height: Option<f32>,
 }
 
 impl Popover {
@@ -66,6 +67,7 @@ impl Popover {
             on_dismiss: None,
             trigger: None,
             body: None,
+            menu_max_height: None,
         }
     }
 
@@ -97,6 +99,12 @@ impl Popover {
     /// Arbitrary content. The popover takes focus.
     pub fn content(mut self, content: impl IntoElement) -> Self {
         self.body = Some(Body::Content(content.into_any_element()));
+        self
+    }
+
+    /// A long menu body scrolls inside the panel past this height.
+    pub fn menu_max_height(mut self, height: f32) -> Self {
+        self.menu_max_height = Some(height);
         self
     }
 
@@ -156,6 +164,9 @@ impl RenderOnce for Popover {
                     let mut menu = Menu::new((id.clone(), "menu"))
                         .entries(entries)
                         .gate(&model.read(cx).gate);
+                    if let Some(height) = self.menu_max_height {
+                        menu = menu.max_height(height);
+                    }
                     if let Some(dismiss) = dismiss.clone() {
                         menu = menu.on_dismiss(move |window, cx| dismiss(window, cx));
                     }

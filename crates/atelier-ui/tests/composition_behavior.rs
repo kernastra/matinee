@@ -533,3 +533,48 @@ impl Render for ContextHarness {
         )
     }
 }
+
+struct LongMenuHarness {
+    activated: Option<usize>,
+}
+
+impl Render for LongMenuHarness {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+        div().child(
+            Menu::new("long-menu")
+                .max_height(120.0)
+                .entries((0..30).map(|index| {
+                    let view = view.clone();
+                    MenuEntry::Item(MenuItem::new(format!("Row {index}")).on_activate(
+                        move |_, cx| {
+                            view.update(cx, |this, cx| {
+                                this.activated = Some(index);
+                                cx.notify();
+                            });
+                        },
+                    ))
+                })),
+        )
+    }
+}
+
+#[gpui::test]
+fn a_long_menu_scrolls_and_keeps_keyboard_activation(cx: &mut TestAppContext) {
+    cx.update(install_keys);
+    let (view, window) = cx.add_window_view(|_, _| LongMenuHarness { activated: None });
+    window.run_until_parked();
+    focus_first(window);
+    press(window, "end");
+    window.run_until_parked();
+    press(window, "enter");
+    window.run_until_parked();
+    assert_eq!(view.read_with(window, |this, _| this.activated), Some(29));
+    press(window, "home");
+    window.run_until_parked();
+    press(window, "down");
+    window.run_until_parked();
+    press(window, "enter");
+    window.run_until_parked();
+    assert_eq!(view.read_with(window, |this, _| this.activated), Some(1));
+}

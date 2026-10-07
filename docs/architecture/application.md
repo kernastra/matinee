@@ -4,8 +4,9 @@
 service runtime, Login, and a minimal authenticated shell. Phase 3B adds
 the Player on that same runtime. Phase 3C adds Details, the first screen
 that loads Jellyfin artwork, and a small navigation stack. Phase 3D adds
-Home, which replaces the minimal shell as the signed-in root. It is not
-Library, Search, Calendar, Settings, or Poster Studio.
+Home, which replaces the minimal shell as the signed-in root. Phase 3E adds
+Library as a second root destination. It is not Search, Calendar, Settings,
+or Poster Studio.
 
 The shipping Tauri app remains the usable reference. This binary does not
 replace it.
@@ -18,10 +19,13 @@ GPUI window
   → ServiceRuntime (one Tokio runtime)
   → matinee-jellyfin (ReqwestTransport, persist, playback plan, reports)
   → matinee-secrets (KeyringStore in production, MemoryStore in tests and review)
-  → HomeModel + HomeScreen (the signed-in root; kept alive under pages)
-       → JellyfinClient::home_shelf, one request per shelf
-       → ArtworkLoader (shared)
-  → Navigation<Page> (Home at the base; Details, then the Player, above it)
+  → root destinations (RootDestination: Home, Library(Movies | Series))
+       → HomeModel + HomeScreen (kept alive under pages and other roots)
+            → JellyfinClient::home_shelf, one request per shelf
+       → LibraryModel + LibraryScreen (created on first use, kept alive)
+            → JellyfinClient::library_page / library_views / library_genres
+            → Atelier VirtualGrid; ArtworkLoader for the built cards only
+  → Navigation<Page> (above the current root: Details, then the Player)
   → DetailsModel + DetailsScreen
        → ArtworkLoader (shared, bounded cache) → JellyfinClient::fetch_artwork
   → PlayerModel + PlayerScreen
@@ -29,7 +33,8 @@ GPUI window
        → ExternalFrameSurface
 ```
 
-Home is described in [home.md](home.md), Details in [details.md](details.md).
+Home is described in [home.md](home.md), Library in [library.md](library.md),
+Details in [details.md](details.md).
 
 `PlayerModel` in `apps/matinee-next` is the playback model. `PlayerScreen`
 paints it and forwards input. The GPUI view does not choose a source, invent
@@ -180,8 +185,9 @@ password and username, and returns to Login. If removal fails, the notice
 is shown and the phase returns to `Authenticated` with the same session.
 `SigningOut` is only the in-flight removal. It is not another screen.
 
-Signed in, the window shows Home. Its top bar has the MATINEE wordmark, the
-signed-in name, Refresh, and Sign out (“Signing out…” while the vault
+Signed in, the window shows Home. The app bar on Home and Library has the
+MATINEE wordmark, Home · Movies · Series, the signed-in name, Refresh, and
+Sign out (“Signing out…” while the vault
 removal runs). The Phase 3C temporary item-ID entry is removed; Home is the
 way into Details. If the session cannot make an HTTP client, a small panel
 says Jellyfin could not be reached and offers Sign out instead of Home.
@@ -200,6 +206,9 @@ Timeouts, an unreachable server, and malformed answers are not this; they
 stay local or partial failures on the screen that saw them.
 
 - **Home.** Any shelf: `HomeEvent::SessionExpired` (see [home.md](home.md)).
+- **Library.** Any page, the library list, the genre list, or the one-title
+  refresh after playback: `LibraryEvent::SessionExpired` (see
+  [library.md](library.md#session-expiration)). What is shown stays.
 - **Details.** Any request, primary or secondary (the title, similar,
   collections, seasons, next up, episodes): `details::load` answers
   `SessionEnded` instead of a response, and the screen emits
@@ -215,7 +224,7 @@ stay local or partial failures on the screen that saw them.
 
 `MatineeRoot::expire_session` is the only place that acts. It finishes
 every page (a Player that started sends its stop report, which may itself
-fail), drops Home and the session's client, and shows Login with the
+fail), drops Home, Library, and the session's client, and shows Login with the
 server and username kept, the password cleared, and the notice “Your
 Jellyfin session has ended. Sign in again to keep browsing.” The dead
 session is removed from the vault as final work on the service runtime
@@ -234,21 +243,27 @@ previous sign-in) are dropped before that check.
 
 ## Navigation
 
-Home is the root destination: `MatineeRoot` keeps it as `home`, created once
-per sign-in and dropped on sign-out or session end. A `Navigation<Page>`
-stack sits above it. A page is Details or the Player. A Home card pushes
-Details; Details' Play, or the Home hero's Play, pushes the Player. Back,
-Escape, or the Player's own Leave removes the top page. When the Player is
-removed, its final stop report starts (see Shutdown) and the page
-underneath is told it is visible again: Details refreshes the title's user
-data and, for a series, next up and the visible season, then focuses Play.
-When the stack empties, Home is told it is visible again; it refreshes its
-shelves only if the Player was opened since it last showed
-(`Navigation::mark_root_stale` / `take_root_stale`), and returns focus to
-the card that was opened. Home's scroll positions are untouched. Sign-out,
-window close, and exit finish every page. Library, Search, and the other
-screens become further page kinds (or root destinations); the stack itself
-does not change.
+Two layers (`nav.rs`). **Root destinations** are the places in the app bar:
+`RootDestination::Home` and `RootDestination::Library(Movies | Series)`.
+`MatineeRoot` keeps `home` and `library` (one Library screen for both
+kinds) and which one is current. Each is created once per sign-in (Library
+the first time it is chosen) and dropped on sign-out or session end.
+Switching roots keeps each exactly as it was. Search, Calendar, and
+Settings will be further destinations; the bar lists only ones that exist.
+
+A `Navigation<Page>` stack sits above whichever root is current. A page is
+Details or the Player. A Home or Library card pushes Details; Details'
+Play, or the Home hero's Play, pushes the Player. Back, Escape, or the
+Player's own Leave removes the top page. When the Player is removed, its
+final stop report starts (see Shutdown) and the page underneath is told it
+is visible again: Details refreshes the title's user data and, for a
+series, next up and the visible season, then focuses Play. When the stack
+empties, the current root is told it is visible again. If the Player was
+opened since (`Navigation::mark_root_stale` / `take_root_stale`), every
+root is marked (`StaleRoots`): the visible one acts now — Home reloads its
+shelves, Library asks again for the one title that was opened — and the
+other acts when it next shows. Scroll positions and focus are untouched.
+Sign-out, window close, and exit finish every page.
 
 ## Player
 
@@ -334,8 +349,9 @@ not load poster or backdrop artwork.
 
 ## Artwork
 
-Details was the first native screen to load Jellyfin artwork; Home uses the
-same loader and cache (sizes and memory in [home.md](home.md)). Addresses
+Details was the first native screen to load Jellyfin artwork; Home and
+Library use the same loader and cache (sizes and memory in
+[home.md](home.md) and [library.md](library.md#artwork)). Addresses
 are `ArtworkRequest`s built with `ArtworkUrls::item_request`,
 `person_request`, or `image_request`: no token in the URL, and the image
 tag on it so a cached copy changes when the artwork does.
@@ -357,6 +373,7 @@ an answer for a slot that is gone is dropped.
 `scripts/check-architecture.sh` rejects the `api_key` URL builders and the
 raw access token in `apps/matinee-next`, and any `fetch_artwork` call
 outside `artwork.rs`. It also keeps Jellyfin client construction in the
-shell (`view.rs`) and the Player, Player construction in the shell, and
-Home's shelf requests in `home/load.rs`. The Login and Player screens load
+shell (`view.rs`) and the Player, Player construction in the shell,
+Home's shelf requests in `home/load.rs`, and Library's requests in
+`library/load.rs`. The Login and Player screens load
 no artwork.
