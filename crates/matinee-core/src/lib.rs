@@ -29,7 +29,10 @@ pub use images::{ImageRole, ImageTag, ItemArtwork};
 pub use item::{
     Chapter, Credit, ItemHierarchy, ItemIdentity, ItemKind, ItemMetadata, MediaItem, Person,
 };
-pub use library::{CollectionContext, LibraryKind, LibrarySort};
+pub use library::{
+    CollectionContext, LibraryContent, LibraryFilter, LibraryGenre, LibraryKind, LibraryPage,
+    LibraryPageRequest, LibraryQuery, LibrarySort, LibraryView, WatchFilter,
+};
 pub use media::{
     AudioStream, Delivery, DynamicRange, MediaSource, MediaStream, SubtitleStream, TechnicalMedia,
     TechnicalSummary, VideoStream,

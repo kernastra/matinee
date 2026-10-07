@@ -225,6 +225,20 @@ if matches=$(grep -RIn 'home_shelf(' apps/matinee-next/src --include='*.rs' \
   echo "$matches" >&2
 fi
 
+# 17. Library requests are made in one place, on the service runtime. The
+#     screen and its render functions only hand typed requests to load.rs.
+if matches=$(grep -RInE '\b(library_page|library_views|library_genres)\(' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/library/load.rs:'); then
+  fail "Library queries are fetched only by apps/matinee-next/src/library/load.rs:"
+  echo "$matches" >&2
+fi
+
+# 18. The virtualized grid stays generic: it knows cells, not titles.
+if matches=$(grep -RIniE 'movie|series|library|jellyfin|matinee' crates/atelier-ui/src/components/virtual_grid.rs); then
+  fail "product concepts in the virtual grid:"
+  echo "$matches" >&2
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

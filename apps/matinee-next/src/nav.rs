@@ -1,12 +1,83 @@
 //! Where the signed-in window is.
 //!
-//! Home is the authenticated root destination. It is not on this stack: it
-//! is created once per sign-in, stays alive underneath, and keeps its state
-//! while pages cover it. Pages stack above it: Details over Home, the Player
+//! Two layers. A [`RootDestination`] is a place the person goes to from the
+//! app bar: Home or Library today; Search, Calendar, and Settings join the
+//! enum later. Each root screen is created once per sign-in and stays alive
+//! while another root or a page is showing, so it keeps its state.
+//!
+//! Pages stack above whichever root is current: Details, and the Player
 //! over Details (or over Home, from the hero). Back removes the top page,
-//! and the page or root underneath is told it is visible again. Library,
-//! Search, and the other screens will become further page kinds (or root
-//! destinations); the stack does not change.
+//! and the page or root underneath is told it is visible again. Choosing a
+//! root does not touch the stack; the app bar is only on roots.
+
+use matinee_core::LibraryKind;
+
+/// A place reached from the app bar. Not a page: it is not pushed, and
+/// moving between roots keeps each one as it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum RootDestination {
+    Home,
+    /// Library, showing movies or series.
+    Library(LibraryKind),
+}
+
+impl RootDestination {
+    /// App bar entries, in order. Only destinations that exist natively.
+    pub(crate) const BAR: [RootDestination; 3] = [
+        RootDestination::Home,
+        RootDestination::Library(LibraryKind::Movies),
+        RootDestination::Library(LibraryKind::Series),
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Home => "Home",
+            Self::Library(kind) => kind.title(),
+        }
+    }
+
+    /// Which root screen shows this destination.
+    pub(crate) fn root(self) -> Root {
+        match self {
+            Self::Home => Root::Home,
+            Self::Library(_) => Root::Library,
+        }
+    }
+}
+
+/// A root screen. Library is one screen for both kinds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Root {
+    Home,
+    Library,
+}
+
+/// Which roots must reload what playback may have changed the next time
+/// they show. Playback marks every root; showing a root takes its mark.
+#[derive(Debug, Default)]
+pub(crate) struct StaleRoots {
+    home: bool,
+    library: bool,
+}
+
+impl StaleRoots {
+    pub(crate) fn mark_all(&mut self) {
+        self.home = true;
+        self.library = true;
+    }
+
+    /// Whether `root` should refresh now. Clears its mark.
+    pub(crate) fn take(&mut self, root: Root) -> bool {
+        match root {
+            Root::Home => std::mem::take(&mut self.home),
+            Root::Library => std::mem::take(&mut self.library),
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
 
 /// A stack of pages above the root. Empty means the root is showing.
 pub(crate) struct Navigation<T> {
@@ -126,6 +197,31 @@ mod tests {
         // Draining again is harmless.
         assert_eq!(nav.drain().count(), 0);
         assert!(!nav.take_root_stale());
+    }
+
+    #[test]
+    fn playback_marks_every_root_and_each_refreshes_once() {
+        let mut stale = StaleRoots::default();
+        assert!(!stale.take(Root::Library));
+        stale.mark_all();
+        assert!(stale.take(Root::Library), "the root returned to");
+        assert!(!stale.take(Root::Library), "once");
+        assert!(stale.take(Root::Home), "the other root, when it shows");
+        assert!(!stale.take(Root::Home));
+        stale.mark_all();
+        stale.clear();
+        assert!(!stale.take(Root::Home));
+    }
+
+    #[test]
+    fn the_bar_lists_only_native_destinations() {
+        let labels: Vec<&str> = RootDestination::BAR.iter().map(|d| d.label()).collect();
+        assert_eq!(labels, vec!["Home", "Movies", "Series"]);
+        assert_eq!(RootDestination::Home.root(), Root::Home);
+        assert_eq!(
+            RootDestination::Library(LibraryKind::Series).root(),
+            Root::Library
+        );
     }
 
     #[test]

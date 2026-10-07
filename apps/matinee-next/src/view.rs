@@ -1,5 +1,5 @@
-//! Native window: startup, Login, Home as the signed-in root, and the
-//! pages above it (Details, the Player).
+//! Native window: startup, Login, the signed-in roots (Home and Library),
+//! and the pages above them (Details, the Player).
 //!
 //! The view asks the service runtime to do vault and HTTP work, then applies
 //! the result to [`crate::model::AppModel`]. It does not poll HTTP futures.
@@ -10,6 +10,7 @@ use atelier_app::{
     ChromeIntent, Platform, WindowSpec, on_fullscreen_escape, open_window, resolve_chrome,
     titlebar_leading, titlebar_spacer,
 };
+use atelier_ui::gpui::AnyView;
 use atelier_ui::prelude::*;
 use matinee_jellyfin::{ReqwestTransport, authenticate};
 use matinee_secrets::{KeyringStore, MemoryStore};
@@ -19,7 +20,8 @@ use tokio::task::JoinHandle;
 use crate::artwork::{ArtworkLoader, Client};
 use crate::details::{DetailsEvent, DetailsScreen};
 use crate::home::{HomeEvent, HomeScreen};
-use crate::nav::Navigation;
+use crate::library::{LibraryEvent, LibraryScreen};
+use crate::nav::{Navigation, Root, RootDestination, StaleRoots};
 use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen, PlayerSessionEnded};
 use crate::runtime::ServiceRuntime;
 use crate::session::{accept_authentication, forget_session, restore_session};
@@ -70,9 +72,16 @@ pub struct MatineeRoot {
     /// The signed-in root destination. Created once per sign-in and kept
     /// while pages cover it, so its scroll and focus survive.
     home: Option<Entity<HomeScreen>>,
+    /// The other root destination, created the first time it is chosen and
+    /// kept like Home.
+    library: Option<Entity<LibraryScreen>>,
+    /// Which root shows when no page covers it.
+    root: RootDestination,
+    /// Roots that reload what playback changed when they next show.
+    stale: StaleRoots,
     /// Review scenes never create a live Home.
     review: bool,
-    /// Screens above Home: Details, then the Player over it.
+    /// Screens above the root: Details, then the Player over it.
     pages: Navigation<Page>,
     /// Move focus into the top page on the next frame.
     focus_page: bool,
@@ -107,6 +116,9 @@ impl MatineeRoot {
             task: None,
             park_focus: false,
             home: None,
+            library: None,
+            root: RootDestination::Home,
+            stale: StaleRoots::default(),
             review: review.is_some(),
             pages: Navigation::default(),
             client: None,
@@ -117,6 +129,13 @@ impl MatineeRoot {
             let loader = root.artwork.clone();
             let home = cx.new(|cx| HomeScreen::preview(runtime, loader, scene, cx));
             root.adopt_home(home, window, cx);
+        }
+        if let Some(scene) = review.and_then(ReviewScene::library_preview) {
+            let runtime = Arc::clone(&root.services.runtime);
+            let loader = root.artwork.clone();
+            let library = cx.new(|cx| LibraryScreen::preview(runtime, loader, scene, cx));
+            root.root = RootDestination::Library(library.read(cx).kind());
+            root.adopt_library(library, window, cx);
         }
         if review.is_none() {
             root.start_restore(cx);
@@ -219,6 +238,9 @@ impl MatineeRoot {
         if let Some(home) = &self.home {
             home.update(cx, |home, cx| home.set_signing_out(true, cx));
         }
+        if let Some(library) = &self.library {
+            library.update(cx, |library, cx| library.set_signing_out(true, cx));
+        }
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -237,8 +259,13 @@ impl MatineeRoot {
                 this.model.apply_sign_out(outcome);
                 if this.model.shows_login() {
                     this.leave_home();
-                } else if let Some(home) = &this.home {
-                    home.update(cx, |home, cx| home.set_signing_out(false, cx));
+                } else {
+                    if let Some(home) = &this.home {
+                        home.update(cx, |home, cx| home.set_signing_out(false, cx));
+                    }
+                    if let Some(library) = &this.library {
+                        library.update(cx, |library, cx| library.set_signing_out(false, cx));
+                    }
                 }
                 cx.notify();
             })
@@ -289,6 +316,10 @@ impl MatineeRoot {
         self.home.as_ref() == Some(home)
     }
 
+    fn is_current_library(&self, library: &Entity<LibraryScreen>) -> bool {
+        self.library.as_ref() == Some(library)
+    }
+
     fn is_current_details(&self, details: &Entity<DetailsScreen>) -> bool {
         self.pages
             .any(|page| matches!(page, Page::Details(open) if open == details))
@@ -299,10 +330,13 @@ impl MatineeRoot {
             .any(|page| matches!(page, Page::Player(open) if open == player))
     }
 
-    /// Drop Home and the session's client. Home's in-flight requests and
-    /// artwork fetches are aborted with it.
+    /// Drop the roots and the session's client. Their in-flight requests
+    /// and artwork fetches are aborted with them.
     fn leave_home(&mut self) {
         self.home = None;
+        self.library = None;
+        self.root = RootDestination::Home;
+        self.stale.clear();
         self.client = None;
     }
 
@@ -337,6 +371,10 @@ impl MatineeRoot {
                 _ if !this.is_current_home(home) => {}
                 HomeEvent::Open(item_id) => this.open_details(item_id.clone(), window, cx),
                 HomeEvent::Play(item_id) => this.open_player(item_id.clone(), window, cx),
+                HomeEvent::Navigate(destination) => this.navigate(*destination, None, window, cx),
+                HomeEvent::Browse(kind, sort) => {
+                    this.navigate(RootDestination::Library(*kind), Some(*sort), window, cx)
+                }
                 HomeEvent::SignOut => this.start_sign_out(cx),
                 HomeEvent::SessionExpired => this.expire_session(cx),
             },
@@ -346,12 +384,117 @@ impl MatineeRoot {
         self.focus_page = true;
     }
 
-    /// The root is showing again. Home refreshes only when playback
-    /// happened above it.
+    fn adopt_library(
+        &mut self,
+        library: Entity<LibraryScreen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
+            &library,
+            window,
+            |this, library, event: &LibraryEvent, window, cx| match event {
+                // Reports from a Library that is no longer current are stale.
+                _ if !this.is_current_library(library) => {}
+                LibraryEvent::Open(item_id) => this.open_details(item_id.clone(), window, cx),
+                LibraryEvent::Navigate(destination) => {
+                    this.navigate(*destination, None, window, cx)
+                }
+                LibraryEvent::SignOut => this.start_sign_out(cx),
+                LibraryEvent::SessionExpired => this.expire_session(cx),
+            },
+        )
+        .detach();
+        self.library = Some(library);
+        self.focus_page = true;
+    }
+
+    /// Library for a signed-in session, created the first time it is
+    /// chosen. Review scenes get the fixture Library, with no socket.
+    fn ensure_library(
+        &mut self,
+        kind: matinee_core::LibraryKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<LibraryScreen>> {
+        if self.library.is_none() && self.model.shows_home() {
+            let runtime = Arc::clone(&self.services.runtime);
+            let loader = self.artwork.clone();
+            let library = if self.review {
+                cx.new(|cx| {
+                    LibraryScreen::preview(
+                        runtime,
+                        loader,
+                        crate::library::LibraryPreview::Movies,
+                        cx,
+                    )
+                })
+            } else {
+                let client = self.client()?;
+                cx.new(|cx| LibraryScreen::open(runtime, client, loader, kind, cx))
+            };
+            self.adopt_library(library, window, cx);
+        }
+        self.library.clone()
+    }
+
+    /// Move between root destinations from the app bar or Home's "View
+    /// all". Pages are not touched (the bar is only on roots). Each root
+    /// keeps its state; a root that missed playback reloads what it changed.
+    fn navigate(
+        &mut self,
+        destination: RootDestination,
+        sort: Option<matinee_core::LibrarySort>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.pages.is_empty() || !self.model.shows_home() {
+            return;
+        }
+        match destination {
+            RootDestination::Home => {
+                let Some(home) = self.home.clone() else {
+                    return;
+                };
+                self.root = destination;
+                let refresh = self.stale.take(Root::Home);
+                home.update(cx, |home, cx| home.resume(refresh, cx));
+            }
+            RootDestination::Library(kind) => {
+                let Some(library) = self.ensure_library(kind, window, cx) else {
+                    return;
+                };
+                self.root = destination;
+                let playback = self.stale.take(Root::Library);
+                library.update(cx, |library, cx| {
+                    library.show(kind, sort, cx);
+                    library.resume(playback, cx);
+                });
+            }
+        }
+        self.focus_page = true;
+        cx.notify();
+    }
+
+    /// The current root is showing again. It refreshes only what playback
+    /// above it may have changed.
     fn root_visible(&mut self, cx: &mut Context<Self>) {
-        let refresh = self.pages.take_root_stale();
-        if let Some(home) = &self.home {
-            home.update(cx, |home, cx| home.resume(refresh, cx));
+        if self.pages.take_root_stale() {
+            self.stale.mark_all();
+        }
+        match self.root.root() {
+            Root::Home => {
+                let refresh = self.stale.take(Root::Home);
+                if let Some(home) = &self.home {
+                    home.update(cx, |home, cx| home.resume(refresh, cx));
+                }
+            }
+            Root::Library => {
+                let playback = self.stale.take(Root::Library);
+                if let Some(library) = &self.library {
+                    library.update(cx, |library, cx| library.resume(playback, cx));
+                }
+            }
         }
     }
 
@@ -523,8 +666,9 @@ impl Render for MatineeRoot {
                 }
                 Some(Page::Player(_)) => None,
                 Some(Page::Details(details)) => Some(details.read(cx).focus_handle().clone()),
-                // Home puts focus on a card or the hero itself, a frame later.
-                None if self.model.shows_home() && self.home.is_some() => None,
+                // Home and Library put focus on a card, the hero, or the
+                // grid themselves, a frame later.
+                None if self.model.shows_home() && self.root_slot().is_some() => None,
                 None => Some(self.focus.clone()),
             };
             if let Some(focus) = focus {
@@ -543,8 +687,8 @@ impl Render for MatineeRoot {
             Some(Page::Details(details)) => Some(details.clone()),
             _ => None,
         };
-        let home = match (&self.home, self.pages.is_empty(), self.model.shows_home()) {
-            (Some(home), true, true) => Some(home.clone()),
+        let root_view = match (self.pages.is_empty(), self.model.shows_home()) {
+            (true, true) => self.root_slot(),
             _ => None,
         };
         let playing = player.is_some();
@@ -587,7 +731,7 @@ impl Render for MatineeRoot {
                 }
                 on_fullscreen_escape(event, window, cx);
             }))
-            .when(self.pages.is_empty() && home.is_none(), |root| {
+            .when(self.pages.is_empty() && root_view.is_none(), |root| {
                 root.child(atmosphere(&theme))
             })
             .child(
@@ -606,14 +750,14 @@ impl Render for MatineeRoot {
                             .overflow_hidden()
                             .child(player)
                             .into_any_element()
-                    } else if let Some(home) = home {
+                    } else if let Some(root_view) = root_view {
                         div()
-                            .id("matinee-home-slot")
+                            .id("matinee-root-slot")
                             .flex_1()
                             .w_full()
                             .min_h(px(0.0))
                             .overflow_hidden()
-                            .child(home)
+                            .child(root_view)
                             .into_any_element()
                     } else if let Some(details) = details {
                         div()
@@ -637,6 +781,14 @@ impl Render for MatineeRoot {
 }
 
 impl MatineeRoot {
+    /// The current root screen, if it exists.
+    fn root_slot(&self) -> Option<AnyView> {
+        match self.root.root() {
+            Root::Home => self.home.clone().map(AnyView::from),
+            Root::Library => self.library.clone().map(AnyView::from),
+        }
+    }
+
     fn body(
         &mut self,
         window: &mut Window,
@@ -907,6 +1059,7 @@ mod tests {
     use super::*;
     use crate::details::DetailsPreview;
     use crate::player::PlayerPreview;
+    use matinee_core::{LibraryKind, LibrarySort};
 
     fn open(cx: &mut TestAppContext) -> (Entity<MatineeRoot>, &mut VisualTestContext) {
         let services = Services::memory().unwrap();
@@ -1039,6 +1192,202 @@ mod tests {
         });
         // The old Home reporting again changes nothing.
         home.update(cx, |_, cx| cx.emit(HomeEvent::SessionExpired));
+        cx.run_until_parked();
+        assert!(root.read_with(cx, |root, _| root.model.shows_login()));
+    }
+
+    fn library_of(root: &Entity<MatineeRoot>, cx: &mut VisualTestContext) -> Entity<LibraryScreen> {
+        root.read_with(cx, |root, _| root.library.clone().expect("Library exists"))
+    }
+
+    fn go(root: &Entity<MatineeRoot>, destination: RootDestination, cx: &mut VisualTestContext) {
+        root.update_in(cx, |root, window, cx| {
+            root.navigate(destination, None, window, cx)
+        });
+        cx.run_until_parked();
+    }
+
+    /// Scroll the Movies grid, focus a card, and return both.
+    fn scroll_library(library: &Entity<LibraryScreen>, cx: &mut VisualTestContext) -> (f32, usize) {
+        let grid = library.read_with(cx, |library, _| library.grid(LibraryKind::Movies));
+        grid.scroll().set_offset(point(px(0.0), px(-600.0)));
+        grid.focus_index(Some(23));
+        library.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        let offset = f32::from(grid.scroll().offset().y);
+        assert!(offset < -100.0, "the grid scrolled: {offset}");
+        (offset, grid.focused().unwrap())
+    }
+
+    fn assert_library_kept(
+        library: &Entity<LibraryScreen>,
+        cx: &mut VisualTestContext,
+        before: (f32, usize),
+        items: usize,
+    ) {
+        let grid = library.read_with(cx, |library, _| library.grid(LibraryKind::Movies));
+        assert_eq!(f32::from(grid.scroll().offset().y), before.0, "scroll kept");
+        assert_eq!(grid.focused(), Some(before.1), "focused card kept");
+        library.read_with(cx, |library, _| {
+            assert_eq!(library.kind(), LibraryKind::Movies);
+            assert_eq!(library.model.items().len(), items, "no reload");
+        });
+    }
+
+    #[gpui::test]
+    fn home_and_library_switch_without_losing_either(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let home = home_of(&root, cx);
+        let before_home = scroll_home(&home, cx);
+
+        home.update(cx, |_, cx| {
+            cx.emit(HomeEvent::Navigate(RootDestination::Library(
+                LibraryKind::Movies,
+            )))
+        });
+        cx.run_until_parked();
+        let library = library_of(&root, cx);
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.root, RootDestination::Library(LibraryKind::Movies));
+            assert!(root.pages.is_empty(), "a root, not a page");
+        });
+        let before = scroll_library(&library, cx);
+        let items = library.read_with(cx, |library, _| library.model.items().len());
+
+        library.update(cx, |_, cx| {
+            cx.emit(LibraryEvent::Navigate(RootDestination::Home))
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            root.read_with(cx, |root, _| root.root),
+            RootDestination::Home
+        );
+        assert_eq!(home_of(&root, cx), home, "the same Home");
+        assert_kept(&home, cx, &before_home);
+
+        go(&root, RootDestination::Library(LibraryKind::Movies), cx);
+        assert_eq!(library_of(&root, cx), library, "the same Library");
+        assert_library_kept(&library, cx, before, items);
+    }
+
+    #[gpui::test]
+    fn home_rows_open_the_matching_library(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        let home = home_of(&root, cx);
+        home.update(cx, |_, cx| {
+            cx.emit(HomeEvent::Browse(
+                LibraryKind::Series,
+                LibrarySort::DateCreated,
+            ))
+        });
+        cx.run_until_parked();
+        let library = library_of(&root, cx);
+        assert_eq!(
+            root.read_with(cx, |root, _| root.root),
+            RootDestination::Library(LibraryKind::Series)
+        );
+        library.read_with(cx, |library, _| {
+            assert_eq!(library.kind(), LibraryKind::Series);
+            assert_eq!(library.model.query().sort, LibrarySort::DateCreated);
+        });
+        // "View all" for movies: the same Library, now on Movies, newest first.
+        go(&root, RootDestination::Home, cx);
+        home.update(cx, |_, cx| {
+            cx.emit(HomeEvent::Browse(
+                LibraryKind::Movies,
+                LibrarySort::DateCreated,
+            ))
+        });
+        cx.run_until_parked();
+        assert_eq!(library_of(&root, cx), library);
+        library.read_with(cx, |library, _| {
+            assert_eq!(library.kind(), LibraryKind::Movies);
+            assert_eq!(library.model.query().sort, LibrarySort::DateCreated);
+            assert!(!library.model.items().is_empty(), "loaded");
+        });
+        // Only the rows with a Library equivalent offer "View all".
+        assert_eq!(
+            crate::home::browse_target(matinee_core::HomeShelf::RecentMovies),
+            Some(LibraryKind::Movies)
+        );
+        assert_eq!(
+            crate::home::browse_target(matinee_core::HomeShelf::RecentSeries),
+            Some(LibraryKind::Series)
+        );
+        assert_eq!(
+            crate::home::browse_target(matinee_core::HomeShelf::Favorites),
+            None
+        );
+    }
+
+    #[gpui::test]
+    fn library_survives_details_and_the_player(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Library(LibraryKind::Movies), cx);
+        let library = library_of(&root, cx);
+        let before = scroll_library(&library, cx);
+        let items = library.read_with(cx, |library, _| library.model.items().len());
+
+        // Library → Details → Library.
+        let details = push_details(&root, cx);
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+        assert_eq!(library_of(&root, cx), library);
+        assert_eq!(
+            root.read_with(cx, |root, _| root.root),
+            RootDestination::Library(LibraryKind::Movies),
+            "Back returns to Library, not Home"
+        );
+        assert_library_kept(&library, cx, before, items);
+
+        // Library → Details → Player → Details → Library.
+        library.update(cx, |library, _| {
+            let id = library.model.items()[before.1].id().clone();
+            library.model.note_opened(id);
+        });
+        let details = push_details(&root, cx);
+        root.update_in(cx, |root, window, cx| {
+            let runtime = Arc::clone(&root.services.runtime);
+            let player =
+                cx.new(|cx| PlayerScreen::preview(runtime, PlayerPreview::Paused, window, cx));
+            root.pages.mark_root_stale();
+            root.push_player(player, cx);
+        });
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.release_player(cx));
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+        assert_eq!(library_of(&root, cx), library);
+        assert!(root.read_with(cx, |root, _| root.pages.is_empty()));
+        assert_library_kept(&library, cx, before, items);
+        // Library took its playback mark (one title reconciled); Home keeps
+        // its own until it shows.
+        root.update(cx, |root, _| {
+            assert!(!root.stale.take(Root::Library));
+            assert!(root.stale.take(Root::Home));
+        });
+    }
+
+    #[gpui::test]
+    fn a_session_end_from_library_signs_out_once(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Library(LibraryKind::Movies), cx);
+        let library = library_of(&root, cx);
+        library.update(cx, |_, cx| {
+            cx.emit(LibraryEvent::SessionExpired);
+            cx.emit(LibraryEvent::SessionExpired);
+        });
+        cx.run_until_parked();
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login());
+            assert!(root.library.is_none());
+            assert!(root.home.is_none());
+            assert_eq!(root.root, RootDestination::Home);
+            assert_eq!(root.model.notice(), Some(crate::model::SESSION_ENDED));
+        });
+        // The old Library reporting again changes nothing.
+        library.update(cx, |_, cx| cx.emit(LibraryEvent::SessionExpired));
         cx.run_until_parked();
         assert!(root.read_with(cx, |root, _| root.model.shows_login()));
     }

@@ -1206,3 +1206,229 @@ fn cast_portraits_have_a_native_request() {
     );
     assert!(!request.url.contains("api_key"));
 }
+
+#[test]
+fn library_pages_are_sorted_filtered_and_paged_on_the_server() {
+    use matinee_core::{LibraryFilter, LibraryId, LibraryPageRequest, LibraryQuery, WatchFilter};
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    let transport = Mock::new(move |request| {
+        record.lock().expect("seen").push(request.url.clone());
+        Ok(ok_json(&format!(
+            r#"{{"Items":[{},{}],"TotalRecordCount":1284,"StartIndex":100}}"#,
+            item_json("m1", "One", "Movie"),
+            item_json("m2", "Two", "Movie")
+        )))
+    });
+    let client = JellyfinClient::new(session(), transport);
+    let query = LibraryQuery {
+        kind: LibraryKind::Movies,
+        view: Some(LibraryId::parse("view-1").unwrap()),
+        sort: LibrarySort::ProductionYear,
+        filter: LibraryFilter {
+            watch: WatchFilter::Unwatched,
+            genre: Some(ItemId::parse("genre-9").unwrap()),
+        },
+    };
+    let page = wait(client.library_page(
+        &query,
+        LibraryPageRequest {
+            start: 100,
+            limit: 100,
+        },
+    ))
+    .unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.start, 100);
+    assert_eq!(page.total, Some(1284));
+    assert!(page.has_more(100));
+
+    let series = LibraryQuery::new(LibraryKind::Series);
+    wait(client.library_page(
+        &series,
+        LibraryPageRequest {
+            start: 0,
+            limit: 100,
+        },
+    ))
+    .unwrap();
+
+    let urls: Vec<Url> = seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .map(|value| Url::parse(value).unwrap())
+        .collect();
+    let first = &urls[0];
+    assert_eq!(first.path(), "/Users/user-1/Items");
+    assert_eq!(pair(first, "IncludeItemTypes").as_deref(), Some("Movie"));
+    assert_eq!(pair(first, "ParentId").as_deref(), Some("view-1"));
+    assert_eq!(
+        pair(first, "SortBy").as_deref(),
+        Some("ProductionYear,SortName")
+    );
+    assert_eq!(
+        pair(first, "SortOrder").as_deref(),
+        Some("Descending,Ascending")
+    );
+    assert_eq!(pair(first, "Filters").as_deref(), Some("IsUnplayed"));
+    assert_eq!(pair(first, "GenreIds").as_deref(), Some("genre-9"));
+    assert_eq!(pair(first, "StartIndex").as_deref(), Some("100"));
+    assert_eq!(pair(first, "Limit").as_deref(), Some("100"));
+    assert_eq!(
+        pair(first, "EnableTotalRecordCount").as_deref(),
+        Some("true")
+    );
+    assert_eq!(pair(first, "Recursive").as_deref(), Some("true"));
+    let fields = pair(first, "Fields").unwrap();
+    assert!(!fields.contains("People") && !fields.contains("MediaSources"));
+
+    let second = &urls[1];
+    assert_eq!(pair(second, "IncludeItemTypes").as_deref(), Some("Series"));
+    assert_eq!(pair(second, "ParentId"), None, "every library, as shipping");
+    assert_eq!(pair(second, "SortBy").as_deref(), Some("SortName"));
+    assert_eq!(pair(second, "SortOrder").as_deref(), Some("Ascending"));
+    assert_eq!(pair(second, "Filters"), None);
+    assert_eq!(pair(second, "GenreIds"), None);
+    for url in &urls {
+        assert!(!url.as_str().contains("token"), "{url}");
+        assert!(!url.as_str().contains("api_key"), "{url}");
+    }
+}
+
+#[test]
+fn library_watch_filters_map_to_server_filters() {
+    use matinee_core::{LibraryPageRequest, LibraryQuery, WatchFilter};
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    let transport = Mock::new(move |request| {
+        record.lock().expect("seen").push(request.url.clone());
+        Ok(ok_json(&items_body(&[])))
+    });
+    let client = JellyfinClient::new(session(), transport);
+    for watch in WatchFilter::ALL {
+        let mut query = LibraryQuery::new(LibraryKind::Movies);
+        query.filter.watch = watch;
+        let page = wait(client.library_page(
+            &query,
+            LibraryPageRequest {
+                start: 0,
+                limit: 100,
+            },
+        ))
+        .unwrap();
+        assert!(page.items.is_empty());
+        assert_eq!(page.total, None);
+        assert!(
+            !page.has_more(100),
+            "an empty page without a total is the end"
+        );
+    }
+    let filters: Vec<Option<String>> = seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .map(|value| pair(&Url::parse(value).unwrap(), "Filters"))
+        .collect();
+    assert_eq!(
+        filters,
+        vec![
+            None,
+            Some("IsUnplayed".into()),
+            Some("IsPlayed".into()),
+            Some("IsFavorite".into())
+        ]
+    );
+}
+
+#[test]
+fn library_requests_report_authorization_and_malformed_answers() {
+    use matinee_core::{LibraryPageRequest, LibraryQuery};
+    let transport = Mock::new(|request| {
+        if path_of(request) == "/Users/user-1/Views" {
+            return Ok(ok_json("{}"));
+        }
+        Ok(HttpResponse {
+            status: 401,
+            body: b"secret server text".to_vec(),
+        })
+    });
+    let client = JellyfinClient::new(session(), transport);
+    let query = LibraryQuery::new(LibraryKind::Movies);
+    assert!(matches!(
+        wait(client.library_page(
+            &query,
+            LibraryPageRequest {
+                start: 0,
+                limit: 100
+            }
+        ))
+        .unwrap_err(),
+        JellyfinError::Unauthorized
+    ));
+    assert!(matches!(
+        wait(client.library_genres(LibraryKind::Movies, None)).unwrap_err(),
+        JellyfinError::Unauthorized
+    ));
+    assert!(matches!(
+        wait(client.library_views()).unwrap_err(),
+        JellyfinError::Malformed { .. }
+    ));
+}
+
+#[test]
+fn library_views_keep_video_libraries_and_genres_keep_their_ids() {
+    use matinee_core::{LibraryContent, LibraryId};
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    let transport = Mock::new(move |request| {
+        record.lock().expect("seen").push(request.url.clone());
+        if path_of(request) == "/Users/user-1/Views" {
+            return Ok(ok_json(
+                r#"{"Items":[
+                    {"Id":"v-films","Name":"Films","CollectionType":"movies"},
+                    {"Id":"v-tv","Name":"Television","CollectionType":"tvshows"},
+                    {"Id":"v-music","Name":"Music","CollectionType":"music"},
+                    {"Id":"v-mixed","Name":"Home Media"},
+                    {"Id":"v-blank","Name":"  ","CollectionType":"movies"},
+                    {"Id":"v-sets","Name":"Collections","CollectionType":"boxsets"}
+                ]}"#,
+            ));
+        }
+        Ok(ok_json(
+            r#"{"Items":[{"Id":"g-1","Name":"Drama"},{"Id":"g-2","Name":"  "},{"Id":"g-3","Name":"Science Fiction"}]}"#,
+        ))
+    });
+    let client = JellyfinClient::new(session(), transport);
+    let views = wait(client.library_views()).unwrap();
+    let summary: Vec<(&str, LibraryContent)> = views
+        .iter()
+        .map(|view| (view.name.as_str(), view.content))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("Films", LibraryContent::Movies),
+            ("Television", LibraryContent::Series),
+            ("Home Media", LibraryContent::Mixed),
+        ]
+    );
+    let view = LibraryId::parse("v-films").unwrap();
+    let genres = wait(client.library_genres(LibraryKind::Movies, Some(&view))).unwrap();
+    let names: Vec<&str> = genres.iter().map(|genre| genre.name.as_str()).collect();
+    assert_eq!(names, vec!["Drama", "Science Fiction"]);
+    assert_eq!(genres[0].id.as_str(), "g-1");
+    let urls: Vec<Url> = seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .map(|value| Url::parse(value).unwrap())
+        .collect();
+    let genres_url = &urls[1];
+    assert_eq!(genres_url.path(), "/Genres");
+    assert_eq!(pair(genres_url, "parentId").as_deref(), Some("v-films"));
+    assert_eq!(
+        pair(genres_url, "includeItemTypes").as_deref(),
+        Some("Movie")
+    );
+}

@@ -90,6 +90,17 @@ pub enum ReviewScene {
     DetailsSeason,
     DetailsLoading,
     DetailsError,
+    Library,
+    LibraryMovies,
+    LibrarySeries,
+    LibraryLoading,
+    LibraryEmpty,
+    LibraryFilteredEmpty,
+    LibraryPartialPage,
+    LibraryError,
+    LibrarySmallWindow,
+    LibraryLargeWindow,
+    LibraryManyItems,
 }
 
 impl ReviewScene {
@@ -120,11 +131,29 @@ impl ReviewScene {
         }
     }
 
+    pub(crate) fn library_preview(self) -> Option<crate::library::LibraryPreview> {
+        use crate::library::LibraryPreview;
+        match self {
+            Self::Library
+            | Self::LibraryMovies
+            | Self::LibrarySmallWindow
+            | Self::LibraryLargeWindow => Some(LibraryPreview::Movies),
+            Self::LibrarySeries => Some(LibraryPreview::Series),
+            Self::LibraryLoading => Some(LibraryPreview::Loading),
+            Self::LibraryEmpty => Some(LibraryPreview::Empty),
+            Self::LibraryFilteredEmpty => Some(LibraryPreview::FilteredEmpty),
+            Self::LibraryPartialPage => Some(LibraryPreview::PartialPage),
+            Self::LibraryError => Some(LibraryPreview::Error),
+            Self::LibraryManyItems => Some(LibraryPreview::ManyItems),
+            _ => None,
+        }
+    }
+
     /// The window size a scene is reviewed at, unless one is given.
     pub(crate) fn size(self) -> (f32, f32) {
         match self {
-            Self::HomeSmallWindow => (960.0, 620.0),
-            Self::HomeLargeWindow => (1920.0, 1080.0),
+            Self::HomeSmallWindow | Self::LibrarySmallWindow => (960.0, 620.0),
+            Self::HomeLargeWindow | Self::LibraryLargeWindow => (1920.0, 1080.0),
             _ => (1200.0, 760.0),
         }
     }
@@ -708,6 +737,17 @@ mod tests {
             ReviewScene::DetailsSeason,
             ReviewScene::DetailsLoading,
             ReviewScene::DetailsError,
+            ReviewScene::Library,
+            ReviewScene::LibraryMovies,
+            ReviewScene::LibrarySeries,
+            ReviewScene::LibraryLoading,
+            ReviewScene::LibraryEmpty,
+            ReviewScene::LibraryFilteredEmpty,
+            ReviewScene::LibraryPartialPage,
+            ReviewScene::LibraryError,
+            ReviewScene::LibrarySmallWindow,
+            ReviewScene::LibraryLargeWindow,
+            ReviewScene::LibraryManyItems,
         ] {
             let model = AppModel::review(scene);
             let rendered = model.visible_lines().join("\n");

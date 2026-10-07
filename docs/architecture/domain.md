@@ -52,6 +52,12 @@ independent flags.
 name ascending, and date created, production year, and community rating
 descending. Callers do not pass Jellyfin query strings.
 
+Native Library adds `LibraryQuery` (kind, optional `LibraryId`, sort,
+`LibraryFilter { watch: WatchFilter, genre }`), `LibraryPageRequest`
+(start, limit), `LibraryPage` (items, start, optional total, `has_more`),
+`LibraryView` with `LibraryContent` (Movies, Series, Mixed), and
+`LibraryGenre`. See [library.md](library.md).
+
 `HomeFeed` has six shelves: resume, latest, movies, series, top rated, and
 favorites. The feed type does not know which shelves are allowed to fail.
 That policy lives in `matinee-jellyfin`.

@@ -3,9 +3,16 @@
 //! Keys match `src/lib/jellyfin.ts`. Values are encoded. Callers never pass
 //! a raw Jellyfin query string.
 
-use matinee_core::{ItemId, LibraryKind, LibrarySort};
+use matinee_core::{
+    ItemId, LibraryKind, LibraryPageRequest, LibraryQuery, LibrarySort, WatchFilter,
+};
 
 pub(crate) const ITEM_FIELDS: &str = "Overview,Genres,RunTimeTicks,ProductionYear,CommunityRating,CriticRating,OfficialRating,PrimaryImageAspectRatio,MediaStreams,MediaSources,Chapters,ParentId,DateCreated,PremiereDate,EndDate,Taglines,Studios,People,ProductionLocations,ProviderIds";
+
+/// Fields for a library grid page: what a card and its ordering need, not
+/// the people, streams, and chapters Details asks for. Image tags and user
+/// data come back without being listed.
+pub(crate) const LIBRARY_FIELDS: &str = "Genres,ProductionYear,CommunityRating,OfficialRating,PrimaryImageAspectRatio,DateCreated,PremiereDate";
 
 pub(crate) struct Query {
     pairs: Vec<(&'static str, String)>,
@@ -180,6 +187,89 @@ pub(crate) fn library_path(user_id: &str, kind: LibraryKind, sort: LibrarySort) 
             .pair("Fields", ITEM_FIELDS)
             .pair("EnableUserData", "true"),
     )
+}
+
+fn include_types(kind: LibraryKind) -> &'static str {
+    match kind {
+        LibraryKind::Movies => "Movie",
+        LibraryKind::Series => "Series",
+    }
+}
+
+fn sort_by(sort: LibrarySort) -> &'static str {
+    match sort {
+        LibrarySort::Name => "SortName",
+        LibrarySort::DateCreated => "DateCreated",
+        LibrarySort::ProductionYear => "ProductionYear",
+        LibrarySort::CommunityRating => "CommunityRating",
+    }
+}
+
+/// One page of a typed library query. Sorting, filtering, and paging all
+/// happen on the server. Every sort but Title ends with the title, so
+/// titles that tie (one release year, one rating) keep one order from page
+/// to page.
+pub(crate) fn library_page_path(
+    user_id: &str,
+    query: &LibraryQuery,
+    page: LibraryPageRequest,
+) -> String {
+    let (sort_by, sort_order) = match query.sort {
+        LibrarySort::Name => ("SortName".to_string(), "Ascending"),
+        other => (
+            format!("{},SortName", sort_by(other)),
+            "Descending,Ascending",
+        ),
+    };
+    let mut pairs = Query::new()
+        .pair("Recursive", "true")
+        .pair("IncludeItemTypes", include_types(query.kind));
+    if let Some(view) = &query.view {
+        pairs = pairs.pair("ParentId", view.as_str());
+    }
+    pairs = pairs.pair("SortBy", sort_by).pair("SortOrder", sort_order);
+    let filters = match query.filter.watch {
+        WatchFilter::All => None,
+        WatchFilter::Unwatched => Some("IsUnplayed"),
+        WatchFilter::Watched => Some("IsPlayed"),
+        WatchFilter::Favorites => Some("IsFavorite"),
+    };
+    if let Some(filters) = filters {
+        pairs = pairs.pair("Filters", filters);
+    }
+    if let Some(genre) = &query.filter.genre {
+        pairs = pairs.pair("GenreIds", genre.as_str());
+    }
+    user_items(
+        user_id,
+        pairs
+            .pair("StartIndex", page.start.to_string())
+            .pair("Limit", page.limit.to_string())
+            .pair("Fields", LIBRARY_FIELDS)
+            .pair("ImageTypeLimit", "1")
+            .pair("EnableUserData", "true")
+            .pair("EnableTotalRecordCount", "true"),
+    )
+}
+
+/// The person's libraries.
+pub(crate) fn views_path(user_id: &str) -> String {
+    format!("/Users/{}/Views", encode_component(user_id))
+}
+
+/// Genres present among titles of `kind`, optionally inside one library.
+pub(crate) fn genres_path(user_id: &str, kind: LibraryKind, view: Option<&str>) -> String {
+    let mut pairs = Query::new()
+        .pair("userId", user_id)
+        .pair("includeItemTypes", include_types(kind))
+        .pair("recursive", "true")
+        .pair("sortBy", "SortName")
+        .pair("sortOrder", "Ascending")
+        .pair("enableTotalRecordCount", "false");
+    if let Some(view) = view {
+        pairs = pairs.pair("parentId", view);
+    }
+    format!("/Genres?{}", pairs.encode())
 }
 
 pub(crate) fn item_path(user_id: &str, item_id: &ItemId) -> String {

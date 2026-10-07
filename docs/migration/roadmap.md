@@ -175,7 +175,7 @@ reference app, including the product rules in `docs/design-spec.md`.
   beginning, logo artwork, chapter images and chapter seek, people and
   collection browsing, autoplay. See [details.md](../architecture/details.md).
 
-**Phase 3D: Native Home — in review.**
+**Phase 3D: Native Home — landed.**
 
 - Home is the signed-in root: a restored session or a successful sign-in
   lands on it, and Details and the Player open above it. The temporary
@@ -201,7 +201,30 @@ reference app, including the product rules in `docs/design-spec.md`.
   rated and the editorial showcases, Coming soon, hero rotation. See
   [home.md](../architecture/home.md).
 
-Phase 3E (Library) and later screens are not started. The compatibility
+**Phase 3E: Native Library — in review.**
+
+- Library is a second root destination beside Home (`RootDestination`),
+  reached from a shared app bar (Home · Movies · Series) and from Home's
+  Recently Added rows ("View all", newest first). Pages (Details, the
+  Player) stack above whichever root is current; Back returns to it.
+- Server-side sort (the shipping four, with a title tie-break), Show
+  (All, Unwatched, Watched, Favorites), Genre, and — when there is more than
+  one — the person's libraries, through typed `LibraryQuery` /
+  `LibraryPage` / `LibraryView` / `LibraryGenre` and
+  `JellyfinClient::library_page`, `library_views`, `library_genres`.
+- Pages of 100 requested as the grid nears the end, with ticketed
+  stale-answer protection, retry for a failed page, and an end state. The
+  shipping 240-title cap is gone.
+- Atelier `VirtualGrid`: responsive fixed-size cells, only visible rows plus
+  overscan built, one-tab-stop keyboard focus that survives virtualization
+  and resize; Gallery story. `Menu::max_height` for long menus.
+- Posters only for built cards through the shared loader and 96 MiB cache;
+  query, pages, scroll, and focus survive Details and the Player; playback
+  refreshes the one opened title.
+- Deferred: year and other filters, card context actions, search (Phase
+  3F). See [library.md](../architecture/library.md).
+
+Phase 3F (Search) and later screens are not started. The compatibility
 builders that still put `api_key` on artwork URLs stay for the shipping
 app; the native app is guarded against them.
 

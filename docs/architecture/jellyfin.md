@@ -109,7 +109,10 @@ Paths and query keys match `src/lib/jellyfin.ts`, including the mixed casing
 | Operation | Behavior |
 |---|---|
 | `home_feed` | Six requests in one `join!`: resume, latest movies and series, movies, series, top rated, favorites. Top rated and favorites return an empty shelf on failure. Any other shelf failure fails the feed. |
-| `library_items` | Movies or series, one of the four `LibrarySort` values, limit 240. |
+| `library_items` | Movies or series, one of the four `LibrarySort` values, limit 240 (shipping parity). |
+| `library_page` | One page of a typed `LibraryQuery` (kind, optional library `ParentId`, sort with a `SortName` tie-break, `Filters` for unwatched/watched/favorites, `GenreIds`) at `StartIndex`/`Limit`, lean card fields, `EnableTotalRecordCount=true`. Returns `LibraryPage { items, start, total }`. Native Library. |
+| `library_views` | `/Users/{id}/Views`: movie, TV, and mixed libraries as `LibraryView`; others left out. |
+| `library_genres` | `/Genres` for a kind, optionally inside one library, as `LibraryGenre { id, name }`. |
 | `item_details`, `similar_items`, `collection_context` | One item, similar titles, and up to two collections. Order is the server's order. |
 | `series_seasons`, `season_episodes` | Order preserved. |
 | `next_up_episode` | First item, or `None`. |

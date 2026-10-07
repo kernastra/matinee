@@ -99,11 +99,12 @@ variable axes, so the variable originals are not shipped (see "Known gaps").
 | `Image` | Fixed frame, fit or fill, asset path, pending placeholder, failure fallback. No fetch policy. |
 | `DecodedImage` | JPEG, PNG, or WebP bytes the caller fetched, decoded on any thread with a side limit, shown with `Image::decoded`. The owner calls `release` to free the atlas copy. |
 | `Rail`, `RailState` | A clipped horizontal row of focusable items. Left, Right, Home, and End move focus; a focused item is scrolled into view; a vertical wheel is left to the page (give the page `restrict_to_axis` too). The owner keeps `RailState`, so offsets survive the rail being hidden; Tab re-enters at the first item, and `last_focused` lets the owner return to the remembered one. |
+| `VirtualGrid`, `VirtualGridState`, `GridSizing`, `GridLayout` | A vertically scrolling grid of fixed-size cells in responsive columns that builds only the visible rows plus overscan, so its cost follows the viewport, not the item count. One tab stop; the focused cell is a logical index (survives virtualization), moved by arrows, Home, End, Page Up, Page Down, and revealed with least movement; Enter and Space activate; a click focuses and activates. A column change keeps the focused (or first visible) cell where it was. `GridLayout` is the pure arithmetic; owners read the same visible range through `VirtualGridState::frame`. Optional fixed-height footer. |
 | `Pressable` | A tab stop with any content (a row, a tile). Click, Enter, and Space activate it; hover and pressed fills and the keyboard focus ring come from the theme. Layout is the caller's. |
 | `ProgressBar` | Determinate (clamped) and indeterminate. Reduced motion holds the indeterminate segment still. |
 | `Tooltip` | Text, GPUI's hover delay, no focus, no animation. |
 | `Popover` | Anchored layer. Outside press and Escape dismiss. Focus returns to the trigger. |
-| `Menu`, `MenuItem`, `ContextMenu` | One menu implementation. Context menus are that menu at a pointer point. No submenus. |
+| `Menu`, `MenuItem`, `ContextMenu` | One menu implementation. Context menus are that menu at a pointer point. No submenus. `max_height` (and `Popover::menu_max_height`) scrolls a long menu's rows inside the panel and keeps the keyboard cursor in view. |
 | `Dialog`, `DialogAction` | Modal scrim. Tab stays inside. Destructive dialogs focus Cancel. |
 | `Sidebar`, `Toolbar`, `SplitView`, `EmptyState` | Sectioned navigation, a three-region bar with no window buttons, a draggable two-pane split, and a restrained empty state. |
 
@@ -195,7 +196,7 @@ crates.
   toggles the preview toolbar.
 - Pages today: Color, Typography, Spacing, Radius & Elevation, Motion, Icons,
   Button, Icon Button, Text Field, Search Field, Switch, Checkbox, Segmented
-  Control, Slider, Scroll View, List, Image, Pressable, Rail, Progress, Tooltip, Popover, Menu,
+  Control, Slider, Scroll View, List, Image, Pressable, Rail, Virtual Grid, Progress, Tooltip, Popover, Menu (with a long scrolling menu),
   Context Menu, Dialog, Sidebar, Toolbar, Split View, Empty State, Desktop
   Composition, Text, Surface.
 - A lightweight inspector under the story reports the interactive control's

@@ -332,7 +332,51 @@ pub fn menu(window: &mut Window, cx: &mut App) -> AnyElement {
     let dismiss = state.clone();
     let check = state.clone();
     let pick = state.clone();
-    example(
+    let long_open = state.read(cx).long_open;
+    let long_choice = state.read(cx).long_choice;
+    let long_toggle = state.clone();
+    let long_dismiss = state.clone();
+    let long_entries: Vec<MenuEntry> = (0..30)
+        .map(|index| {
+            let choose = state.clone();
+            MenuEntry::Item(
+                MenuItem::new(format!("Option {}", index + 1))
+                    .checked(index == long_choice)
+                    .on_activate(move |_, cx| {
+                        choose.update(cx, |demo, cx| {
+                            demo.long_choice = index;
+                            cx.notify();
+                        });
+                    }),
+            )
+        })
+        .collect();
+    let long = example(
+        "Long menu",
+        "Thirty rows in a panel capped at 240 points. The rows scroll inside the panel; moving the cursor with Up, Down, Home, or End keeps it in view.",
+        h_stack(Space::S3).child(
+            Popover::new("long-menu")
+                .open(long_open)
+                .on_dismiss(move |_, cx| {
+                    long_dismiss.update(cx, |demo, cx| {
+                        demo.long_open = false;
+                        cx.notify();
+                    });
+                })
+                .trigger(
+                    Button::new("long-menu-trigger", format!("Option {}", long_choice + 1))
+                        .on_click(move |_, _, cx| {
+                            long_toggle.update(cx, |demo, cx| {
+                                demo.long_open = !demo.long_open;
+                                cx.notify();
+                            });
+                        }),
+                )
+                .menu_max_height(240.0)
+                .menu(long_entries),
+        ),
+    );
+    let short = example(
         "Menu",
         "Up and Down skip disabled rows. Enter or Space activates. Escape closes. A destructive row is available but not the first stop.",
         v_stack(Space::S3)
@@ -361,8 +405,11 @@ pub fn menu(window: &mut Window, cx: &mut App) -> AnyElement {
                 Some(label) => format!("Last action: {label}"),
                 None => "No action yet".to_string(),
             })),
-    )
-    .into_any_element()
+    );
+    v_stack(Space::S8)
+        .child(short)
+        .child(long)
+        .into_any_element()
 }
 
 pub fn context_menu(window: &mut Window, cx: &mut App) -> AnyElement {
@@ -647,6 +694,8 @@ struct MenuDemo {
     open: bool,
     checked: bool,
     last: Option<SharedString>,
+    long_open: bool,
+    long_choice: usize,
 }
 
 fn menu_entries(checked: bool, check: Entity<MenuDemo>, pick: Entity<MenuDemo>) -> Vec<MenuEntry> {

@@ -2,7 +2,7 @@
 //!
 //! The GPUI window talks to one service runtime. That runtime owns Jellyfin
 //! HTTP, playback reporting, artwork fetches, and vault work. Login, Home,
-//! Details, and the Player are the screens in this crate. Library, Search,
+//! Library, Details, and the Player are the screens in this crate. Search,
 //! Calendar, Settings, and Poster Studio are not yet.
 //!
 //! # Artwork
@@ -13,9 +13,11 @@
 //! and decodes it off the UI thread. Do not put `api_key` back on artwork
 //! URLs.
 
+mod app_bar;
 mod artwork;
 mod details;
 mod home;
+mod library;
 mod model;
 mod nav;
 mod player;
@@ -105,6 +107,17 @@ fn review_scene() -> Option<ReviewScene> {
         Some("details-season") => Some(ReviewScene::DetailsSeason),
         Some("details-loading") => Some(ReviewScene::DetailsLoading),
         Some("details-error") => Some(ReviewScene::DetailsError),
+        Some("library") => Some(ReviewScene::Library),
+        Some("library-movies") => Some(ReviewScene::LibraryMovies),
+        Some("library-series") => Some(ReviewScene::LibrarySeries),
+        Some("library-loading") => Some(ReviewScene::LibraryLoading),
+        Some("library-empty") => Some(ReviewScene::LibraryEmpty),
+        Some("library-filtered-empty") => Some(ReviewScene::LibraryFilteredEmpty),
+        Some("library-partial-page") => Some(ReviewScene::LibraryPartialPage),
+        Some("library-error") => Some(ReviewScene::LibraryError),
+        Some("library-small-window") => Some(ReviewScene::LibrarySmallWindow),
+        Some("library-large-window") => Some(ReviewScene::LibraryLargeWindow),
+        Some("library-many-items") => Some(ReviewScene::LibraryManyItems),
         _ => None,
     }
 }

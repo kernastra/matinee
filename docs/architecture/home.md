@@ -65,8 +65,8 @@ The reference is `src/components/Home.tsx`, `HomeEditorial.tsx`,
 Home answers three questions in order: what was I watching, what should I
 watch next, and what is new.
 
-1. **Hero.** Top bar (MATINEE wordmark, the signed-in name, Refresh, Sign
-   out) over a restrained backdrop, about 62% of the window height
+1. **Hero.** The app bar (MATINEE wordmark, Home · Movies · Series, the
+   signed-in name, Refresh, Sign out) over a restrained backdrop, about 62% of the window height
    (360–620 px), so the first row always starts on screen.
 2. **Continue Watching.** Landscape cards (still or backdrop) with a quiet
    amber progress line, the series or title, and `S2 E5 · Keeper` for an
@@ -102,9 +102,12 @@ the page.
 
 ### Deferred
 
-- **Library shortcuts, "View all", footer links.** They lead to Library,
-  Settings, and other screens that are not native yet (Phase 3E and
-  later). Dead controls are not shown.
+- **Library shortcuts and footer links.** Phase 3E added the app bar
+  (Home · Movies · Series) and "View all" on Recently Added Movies and
+  Recently Added Series, which open Library for that kind, newest first
+  (see [library.md](library.md#home-integration)). The ticket shortcuts
+  and footer return with the editorial pass; links to Settings and other
+  screens that are not native stay hidden.
 - **Top rated, Featured showcase, Collection spotlight.** All three are
   built from the top-rated query; they return together as an editorial
   pass once the core rows have settled. Leaving them out also keeps Home
