@@ -237,11 +237,21 @@ reference app, including the product rules in `docs/design-spec.md`.
 - Typed `SearchQuery` and `JellyfinClient::search_page` (Movie, Series,
   Episode; `StartIndex`/`Limit`/total). The unpaged `search_library` is gone.
 - Reuses Atelier's `VirtualGrid`, `SearchField`, and the Library poster card
-  (moved to a shared `media_grid` module). Atelier gains one generic hook:
-  `TextField` and `SearchField` accept an owner's `FocusHandle`.
-- Deferred: People, Collections, a type label on cards, review scenes for
-  Search. See [search.md](../architecture/search.md), which includes the
-  shipping audit.
+  (moved to a shared `media_grid` module; episodes read as series and
+  `S2 E5 · name`, Library's movie and series cards are unchanged). Atelier
+  gains two generic hooks: `TextField`/`SearchField` accept an owner's
+  `FocusHandle` (still a tab stop), and `VirtualGrid::on_edge` reports a key
+  that cannot move, so Up from the first row returns to the field.
+- Hardening review: stale titles are inert while a new query loads; Enter,
+  Refresh, and Try again recover from a failed first page and never race;
+  a new query starts at the top; typing back to the held query shows it at
+  once; abandoned pages are aborted. Thirteen review scenes; headless GPUI
+  tests for focus, keys, clicks, navigation round trips, and scale; HTTP
+  boundary tests against a loopback Jellyfin.
+- Deferred: People, Collections, a type label on movie and series cards.
+  Visual review of the scenes on a real display (headless capture is blank).
+  See [search.md](../architecture/search.md), which includes the shipping
+  audit.
 
 Phase 3G (Calendar) and later screens are not started. The compatibility
 builders that still put `api_key` on artwork URLs stay for the shipping

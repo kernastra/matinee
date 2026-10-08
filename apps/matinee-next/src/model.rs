@@ -101,6 +101,19 @@ pub enum ReviewScene {
     LibrarySmallWindow,
     LibraryLargeWindow,
     LibraryManyItems,
+    Search,
+    SearchEmpty,
+    SearchTooShort,
+    SearchTyping,
+    SearchLoading,
+    SearchManyResults,
+    SearchNoResults,
+    SearchError,
+    SearchPartialPage,
+    SearchStale,
+    SearchEpisodes,
+    SearchSmallWindow,
+    SearchLargeWindow,
 }
 
 impl ReviewScene {
@@ -149,11 +162,35 @@ impl ReviewScene {
         }
     }
 
+    pub(crate) fn search_preview(self) -> Option<crate::search::SearchPreview> {
+        use crate::search::SearchPreview;
+        match self {
+            Self::Search | Self::SearchSmallWindow | Self::SearchLargeWindow => {
+                Some(SearchPreview::Results)
+            }
+            Self::SearchEmpty => Some(SearchPreview::Empty),
+            Self::SearchTooShort => Some(SearchPreview::TooShort),
+            Self::SearchTyping => Some(SearchPreview::Typing),
+            Self::SearchLoading => Some(SearchPreview::Loading),
+            Self::SearchManyResults => Some(SearchPreview::ManyResults),
+            Self::SearchNoResults => Some(SearchPreview::NoResults),
+            Self::SearchError => Some(SearchPreview::Error),
+            Self::SearchPartialPage => Some(SearchPreview::PartialPage),
+            Self::SearchStale => Some(SearchPreview::Stale),
+            Self::SearchEpisodes => Some(SearchPreview::Episodes),
+            _ => None,
+        }
+    }
+
     /// The window size a scene is reviewed at, unless one is given.
     pub(crate) fn size(self) -> (f32, f32) {
         match self {
-            Self::HomeSmallWindow | Self::LibrarySmallWindow => (960.0, 620.0),
-            Self::HomeLargeWindow | Self::LibraryLargeWindow => (1920.0, 1080.0),
+            Self::HomeSmallWindow | Self::LibrarySmallWindow | Self::SearchSmallWindow => {
+                (960.0, 620.0)
+            }
+            Self::HomeLargeWindow | Self::LibraryLargeWindow | Self::SearchLargeWindow => {
+                (1920.0, 1080.0)
+            }
             _ => (1200.0, 760.0),
         }
     }
@@ -748,6 +785,19 @@ mod tests {
             ReviewScene::LibrarySmallWindow,
             ReviewScene::LibraryLargeWindow,
             ReviewScene::LibraryManyItems,
+            ReviewScene::Search,
+            ReviewScene::SearchEmpty,
+            ReviewScene::SearchTooShort,
+            ReviewScene::SearchTyping,
+            ReviewScene::SearchLoading,
+            ReviewScene::SearchManyResults,
+            ReviewScene::SearchNoResults,
+            ReviewScene::SearchError,
+            ReviewScene::SearchPartialPage,
+            ReviewScene::SearchStale,
+            ReviewScene::SearchEpisodes,
+            ReviewScene::SearchSmallWindow,
+            ReviewScene::SearchLargeWindow,
         ] {
             let model = AppModel::review(scene);
             let rendered = model.visible_lines().join("\n");

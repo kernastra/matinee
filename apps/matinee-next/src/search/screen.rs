@@ -10,9 +10,14 @@
 //! covers it, so the text, the results, the scroll offset, and the focused
 //! title are where the person left them. A title emits [`SearchEvent::Open`];
 //! Search never starts playback.
+//!
+//! Titles held from the previous query while a new one loads are dimmed and
+//! inert: they do not open, take hover, or move the logical focus.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,6 +59,11 @@ const FIELD_MAX_WIDTH: f32 = 560.0;
 /// Old titles, held while a new query loads, are drawn this faint.
 const STALE_OPACITY: f32 = 0.5;
 
+/// Review-scene artwork for an address.
+pub(super) type FixtureArt = Box<dyn Fn(&str) -> Artwork>;
+/// Review-scene answers for a request. `None` leaves it unanswered.
+pub(super) type FixtureAnswers = Rc<dyn Fn(&Request) -> Option<Response>>;
+
 /// Which control takes focus when the screen next shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Settle {
@@ -65,6 +75,7 @@ enum Settle {
 
 pub(crate) struct SearchScreen {
     runtime: Arc<ServiceRuntime>,
+    /// `None` for review scenes, which never open a socket.
     client: Option<Client>,
     /// Builds artwork addresses. No token is ever put on them.
     session: Session,
@@ -84,6 +95,10 @@ pub(crate) struct SearchScreen {
     field: FocusHandle,
     settle: Option<Settle>,
     signing_out: bool,
+    /// Review scenes: artwork from fixtures instead of the network.
+    pub(super) fixture_art: Option<FixtureArt>,
+    /// Review scenes: answers from fixtures instead of the network.
+    pub(super) fixture_answers: Option<FixtureAnswers>,
 }
 
 impl EventEmitter<SearchEvent> for SearchScreen {}
@@ -106,7 +121,7 @@ impl SearchScreen {
         )
     }
 
-    fn with_model(
+    pub(super) fn with_model(
         runtime: Arc<ServiceRuntime>,
         client: Option<Client>,
         session: Session,
@@ -143,6 +158,8 @@ impl SearchScreen {
             field: cx.focus_handle(),
             settle: Some(Settle::Field),
             signing_out: false,
+            fixture_art: None,
+            fixture_answers: None,
         }
     }
 
@@ -185,11 +202,24 @@ impl SearchScreen {
                     .ok();
             }));
         }
+        self.drop_abandoned_page();
         cx.notify();
+    }
+
+    /// The model gave up on the page in flight: the field was cleared, or
+    /// went back to the query already shown. Stop its HTTP call; its answer
+    /// could not apply anyway.
+    fn drop_abandoned_page(&mut self) {
+        if !self.model.is_loading()
+            && let Some(task) = self.page_task.take()
+        {
+            task.abort();
+        }
     }
 
     fn debounced(&mut self, debounce: Debounce, cx: &mut Context<Self>) {
         let requests = self.model.debounced(debounce);
+        self.drop_abandoned_page();
         self.run(requests, cx);
         cx.notify();
     }
@@ -198,6 +228,7 @@ impl SearchScreen {
     fn submit(&mut self, cx: &mut Context<Self>) {
         self.debounce_task = None;
         let requests = self.model.submit();
+        self.drop_abandoned_page();
         self.run(requests, cx);
         cx.notify();
     }
@@ -215,11 +246,26 @@ impl SearchScreen {
     }
 
     fn open_item(&mut self, index: usize, cx: &mut Context<Self>) {
+        // Dimmed titles belong to the previous query. They do not open.
+        if self.model.is_stale() {
+            return;
+        }
         let Some(id) = self.model.items().get(index).map(|item| item.id().clone()) else {
             return;
         };
         self.model.note_opened(id.clone());
         cx.emit(SearchEvent::Open(id));
+    }
+
+    /// The grid's logical focus moved. Looked up when it happens, so a
+    /// render does not copy every loaded id.
+    fn note_focused(&mut self, index: usize) {
+        if self.model.is_stale() {
+            return;
+        }
+        if let Some(id) = self.model.items().get(index).map(|item| item.id().clone()) {
+            self.model.note_focused(id);
+        }
     }
 
     fn bar_action(&mut self, action: BarAction, _: &mut Window, cx: &mut Context<Self>) {
@@ -231,47 +277,47 @@ impl SearchScreen {
         }
     }
 
-    /// Keys the field and the grid cannot take themselves: Enter searches,
-    /// Down moves from the field into the results, and Up from the first
-    /// row returns to the field. Arrow keys inside the grid belong to it.
+    /// Keys the field cannot take itself: Enter searches now, and Down moves
+    /// into the results (the title focused there before, or the first).
+    /// The field binds neither, so its editing keys are untouched. Up from
+    /// the grid's first row comes back through the grid's edge
+    /// (`VirtualGrid::on_edge`); the grid's own keys stay its own.
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let on_field = self.field.is_focused(window);
+        if !self.field.is_focused(window) {
+            return;
+        }
         match event.keystroke.key.as_str() {
-            "enter" if on_field => {
+            "enter" => {
                 self.submit(cx);
                 cx.stop_propagation();
             }
-            "down" if on_field && self.model.state() == SearchState::Ready => {
+            "down" if self.model.state() == SearchState::Ready => {
                 let index = self.grid.focused().unwrap_or(0);
+                note_keyboard_navigation(cx);
                 self.grid.focus_index(Some(index));
                 window.focus(self.grid.focus_handle());
-                cx.stop_propagation();
-            }
-            "up" if self.grid.focus_handle().is_focused(window) && self.on_first_row(window) => {
-                window.focus(&self.field);
                 cx.stop_propagation();
             }
             _ => {}
         }
     }
 
-    fn on_first_row(&self, window: &Window) -> bool {
-        let Some(index) = self.grid.focused() else {
-            return true;
-        };
-        let width = self
-            .grid
-            .measured()
-            .map(|(width, _)| width)
-            .unwrap_or_else(|| f32::from(window.viewport_size().width));
-        let columns = GridLayout::new(Layout::for_width(width).sizing(), width, 0, 0.0).columns;
-        index < columns
-    }
-
     /// Start each request. A page request replaces the one in flight, which
     /// is aborted: its answer could not apply anyway.
     fn run(&mut self, requests: Vec<Request>, cx: &mut Context<Self>) {
         let Some(client) = self.client.clone() else {
+            if let Some(answers) = self.fixture_answers.clone() {
+                for request in requests {
+                    let Some(response) = answers(&request) else {
+                        continue;
+                    };
+                    cx.spawn(async move |this, cx| {
+                        this.update(cx, |this, cx| this.answer(&request, response, cx))
+                            .ok();
+                    })
+                    .detach();
+                }
+            }
             return;
         };
         self.tasks.retain(|task| !task.is_finished());
@@ -300,7 +346,7 @@ impl SearchScreen {
         }
     }
 
-    fn answer(&mut self, request: &Request, response: Response, cx: &mut Context<Self>) {
+    pub(super) fn answer(&mut self, request: &Request, response: Response, cx: &mut Context<Self>) {
         match self.model.apply(request, response) {
             Applied::Ignored => return,
             Applied::SessionExpired => {
@@ -359,6 +405,12 @@ impl SearchScreen {
             keep
         });
         let Some(client) = self.client.clone() else {
+            if let Some(fixture) = &self.fixture_art {
+                for request in wanted {
+                    let art = fixture(&request.url);
+                    self.art.entry(request.url).or_insert(art);
+                }
+            }
             return;
         };
         for request in wanted {
@@ -397,9 +449,64 @@ impl SearchScreen {
         }
     }
 
+    /// Review scenes: keyboard focus on the results, at `index`.
+    pub(super) fn focus_results(&mut self, index: Option<usize>) {
+        self.grid.focus_index(index);
+        self.settle = Some(Settle::Results);
+    }
+
+    /// The grid state, for tests that check it survives pages and roots.
+    #[cfg(test)]
+    pub(crate) fn grid(&self) -> VirtualGridState {
+        self.grid.clone()
+    }
+
+    /// The field's focus handle, for tests.
+    #[cfg(test)]
+    pub(crate) fn field_focus(&self) -> FocusHandle {
+        self.field.clone()
+    }
+
+    /// Artwork slots held and fetches in flight, for tests.
+    #[cfg(test)]
+    pub(crate) fn art_counts(&self) -> (usize, usize) {
+        (self.art.len(), self.art_tasks.len())
+    }
+
+    /// The addresses the screen currently wants, in grid order.
+    #[cfg(test)]
+    pub(crate) fn wanted(&self) -> &[String] {
+        &self.wanted
+    }
+
+    /// Record every request this review-scene screen sends from now on.
+    #[cfg(test)]
+    pub(crate) fn record_requests(&mut self) -> Rc<RefCell<Vec<Request>>> {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        if let Some(answers) = self.fixture_answers.take() {
+            let sink = Rc::clone(&log);
+            self.fixture_answers = Some(Rc::new(move |request: &Request| {
+                sink.borrow_mut().push(request.clone());
+                answers(request)
+            }));
+        }
+        log
+    }
+
+    /// Whether a page request task is held (in flight or not yet reaped).
+    #[cfg(test)]
+    pub(crate) fn holds_page_task(&self) -> bool {
+        self.page_task.is_some()
+    }
+
     /// After a show or a return, put focus where it was left: the field for
     /// a fresh open, the results for a return from Details.
-    fn settle_focus(&mut self, window: &mut Window) {
+    ///
+    /// Applied once this frame is drawn (`Window::defer`), so the target is
+    /// in the frame's focus tree. Unlike a next-frame callback this does not
+    /// wait for the platform to ask for a frame, so it is also what the
+    /// headless tests see.
+    fn settle_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(settle) = self.settle.take() else {
             return;
         };
@@ -409,7 +516,7 @@ impl SearchScreen {
             }
             _ => self.field.clone(),
         };
-        window.on_next_frame(move |window, _| window.focus(&target));
+        window.defer(cx, move |window, _| window.focus(&target));
     }
 }
 
@@ -429,23 +536,26 @@ impl Drop for SearchScreen {
 
 impl Render for SearchScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.settle_focus(window);
+        self.settle_focus(window, cx);
         let theme = cx.theme().clone();
         let width = f32::from(window.viewport_size().width);
         let layout = Layout::for_width(width);
         let state = self.model.state();
+        // The previous query's titles, held while this one loads.
+        let stale = self.model.is_stale();
 
         let body = match state {
             SearchState::Ready => self.results(&theme, layout, window, cx),
-            SearchState::Loading if self.model.items().is_empty() => {
-                skeleton(&theme, SEARCH_IDS, layout, width).into_any_element()
-            }
-            SearchState::Loading => self.results(&theme, layout, window, cx),
+            SearchState::Loading if stale => self.results(&theme, layout, window, cx),
+            SearchState::Loading => skeleton(&theme, SEARCH_IDS, layout, width).into_any_element(),
             SearchState::Idle(reason) => self.idle(&theme, layout, reason).into_any_element(),
             SearchState::NoResults => self.no_results(&theme, layout).into_any_element(),
             SearchState::Failed(failure) => self.failure(layout, failure, cx).into_any_element(),
         };
-        if state != SearchState::Ready {
+        if state != SearchState::Ready && !stale {
+            // No grid this frame, so no poster is wanted. (The grid already
+            // synced its own window above; doing both would drop and restart
+            // every stale poster on each render.)
             self.follow_window(0..0, cx);
         }
 
@@ -533,7 +643,8 @@ impl SearchScreen {
     }
 
     /// The results grid. While a new query loads, the old titles stay on
-    /// screen, faint, so they are never taken for the new query's.
+    /// screen, faint and inert, so they are never taken for the new query's
+    /// or opened by mistake.
     fn results(
         &mut self,
         theme: &Theme,
@@ -563,52 +674,58 @@ impl SearchScreen {
                 Some((index, CardData::new(item, art)))
             })
             .collect();
-        let cards = std::rc::Rc::new(std::cell::RefCell::new(cards));
+        let cards = Rc::new(RefCell::new(cards));
         let card_theme = theme.clone();
         let (cell_width, art_height) = (frame.layout.cell_width, frame.layout.cell_width * 1.5);
         let footer = self.footer(theme, cx);
         let open = cx.entity().downgrade();
         let focused = cx.entity().downgrade();
-        let items: std::rc::Rc<Vec<ItemId>> = std::rc::Rc::new(
-            self.model
-                .items()
-                .iter()
-                .map(|item| item.id().clone())
-                .collect(),
-        );
+        let field = self.field.clone();
 
         let stale = self.model.is_stale();
+        let grid = VirtualGrid::new("search-grid", &grid, count, move |cell, _, _| {
+            match cards.borrow_mut().remove(&cell.index) {
+                Some(data) => card(
+                    &card_theme,
+                    SEARCH_IDS,
+                    &data,
+                    cell_width,
+                    art_height,
+                    cell.focused,
+                ),
+                None => div().into_any_element(),
+            }
+        })
+        .sizing(sizing)
+        .fallback_viewport(fallback)
+        .footer(FOOTER_HEIGHT, footer)
+        .on_activate(move |index, _, cx| {
+            open.update(cx, |this, cx| this.open_item(index, cx)).ok();
+        })
+        .on_focus(move |index, _, cx| {
+            focused.update(cx, |this, _| this.note_focused(index)).ok();
+        })
+        .on_edge(move |step, window, _| {
+            // Up from the first row goes back to the field above.
+            if step == GridStep::Up {
+                window.focus(&field);
+            }
+        });
         div()
+            .relative()
             .size_full()
-            .when(stale, |grid_area| grid_area.opacity(STALE_OPACITY))
-            .child(
-                VirtualGrid::new("search-grid", &grid, count, move |cell, _, _| {
-                    match cards.borrow_mut().remove(&cell.index) {
-                        Some(data) => card(
-                            &card_theme,
-                            SEARCH_IDS,
-                            &data,
-                            cell_width,
-                            art_height,
-                            cell.focused,
-                        ),
-                        None => div().into_any_element(),
-                    }
-                })
-                .sizing(sizing)
-                .fallback_viewport(fallback)
-                .footer(FOOTER_HEIGHT, footer)
-                .on_activate(move |index, _, cx| {
-                    open.update(cx, |this, cx| this.open_item(index, cx)).ok();
-                })
-                .on_focus(move |index, _, cx| {
-                    if let Some(id) = items.get(index).cloned() {
-                        focused
-                            .update(cx, |this, _| this.model.note_focused(id))
-                            .ok();
-                    }
-                }),
-            )
+            .child(grid)
+            .when(stale, |area| {
+                // A layer over the old titles takes the pointer, so they do
+                // not hover or open. The wheel still scrolls them.
+                area.opacity(STALE_OPACITY).child(
+                    div()
+                        .id("search-stale")
+                        .absolute()
+                        .inset_0()
+                        .block_mouse_except_scroll(),
+                )
+            })
             .into_any_element()
     }
 

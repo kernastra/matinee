@@ -1,7 +1,7 @@
 //! Headless behavior tests for the virtualized grid.
 
 use atelier_ui::{
-    ComponentKeymap, FocusNext, FocusPrevious, GridSizing, VirtualGrid, VirtualGridState,
+    ComponentKeymap, FocusNext, FocusPrevious, GridSizing, GridStep, VirtualGrid, VirtualGridState,
     install_component_keybindings,
 };
 use gpui::{
@@ -59,6 +59,7 @@ struct GridHarness {
     built: Vec<usize>,
     activated: Vec<usize>,
     moved: Vec<usize>,
+    edges: Vec<GridStep>,
 }
 
 impl Render for GridHarness {
@@ -67,6 +68,7 @@ impl Render for GridHarness {
         let view = cx.entity().downgrade();
         let built = view.clone();
         let moved = view.clone();
+        let edge = view.clone();
         div().w(px(self.width)).h(px(620.0)).child(
             VirtualGrid::new("grid", &self.state, self.count, move |cell, _, cx| {
                 built.update(cx, |this, _| this.built.push(cell.index)).ok();
@@ -79,6 +81,9 @@ impl Render for GridHarness {
             })
             .on_focus(move |index, _, cx| {
                 moved.update(cx, |this, _| this.moved.push(index)).ok();
+            })
+            .on_edge(move |step, _, cx| {
+                edge.update(cx, |this, _| this.edges.push(step)).ok();
             }),
         )
     }
@@ -97,6 +102,7 @@ fn open(
         built: Vec::new(),
         activated: Vec::new(),
         moved: Vec::new(),
+        edges: Vec::new(),
     });
     cx.run_until_parked();
     (view, cx)
@@ -245,4 +251,30 @@ fn an_empty_grid_builds_nothing_and_ignores_keys(cx: &mut TestAppContext) {
     assert_eq!(state.focused(), None);
     assert_eq!(state.rendered_cells(), 0);
     assert!(view.read_with(cx, |this, _| this.activated.is_empty()));
+}
+
+#[gpui::test]
+fn a_key_that_cannot_move_is_reported_as_an_edge(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, 40, 640.0);
+    let state = state(&view, cx);
+    focus_grid(&view, cx);
+    // Five columns. Down to the second row, then Up twice: the first Up
+    // moves, the second is on the first row and goes nowhere.
+    press(cx, "down");
+    assert_eq!(state.focused(), Some(5));
+    press(cx, "up");
+    assert_eq!(state.focused(), Some(0));
+    press(cx, "up");
+    assert_eq!(state.focused(), Some(0), "the grid does not wrap");
+    press(cx, "left");
+    view.read_with(cx, |this, _| {
+        assert_eq!(this.edges, vec![GridStep::Up, GridStep::Left]);
+        assert_eq!(this.moved, vec![5, 0], "edges are not reported as moves");
+    });
+    cx.update(|window, _| {
+        assert!(
+            state.focus_handle().is_focused(window),
+            "the grid keeps focus unless the owner moves it"
+        );
+    });
 }

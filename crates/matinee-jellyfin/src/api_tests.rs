@@ -712,6 +712,106 @@ fn search_page_never_returns_more_than_asked() {
 }
 
 #[test]
+fn search_page_is_user_scoped_lean_and_header_authenticated() {
+    let transport = Mock::new(|request| {
+        assert_eq!(path_of(request), "/Users/user-1/Items");
+        assert_eq!(
+            query_value(request, "SearchTerm").as_deref(),
+            Some("Amélie #1 + 50% off"),
+            "one encoded value, decoded exactly"
+        );
+        assert_eq!(query_value(request, "Recursive").as_deref(), Some("true"));
+        assert_eq!(
+            query_value(request, "Fields").as_deref(),
+            Some(crate::query::LIBRARY_FIELDS),
+            "the grid's fields, not Details'"
+        );
+        assert_eq!(query_value(request, "ImageTypeLimit").as_deref(), Some("1"));
+        assert_eq!(
+            query_value(request, "EnableUserData").as_deref(),
+            Some("true")
+        );
+        assert!(query_value(request, "api_key").is_none());
+        assert!(!request.url.contains("token"), "{}", request.url);
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(name, value)| name == "Authorization" && value.contains("token with spaces")),
+            "the token travels in the header"
+        );
+        Ok(ok_json(
+            r#"{"Items":[{"Id":"episode-1","Name":"Pilot","Type":"Episode","SeriesId":"series-1","SeriesName":"Signal","IndexNumber":1,"ParentIndexNumber":1,"ImageTags":{"Primary":"still"},"UserData":{"PlaybackPositionTicks":6000000000,"PlayedPercentage":20.0}}]}"#,
+        ))
+    });
+    let client = JellyfinClient::new(session(), transport);
+    let query = SearchQuery::parse("Amélie #1 + 50% off").unwrap();
+    let found = wait(client.search_page(
+        &query,
+        LibraryPageRequest {
+            start: 0,
+            limit: 60,
+        },
+        None,
+    ))
+    .unwrap();
+    assert_eq!(found.total, None, "no count from the server: unknown");
+    let episode = &found.items[0];
+    assert_eq!(episode.kind, ItemKind::Episode);
+    assert_eq!(episode.hierarchy.series_name.as_deref(), Some("Signal"));
+    assert!(episode.is_resumable(), "user data is mapped");
+    assert!(episode.artwork.primary.is_some());
+}
+
+#[test]
+fn search_page_errors_are_classified_without_server_text() {
+    let query = SearchQuery::parse("harbor").unwrap();
+    let page = LibraryPageRequest {
+        start: 0,
+        limit: 60,
+    };
+    let answer = |status: u16, body: &'static str| {
+        let transport = Mock::new(move |_| {
+            Ok(HttpResponse {
+                status,
+                body: body.as_bytes().to_vec(),
+            })
+        });
+        wait(JellyfinClient::new(session(), transport).search_page(&query, page, None))
+    };
+    assert!(matches!(
+        answer(401, "").unwrap_err(),
+        JellyfinError::Unauthorized
+    ));
+    assert!(matches!(
+        answer(403, "").unwrap_err(),
+        JellyfinError::Unauthorized
+    ));
+    let server = answer(500, "SearchTerm=harbor at line 3").unwrap_err();
+    assert!(matches!(server, JellyfinError::Server { status: 500, .. }));
+    assert!(
+        !format!("{server} {server:?}").contains("line 3"),
+        "no body"
+    );
+    assert!(matches!(
+        answer(200, "{not json").unwrap_err(),
+        JellyfinError::Malformed { .. }
+    ));
+    assert!(matches!(
+        answer(200, r#"{"TotalRecordCount":3}"#).unwrap_err(),
+        JellyfinError::Malformed { .. }
+    ));
+    let negative = answer(200, r#"{"Items":[],"TotalRecordCount":-1}"#).unwrap();
+    assert_eq!(negative.total, None, "a nonsense count is not trusted");
+    let unreachable = Mock::new(|_| Err(TransportError::Unreachable("timed out".into())));
+    assert!(matches!(
+        wait(JellyfinClient::new(session(), unreachable).search_page(&query, page, None))
+            .unwrap_err(),
+        JellyfinError::Unreachable { .. }
+    ));
+}
+
+#[test]
 fn series_navigation_preserves_order_and_absence() {
     let transport = Mock::new(|request| {
         let path = path_of(request);

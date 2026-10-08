@@ -10,11 +10,12 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use atelier_ui::prelude::*;
-use matinee_core::{ImageRole, MediaItem};
+use matinee_core::{ImageRole, ItemKind, MediaItem};
 use matinee_jellyfin::{ArtworkRequest, ArtworkUrls};
 
 use crate::artwork::{Artwork, TILE_POSTER_WIDTH};
 use crate::details::progress_fraction;
+use crate::home::{card_detail, card_title};
 use crate::tiles::{art_frame, progress_line, stable_index};
 
 /// Element ids for one screen's cards. Each screen uses its own, so ids stay
@@ -111,22 +112,31 @@ pub(crate) struct CardData {
 }
 
 impl CardData {
+    /// Movies and series read `Title` over `2019 · ★ 7.8`. An episode reads
+    /// as Home's episode cards do, its series over `S2 E5 · Low Tide`, so a
+    /// search for "pilot" does not show a wall of identical "Pilot" cards.
+    /// Library holds only movies and series, so its cards are unchanged.
     pub(crate) fn new(item: &MediaItem, art: Artwork) -> Self {
         let progress = item
             .is_resumable()
             .then(|| progress_fraction(item))
             .flatten();
-        let mut detail = Vec::new();
-        if let Some(year) = item.metadata.year {
-            detail.push(year.to_string());
-        }
-        if let Some(rating) = item.metadata.community_rating.filter(|r| *r > 0.0) {
-            detail.push(format!("★ {rating:.1}"));
-        }
+        let detail = if item.kind == ItemKind::Episode {
+            card_detail(item)
+        } else {
+            let mut detail = Vec::new();
+            if let Some(year) = item.metadata.year {
+                detail.push(year.to_string());
+            }
+            if let Some(rating) = item.metadata.community_rating.filter(|r| *r > 0.0) {
+                detail.push(format!("★ {rating:.1}"));
+            }
+            (!detail.is_empty()).then(|| detail.join(" · "))
+        };
         Self {
             key: stable_index(item.id()),
-            title: item.name().to_string(),
-            detail: (!detail.is_empty()).then(|| detail.join(" · ")),
+            title: card_title(item).to_string(),
+            detail,
             art,
             progress,
             watched: item.user.is_played() && progress.is_none(),
@@ -247,4 +257,63 @@ pub(crate) fn skeleton(
         .size_full()
         .child(row(0))
         .child(row(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use matinee_core::{ItemId, LibraryKind};
+
+    use super::*;
+    use crate::library::preview::fixture;
+
+    #[test]
+    fn movies_and_series_read_as_library_always_has() {
+        // Fixture 3: a two-word title, a year, and a rating.
+        for kind in [LibraryKind::Movies, LibraryKind::Series] {
+            let item = fixture(kind, 3);
+            let card = CardData::new(&item, Artwork::Missing);
+            assert_eq!(card.title, item.name(), "{kind:?}: the title itself");
+            let year = item.metadata.year.unwrap();
+            let rating = item.metadata.community_rating.unwrap();
+            assert_eq!(
+                card.detail.as_deref(),
+                Some(format!("{year} · ★ {rating:.1}").as_str())
+            );
+        }
+        // Watched without progress shows the check; progress wins over it.
+        assert!(CardData::new(&fixture(LibraryKind::Movies, 5), Artwork::Missing).watched);
+        let resumable = CardData::new(&fixture(LibraryKind::Movies, 2), Artwork::Missing);
+        assert!(resumable.progress.is_some() && !resumable.watched);
+    }
+
+    #[test]
+    fn an_episode_reads_as_its_series_and_episode() {
+        let mut item = fixture(LibraryKind::Movies, 3);
+        item.kind = ItemKind::Episode;
+        item.identity.name = "Pilot".into();
+        item.hierarchy.series_id = ItemId::parse("series-1").ok();
+        item.hierarchy.series_name = Some("Harbor Lights".into());
+        item.hierarchy.parent_index = Some(2);
+        item.hierarchy.index = Some(5);
+        let card = CardData::new(&item, Artwork::Missing);
+        assert_eq!(card.title, "Harbor Lights");
+        assert_eq!(card.detail.as_deref(), Some("S2 E5 · Pilot"));
+        // Without a series name the episode's own name stays the title.
+        item.hierarchy.series_name = None;
+        assert_eq!(CardData::new(&item, Artwork::Missing).title, "Pilot");
+    }
+
+    #[test]
+    fn library_and_search_element_ids_never_collide() {
+        let names = |ids: MediaIds| [ids.card, ids.art, ids.skeleton];
+        for library in names(LIBRARY_IDS) {
+            assert!(library.starts_with("library-"));
+            assert!(!names(SEARCH_IDS).contains(&library));
+        }
+        assert_eq!(
+            names(LIBRARY_IDS),
+            ["library-card", "library-art", "library-skeleton"],
+            "Library's ids are what Phase 3E shipped"
+        );
+    }
 }

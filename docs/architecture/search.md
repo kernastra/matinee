@@ -21,6 +21,10 @@ SearchScreen (root) ── SearchModel (no GPUI, no HTTP)
       │   VirtualGrid (Atelier) ── frame(): visible + overscan range
       │   media_grid (shared with Library): card, Layout, skeleton, artwork window
       └── ArtworkLoader (shared 96 MiB LRU) ── posters for that range only
+
+SearchField (focus_handle: the screen's) ──Down──► VirtualGrid
+            ▲                                         │
+            └──────── on_edge(Up) from the first row ─┘
 ```
 
 ## Shipping Search audited
@@ -93,7 +97,7 @@ against the Jellyfin Items endpoint and `crates/matinee-jellyfin`.
 | Open | A root destination in the app bar (**Search**), like Home and Library. Focus goes straight into the field. |
 | Type | Input is kept as typed; the search waits 300 ms, then sends. |
 | Enter | Sends the input now. A query already held sends nothing. |
-| Results | `VirtualGrid` of the shared media cards: poster, title, year, rating. |
+| Results | `VirtualGrid` of the shared media cards: poster, title, year, rating. An episode reads as its series over `S2 E5 · Pilot`. |
 | Open a title | Details (the existing screen). |
 | Return | Search is still on screen, with the same text, results, scroll, and focused title. |
 | Escape | Clears the text when there is some; on an empty field, goes to Home. |
@@ -107,8 +111,8 @@ against the Jellyfin Items endpoint and `crates/matinee-jellyfin`.
   keep the query and results for the session. No history is saved to disk.
 - **Two-level focus.** Down from the field enters the results; Up from the
   first row returns to the field. Shipping had no keyboard movement.
-- **Stale results are dimmed while a new query loads.** Shipping cleared the
-  list the moment loading began.
+- **Stale results are dimmed and inert while a new query loads.** Shipping
+  cleared the list the moment loading began.
 - **Pagination and total count**, described above.
 - **Failures are distinct from zero matches.**
 
@@ -158,7 +162,12 @@ first page       input = "aliens"   effective = "aliens"  shown = "aliens" → R
 While debounce is pending, the results on screen still belong to the query
 they were loaded for: `shown` does not move. Titles from `alien` are never
 shown under `aliens`. When the effective query changes, the old titles stay
-on screen, dimmed, until the new first page replaces them.
+on screen, dimmed and inert, until the new first page replaces them.
+
+Typing back to the query whose titles are held (`alien → aliens → alien`)
+shows them again at once, undimmed, with no wait and no request: they are
+that query's results. The request for `aliens` is abandoned, its HTTP call
+is stopped, and its late answer is ignored.
 
 ## Debounce
 
@@ -173,8 +182,9 @@ on screen, dimmed, until the new first page replaces them.
 
 `SearchModel::submit()` bumps the debounce token, so the pending wait cannot
 send a second time, then sends the input. If the input is already the
-effective query, nothing is sent. If the effective query's first page failed,
-Enter asks again.
+effective query, nothing is sent, including while its first page is on its
+way. If the effective query's first page failed, Enter is Try again: the
+failure is cleared and the first page asked once more.
 
 ## Query normalization
 
@@ -206,10 +216,19 @@ page, `reconcile` for an opened title). Consequences, all tested:
   (`changing_the_query_during_a_next_page_drops_the_late_page`).
 - Typing back to the query already in flight keeps that request
   (`typing_back_to_the_query_in_flight_keeps_its_request`).
+- `alien → aliens → alien`, `matrix → mat → matrix` (with the answer in
+  between), and `A → B → clear → C` apply only what the field asks for now
+  (`alien_aliens_alien_…`, `matrix_mat_matrix_…`, `a_then_b_then_clear_…`).
+- A failure for an earlier query never touches the current state
+  (`a_failed_earlier_query_cannot_touch_the_current_error_state`).
+- Tickets come from one counter and are never reused, so returning to an
+  earlier query can never accept that query's old ticket.
 
 Cancellation is an optimization, not correctness. The screen aborts the
-previous page task when a new page is asked, and drops in-flight artwork for
-posters that leave the window. Correctness does not depend on either.
+previous page task when a new page is asked, aborts the page the model
+abandons (the field cleared, or back to the held query), and drops in-flight
+artwork for posters that leave the window. Correctness does not depend on any
+of these.
 
 ## Pagination
 
@@ -220,9 +239,15 @@ posters that leave the window. Correctness does not depend on either.
   the titles are not stale, and no page is in flight. Renders that change
   nothing send nothing.
 - At most one next-page request is in flight. The end is reached when the
-  server reports no more, or when a page comes back short.
+  server reports no more, when a page comes back empty, or, without a total,
+  when a page comes back short. Offsets follow what the server sent, so a
+  page that repeats titles (the library changed) neither loops nor skips.
 - A next-page failure keeps everything loaded and offers Try again at the
   footer. The first page is never lost.
+- Try again sends nothing while a page is on its way. Refresh clears any
+  failure (first page or later page) because it supersedes it, so the two
+  never ask for different pages at once. A failed refresh of the query on
+  screen keeps its titles, as Library does.
 
 ## Jellyfin search API
 
@@ -254,9 +279,14 @@ Library's element ids are unchanged (`library-card`, `library-art`,
 
 Each card is the Library card: a poster, the title in one line, and
 `2019 · ★ 7.8`. Progress and the watched mark appear when the title has them.
-A search card does not show its type (movie, series, episode) yet; that
-distinction is the one "where ambiguity exists" the brief allows, and it is
-deferred until a real result shows the confusion.
+
+An episode reads as Home's episode cards do: its series as the title and
+`S2 E5 · Pilot` below (`home::card_title`, `home::card_detail`), so a search
+for "pilot" is not a wall of identical "Pilot" cards. Library holds only
+movies and series, so its cards are unchanged (pinned by
+`media_grid::tests::movies_and_series_read_as_library_always_has`). Movies
+and series still carry no type label; the series/episode line resolves the
+real ambiguity, and a label waits until a result shows the need.
 
 ## Artwork roles
 
@@ -277,6 +307,12 @@ serves all three. No access token is ever placed on an artwork URL.
   (`sync_artwork`). The decoded image stays in the shared 96 MiB LRU.
 - A query change does not flush the cache. Titles that stay wanted keep their
   slots; those that do not are dropped. No Search artwork cache exists.
+- While stale titles show, the grid keeps their window as usual; nothing else
+  drops and restarts their posters on each render.
+- Clearing the field releases every slot (no grid, no wants).
+- Posters decoded by this screen that the cache did not keep are released
+  from the atlas when they leave the window, and the rest when the screen is
+  dropped (sign-out, session end, window close).
 
 ## State restoration
 
@@ -301,7 +337,10 @@ same ticket rule.
   stable field and header, with "Searching…" in the header. No centered spinner.
 - New query over titles already shown: the old titles stay on screen, dimmed to
   half opacity, and "Searching…" appears in the header. They are replaced when
-  the first page arrives.
+  the first page arrives, and the grid starts at the top of the new results.
+  Until then they are inert: a layer over them takes the pointer (no hover,
+  no click; the wheel still scrolls), activation and logical-focus moves are
+  ignored, and Down from the field does not enter them.
 - Next page: existing titles stay; a small footer line with a spinner reads
   "Loading more results…".
 
@@ -316,7 +355,8 @@ Handled independently, through `SearchFailure` (`SignedOut`, `Unreachable`,
 `Unreadable`), each with fixed copy and no server text:
 
 - **First page failed**: the results area shows the failure and **Try again**
-  (`retry` re-asks the first page). Old titles are not shown under it.
+  (`retry` re-asks the first page; Enter in the field and Refresh do the
+  same). Old titles are not shown under it.
 - **Next page failed**: the loaded titles stay; the footer says "More results
   couldn't be loaded." with **Try again**. Page one is not lost.
 - **Artwork failed**: the card shows the placeholder; the shared loader reports
@@ -336,23 +376,39 @@ No second logout path exists.
 ## Keyboard and focus
 
 - Opening Search focuses the field. Typing goes straight in.
+- **Tab** reaches the field like any field (the owner's handle is a tab stop).
 - **Enter** in the field searches immediately.
 - **Down** in the field moves focus to the grid (the focused title, or the
-  first one).
-- **Up** on the grid's first row returns focus to the field.
+  first one) and records keyboard modality, so the card shows its ring.
+  Nothing happens without results, or while stale titles show.
+- **Up** on the grid's first row returns focus to the field. The grid binds
+  Up itself (`NudgeUp`), and GPUI runs bound actions before key listeners, so
+  a screen key listener can never see that Up; the grid reports it through
+  `VirtualGrid::on_edge` instead.
 - **Escape** on the field clears it when there is text, and goes to Home when
   it is empty.
 - Once the grid has focus, its own keys (arrows, Home, End, Page Up/Down,
   Enter to open, Space) belong to `VirtualGrid`. Arrow keys are never taken
   from the text field while it is focused.
-- Focus is restored after Details closes (`resume`).
+- Focus is restored after Details closes (`resume`): the grid, at the title
+  that was opened. Chosen from the bar (`show`), focus goes to the field.
+  Focus settles with `Window::defer`, once the frame that draws the target is
+  done.
 
-Atelier change: `TextField` and `SearchField` take an owner's `FocusHandle`
-(`focus_handle`), so the screen can put focus into the field and see when it
-has it. This is the generic "focus handoff" primitive; it has no search
-behavior. Tests: `an_owners_focus_handle_moves_focus_into_the_field` and
-`without_a_handle_the_field_keeps_its_own_focus` in
-`crates/atelier-ui/tests/text_field_behavior.rs`.
+Atelier changes, both generic, both with no search behavior:
+
+- `TextField::focus_handle` / `SearchField::focus_handle`: the owner holds
+  the field's focus, so it can move focus into the field and see when it has
+  it. The field makes the handle a tab stop, as its own handle is. Tests in
+  `crates/atelier-ui/tests/text_field_behavior.rs`, including
+  `an_owners_focus_handle_stays_in_the_tab_order`.
+- `VirtualGrid::on_edge(GridStep)`: a movement key that cannot move (Up on
+  the first row, Left at a row start) is reported; the grid keeps focus unless
+  the owner moves it. `on_focus` is no longer called for a step that did not
+  move. Test: `a_key_that_cannot_move_is_reported_as_an_edge` in
+  `crates/atelier-ui/tests/virtual_grid_behavior.rs`.
+
+The Gallery's Virtual Grid story has a "Focus handoff" example that uses both.
 
 ## Responsive layout
 
@@ -362,8 +418,12 @@ behavior. Tests: `an_owners_focus_handle_moves_focus_into_the_field` and
 
 ## Security and privacy
 
-- Search text is not logged. The search module has no logging of query text;
-  `search/load.rs` never formats the query.
+- Search text is not logged. The search module writes no log lines at all
+  (`scripts/check-architecture.sh` rule 20), and `search/load.rs` never
+  formats the query. The Jellyfin client's request log line keeps only the
+  scheme, host, port, and path, never the query string. A transport error's
+  technical detail can include the address; Search maps every error to a
+  fixed `SearchFailure` and drops that detail.
 - Query text does not go into error messages, telemetry, cache filenames, or
   review artifacts. There is no telemetry or analytics.
 - Failures are typed; Jellyfin's response bodies never reach the UI.
@@ -380,35 +440,70 @@ memory as Library holds them: the pages the person has scrolled to, at 60 per
 page, not the whole result. A 10,000-title query is reachable without loading
 10,000 titles.
 
-Measured by model tests (no GPUI, no network):
+Model tests (no GPUI, no network):
 
 | Results | What the test proves |
 |---|---|
+| 0, 1, 60, 61, 100, 120, 121 | Exactly the pages needed (`result_sizes_around_the_page_size_…`). |
 | 100 | At most two pages requested while scrolling the whole result. |
 | 1,000 | Pages requested equal `ceil(1000 / 60)` and track the window; never more than one in flight. |
 | 10,000 | Only one page is loaded for a short look; scrolling to the end loads every page, one at a time. |
 
-Rendered-cell bounds come from the grid's own window math
-(`VirtualGridState::frame`, tested in Atelier). Artwork-window bounds come
-from `artwork_window`, which Library's screen tests already cover and which
-Search shares unchanged.
+Rendered-screen tests (headless GPUI, `search/view_tests.rs`):
+
+| Results | What the test proves |
+|---|---|
+| 0, 1, 60, 61, 100, 1,000, 10,000 (all loaded) | Fewer than 60 cards built at 1200 × 760, at the top and at the very end; poster slots never exceed built cards (`built_cards_follow_the_window_not_the_result_count`). |
+| 10,000 (scrolled) | Forty jumps to the end ask forty pages, in order, never the same page twice; under 60 cards built throughout (`scrolling_ten_thousand_results_pages_one_at_a_time`). |
+
+## Verification
+
+Evidence is kept apart by kind; one never stands in for another.
+
+| Kind | Where | Covers |
+|---|---|---|
+| Pure model | `search/model_tests.rs` | Debounce tokens, Enter, tickets, stale answers, rapid replacement, clear, paging, duplicates, short/empty pages, failures, retry/refresh, session end, reconcile, error mapping. |
+| Jellyfin transport | `matinee-jellyfin` `api_tests.rs` | Path and user scope, `SearchTerm` encoding, fields, paging parameters, header-only token, totals, error classes. |
+| HTTP boundary | `search/load.rs` tests | The real client and transport against a loopback Jellyfin: request line and header, typed answers, 401/403/500/malformed/missing/unreachable, reconcile, an aborted page. |
+| Headless GPUI, screen | `search/view_tests.rs` | Focus on open, typing without a click, the debounce on the fake clock, Enter, editing keys in the field, Down/Up handoff, Escape, stale titles inert under a real click and Enter, clicks, resize, artwork window and the shared cache, every review scene at all four review sizes. |
+| Headless GPUI, shell | `view.rs` tests | Home → Search, Search → Home → Search, Search → Library → Search, Search → Details → Search, Search → Details → Player → Details → Search (one reconcile, no search), playback while hidden, session end, review scenes. |
+| Atelier | `text_field_behavior.rs`, `virtual_grid_behavior.rs` | The two generic hooks. |
+
+Not verified: pixels. GPUI's headless test window never asks for a frame
+and paints nothing. In the Linux container used for the 3F review, the app
+under Xvfb with lavapipe opened its window at the requested size, but every
+capture was solid black, for Library's merged scenes as well as Search's.
+Layout, opacity, and the focus ring are asserted through state, not seen; the
+scenes still need a look on a real display.
 
 ## Review scenes
 
-Not added in 3F. Review scenes need fixture answers wired through
-`SearchScreen`, which Library's fixture hooks would model. Listed in
-`docs/migration/roadmap.md` as the follow-up.
+`MATINEE_PREVIEW` accepts `search` (the populated result), `search-empty`,
+`search-short`, `search-typing` (results for "harbor" held, the field reading
+"harbor li", its wait not ended), `search-loading`, `search-many-results`
+(10,000 matches, five pages loaded, keyboard focus on index 251),
+`search-no-results`, `search-error`, `search-partial-page` (the third page
+failed), `search-stale` ("harbor" dimmed while "harbor lights" loads),
+`search-episodes` ("pilot": episodes of six series), `search-small-window`
+(960 × 620), and `search-large-window` (1920 × 1080). `MATINEE_PREVIEW_SIZE`
+gives any other size (1440x900, say). The fixture server answers any query,
+with titles that follow from its text; generated names, the abstract review
+artwork, no socket. In review scenes the app bar's Search opens this fixture
+Search.
 
 ## Known limitations
 
 - Loaded titles accumulate per query, as in Library. A very long scroll holds
   every page visited; this is bounded by how far the person scrolls, not by the
   result size.
-- Episode results show the series name in their metadata only where the
-  Jellyfin response includes it; the card does not yet say "Episode".
+- Episodes use their own Primary image (a still) in the poster frame, as
+  shipping does; the series poster is not substituted.
+- Movies and series carry no type label (see Result presentation).
 - People and Collections are not searched (see Deferred result types).
 - The Escape-to-Home rule is a product choice; there is no "previous root" memory.
-- Review scenes for Search are not yet added.
-- The artwork sync glue in `search/screen.rs` duplicates the one in
-  `library/screen.rs`. The shared part (the cache and the loader) is reused;
-  the per-screen bookkeeping is not yet unified.
+- Escape in the results grid does nothing Search-specific (it reaches the
+  shell's full-screen Escape); Up from the first row is the way back.
+- The artwork sync glue in `search/screen.rs` follows the per-screen pattern
+  Home, Details, and Library each have. The cache and the loader are shared;
+  unifying the bookkeeping is a cross-screen change, not a Search one.
+- No visual verification (see Verification).

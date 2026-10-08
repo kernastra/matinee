@@ -39,8 +39,8 @@ impl Method {
 ///
 /// [`CancelFlag::cancel`] is read once, before the transport builds the HTTP
 /// call. It does not interrupt a request already on the wire. Dropping the
-/// future from [`ReqwestTransport`] cancels that in-flight call. Search is
-/// the caller that passes this flag.
+/// future from [`ReqwestTransport`] cancels that in-flight call; native
+/// Search stops a superseded page that way, by aborting its runtime task.
 #[derive(Clone, Debug, Default)]
 pub struct CancelFlag {
     cancelled: Arc<AtomicBool>,

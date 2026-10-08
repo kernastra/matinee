@@ -15,7 +15,9 @@
 //!   cell, so focus survives its cell leaving the rendered window. Arrow
 //!   keys, Home, End, Page Up, and Page Down move it and scroll the least
 //!   amount that shows it. Enter and Space activate it. A click focuses the
-//!   grid, moves the logical focus to that cell, and activates it.
+//!   grid, moves the logical focus to that cell, and activates it. A key
+//!   that cannot move any further (Up on the first row) is reported to the
+//!   owner, which may hand focus to a control beside the grid.
 //! - **Resize** keeps the focused cell (or the first visible one) where it
 //!   was on screen when the column count changes.
 //! - **Owners** read the same arithmetic through
@@ -498,6 +500,7 @@ impl VirtualGridState {
 }
 
 type IndexHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+type EdgeHandler = Rc<dyn Fn(GridStep, &mut Window, &mut App)>;
 type CellRenderer = Box<dyn Fn(GridCell, &mut Window, &mut App) -> AnyElement>;
 
 /// A virtualized grid of fixed-size cells. See the module notes.
@@ -512,6 +515,7 @@ pub struct VirtualGrid {
     fallback: Option<(f32, f32)>,
     on_activate: Option<IndexHandler>,
     on_focus: Option<IndexHandler>,
+    on_edge: Option<EdgeHandler>,
 }
 
 impl VirtualGrid {
@@ -531,6 +535,7 @@ impl VirtualGrid {
             fallback: None,
             on_activate: None,
             on_focus: None,
+            on_edge: None,
         }
     }
 
@@ -561,6 +566,15 @@ impl VirtualGrid {
     /// The logical focus moved to another cell from the keyboard or a click.
     pub fn on_focus(mut self, handler: impl Fn(usize, &mut Window, &mut App) + 'static) -> Self {
         self.on_focus = Some(Rc::new(handler));
+        self
+    }
+
+    /// A movement key could not move the focus any further: Up on the first
+    /// row, Left at the start of a row, and so on. The grid keeps focus
+    /// unless the handler moves it, so an owner can hand focus to a control
+    /// above or beside the grid.
+    pub fn on_edge(mut self, handler: impl Fn(GridStep, &mut Window, &mut App) + 'static) -> Self {
+        self.on_edge = Some(Rc::new(handler));
         self
     }
 }
@@ -635,17 +649,35 @@ impl RenderOnce for VirtualGrid {
                 .child(element)
         });
 
-        let step_handler =
-            |step: GridStep, state: VirtualGridState, moved: Option<IndexHandler>| {
-                move |window: &mut Window, cx: &mut App| {
-                    if let Some(index) = state.step(step, window, cx)
-                        && let Some(moved) = &moved
-                    {
-                        moved(index, window, cx);
+        let step_handler = |step: GridStep,
+                            state: VirtualGridState,
+                            moved: Option<IndexHandler>,
+                            edge: Option<EdgeHandler>| {
+            move |window: &mut Window, cx: &mut App| {
+                let before = state.focused();
+                match state.step(step, window, cx) {
+                    Some(index) if Some(index) == before => {
+                        if let Some(edge) = &edge {
+                            edge(step, window, cx);
+                        }
                     }
+                    Some(index) => {
+                        if let Some(moved) = &moved {
+                            moved(index, window, cx);
+                        }
+                    }
+                    None => {}
                 }
-            };
-        let action = |step: GridStep| step_handler(step, state.clone(), self.on_focus.clone());
+            }
+        };
+        let action = |step: GridStep| {
+            step_handler(
+                step,
+                state.clone(),
+                self.on_focus.clone(),
+                self.on_edge.clone(),
+            )
+        };
         let left = action(GridStep::Left);
         let right = action(GridStep::Right);
         let up = action(GridStep::Up);

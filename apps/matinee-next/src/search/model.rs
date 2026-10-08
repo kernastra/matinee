@@ -235,7 +235,8 @@ impl SearchModel {
             && !self.items.is_empty()
     }
 
-    /// Whether a request is in flight, for the Refresh control.
+    /// Whether a page is in flight, for the Refresh control. When this is
+    /// false the screen has no page request worth keeping.
     pub(crate) fn is_loading(&self) -> bool {
         self.pending.is_some()
     }
@@ -274,6 +275,13 @@ impl SearchModel {
             // The query already asked for (held or in flight): nothing new to
             // send, and its request must not be cancelled.
             Some(query) if self.effective.as_ref() == Some(&query) => None,
+            // Back to the query whose titles are held (alien → aliens →
+            // alien): they are its results, so they show again at once,
+            // undimmed, and the request for the other query is abandoned.
+            Some(query) if self.shown.as_ref() == Some(&query) => {
+                self.resume_effective(query);
+                None
+            }
             Some(_) => Some(Debounce(self.debounce)),
         }
     }
@@ -294,17 +302,27 @@ impl SearchModel {
         self.request_input()
     }
 
-    /// Refresh: the first page of the query on screen again. Nothing is sent
-    /// without a query.
+    /// Refresh: the first page of the effective query again. Titles already
+    /// shown for it stay until the new first page replaces them. A failure
+    /// (first page or later page) is cleared: this request supersedes it, so
+    /// Try again and Refresh never ask for two different pages at once.
+    /// Nothing is sent without a query.
     pub(crate) fn refresh(&mut self) -> Vec<Request> {
         if self.effective.is_none() {
             return Vec::new();
         }
+        self.failure = None;
+        self.more_failed = None;
+        self.reconcile = None;
         vec![self.first_page()]
     }
 
     /// Try again after a failure: the first page, or the page that failed.
+    /// Nothing while a page is already on its way.
     pub(crate) fn retry(&mut self) -> Vec<Request> {
+        if self.pending.is_some() {
+            return Vec::new();
+        }
         if self.failure.is_some() {
             self.failure = None;
             return vec![self.first_page()];
@@ -403,6 +421,9 @@ impl SearchModel {
         self.pending = None;
         let first = page.start == 0;
         match result {
+            // A failed refresh of the query already shown keeps its titles,
+            // as Library does: they are still that query's results.
+            Err(_) if first && self.shown.as_ref() == Some(query) => Applied::Updated,
             Err(failure) if first => {
                 // The new query failed. Its titles are not shown, and the
                 // old ones must not stay under a failure for the new query.
@@ -461,9 +482,10 @@ impl SearchModel {
             return Vec::new();
         };
         if self.effective.as_ref() == Some(&query) {
-            // The same query. Only a first page that failed is asked again.
-            return if self.failure.is_some() && self.pending.is_none() {
-                vec![self.first_page()]
+            // The same query. Only a first page that failed is asked again,
+            // exactly as Try again would.
+            return if self.failure.is_some() {
+                self.retry()
             } else {
                 Vec::new()
             };
@@ -475,6 +497,9 @@ impl SearchModel {
         self.effective = Some(query);
         self.failure = None;
         self.more_failed = None;
+        // A new query starts at the top of its own results, even if the
+        // title focused under the old query is among them.
+        self.focused = None;
         vec![self.first_page()]
     }
 

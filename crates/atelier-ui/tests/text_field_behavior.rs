@@ -270,3 +270,35 @@ fn without_a_handle_the_field_keeps_its_own_focus(cx: &mut TestAppContext) {
         "xy"
     );
 }
+
+#[gpui::test]
+fn an_owners_focus_handle_stays_in_the_tab_order(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        install_component_keybindings(
+            cx,
+            &ComponentKeymap {
+                primary: "ctrl",
+                word: "ctrl",
+                emacs_line_keys: false,
+                character_palette: false,
+            },
+        );
+    });
+    // A plain owner handle is not a tab stop on its own.
+    let (view, window) = cx.add_window_view(|_, cx| Owned {
+        focus: Some(cx.focus_handle()),
+        value: SharedString::default(),
+    });
+    window.run_until_parked();
+    let handle = view.read_with(window, |owned, _| owned.focus.clone().expect("handle"));
+    focus(window);
+    assert!(
+        window.update(|window, _| handle.is_focused(window)),
+        "Tab reaches a field that uses its owner's handle"
+    );
+    type_chars(window, "go");
+    assert_eq!(
+        view.read_with(window, |owned, _| owned.value.to_string()),
+        "go"
+    );
+}

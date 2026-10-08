@@ -157,9 +157,9 @@ impl TextField {
     /// Take keyboard focus through `focus`, so the owner can move focus into
     /// the field (and out of it) with `Window::focus`. The handle must come
     /// from `cx.focus_handle()` in the owner's context. Without it, the field
-    /// keeps its own.
+    /// keeps its own. Either way the field is a tab stop while enabled.
     pub fn focus_handle(mut self, focus: FocusHandle) -> Self {
-        self.focus = Some(focus);
+        self.focus = Some(focus.tab_stop(true));
         self
     }
 

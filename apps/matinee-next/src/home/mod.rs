@@ -12,6 +12,7 @@ mod model;
 mod preview;
 mod screen;
 
+pub(crate) use model::{card_detail, card_title};
 pub(crate) use preview::HomePreview;
 #[cfg(test)]
 pub(crate) use screen::browse_target;

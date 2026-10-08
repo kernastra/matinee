@@ -8,9 +8,13 @@
 
 mod load;
 pub(crate) mod model;
+pub(crate) mod preview;
 mod screen;
 
 #[cfg(test)]
 mod model_tests;
+#[cfg(test)]
+mod view_tests;
 
+pub(crate) use preview::SearchPreview;
 pub(crate) use screen::{SearchEvent, SearchScreen};
