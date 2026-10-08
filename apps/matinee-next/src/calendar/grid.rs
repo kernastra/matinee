@@ -29,7 +29,6 @@ impl Window {
     }
 
     /// The first day shown: a Sunday, possibly in the previous month.
-    #[cfg(test)]
     pub(crate) fn start(self) -> NaiveDate {
         self.start
     }

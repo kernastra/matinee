@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use atelier_ui::gpui::{EventEmitter, Task};
 use atelier_ui::prelude::*;
-use chrono::{Local, NaiveDate, Utc};
+use chrono::{Days, Local, NaiveDate, Utc};
 use matinee_integrations::{IntegrationProvider, ReleaseKind};
 use tokio::task::JoinHandle;
 
@@ -89,6 +89,13 @@ pub(crate) struct CalendarScreen {
     /// Review scenes: one bundled cover stands in for every release.
     fixture_cover: Option<DecodedImage>,
     grid: VirtualGridState,
+    /// The release panel's scroll position.
+    panel_scroll: ScrollControl,
+    /// One focus handle per release row, so the panel can scroll to the row
+    /// the keyboard reaches.
+    row_focus: Vec<FocusHandle>,
+    /// The release row the panel last scrolled to.
+    revealed_row: Option<usize>,
     focus: FocusHandle,
     settle_focus: bool,
     signing_out: bool,
@@ -147,16 +154,20 @@ impl CalendarScreen {
             art_tasks: HashMap::new(),
             fixture_cover: None,
             grid: VirtualGridState::new(cx),
+            panel_scroll: ScrollControl::new(),
+            row_focus: Vec::new(),
+            revealed_row: None,
             focus: cx.focus_handle(),
             settle_focus: true,
             signing_out: false,
         }
     }
 
-    /// The root is shown. Reads each connection again, retries failed months,
-    /// and asks for the shown month if it is missing or out of date.
+    /// The root is shown. Reads each connection again, retries a failed
+    /// month once its retry interval has passed, and asks for the shown month
+    /// if it is missing or out of date.
     pub(crate) fn show(&mut self, cx: &mut Context<Self>) {
-        self.model.show();
+        self.model.show(Utc::now());
         self.settle_on_selected_day();
         self.drive(cx);
     }
@@ -167,10 +178,22 @@ impl CalendarScreen {
         self.focus_selected_day();
     }
 
+    /// The grid's focused cell.
+    #[cfg(test)]
+    pub(crate) fn focused_cell(&self) -> Option<usize> {
+        self.grid.focused()
+    }
+
     /// The grid's state, for the tests: its focused cell and its handle.
     #[cfg(test)]
     pub(super) fn grid_state(&self) -> VirtualGridState {
         self.grid.clone()
+    }
+
+    /// The release panel's scroll position, for the tests.
+    #[cfg(test)]
+    pub(super) fn panel_scroll(&self) -> &ScrollControl {
+        &self.panel_scroll
     }
 
     pub(super) fn set_fixture_cover(&mut self, cover: Option<DecodedImage>) {
@@ -192,10 +215,12 @@ impl CalendarScreen {
     }
 
     /// Bring the requests in line with the model. Stops the work the model no
-    /// longer waits on, and starts what it now needs. Call after every action
-    /// and every answer, never on render.
+    /// longer waits on, starts what it now needs, and keeps covers for the
+    /// selected day only. Call after every action and every answer, never on
+    /// render.
     pub(super) fn drive(&mut self, cx: &mut Context<Self>) {
         self.model.observe_now(Utc::now());
+        self.sync_artwork(cx);
         let Some(service) = self.service.clone() else {
             cx.notify();
             return;
@@ -222,10 +247,13 @@ impl CalendarScreen {
         let ticket = request.ticket();
         let (task, answer) = load::spawn(&self.runtime, service, request);
         let wait = cx.spawn(async move |this, cx| {
-            let Ok(response) = answer.await else {
-                return;
-            };
-            this.update(cx, |this, cx| this.answer(response, cx)).ok();
+            match answer.await {
+                Ok(response) => this.update(cx, |this, cx| this.answer(response, cx)),
+                // The task ended without replying. A wait the screen dropped
+                // never gets here, so this is a request that still counts.
+                Err(_) => this.update(cx, |this, cx| this.abandoned(ticket, cx)),
+            }
+            .ok();
         });
         self.loads.push(InFlight {
             ticket,
@@ -247,6 +275,18 @@ impl CalendarScreen {
         self.drive(cx);
     }
 
+    /// A request's task ended without an answer. The model stops waiting, so
+    /// the source is not left loading with Refresh disabled.
+    fn abandoned(&mut self, ticket: Ticket, cx: &mut Context<Self>) {
+        if let Some(load) = self.loads.iter_mut().find(|load| load.ticket == ticket)
+            && let Some(wait) = load.wait.take()
+        {
+            wait.detach();
+        }
+        self.model.abandon(ticket, Utc::now());
+        self.drive(cx);
+    }
+
     pub(super) fn step(&mut self, step: Step, cx: &mut Context<Self>) {
         match step {
             Step::Previous => self.model.previous_month(),
@@ -257,14 +297,50 @@ impl CalendarScreen {
         self.drive(cx);
     }
 
+    /// Select the grid's `index`th day. A day of another month shows that
+    /// month, and the grid's focus moves with the day to its new cell.
     pub(super) fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < GRID_DAYS as usize {
             self.model.select(self.model.window().day(index as u64));
+            self.focus_selected_day();
             self.drive(cx);
         }
     }
 
-    pub(super) fn set_filter(&mut self, filter: MediaFilter, cx: &mut Context<Self>) {
+    /// A movement key the grid could not follow inside its 42 days. Left and
+    /// Right go on to the day before or after, across the week. Past the
+    /// grid's first or last day, and Up or Down past its first or last week,
+    /// the day reached is selected and its month is shown, focused on it.
+    pub(super) fn edge(&mut self, step: GridStep, cx: &mut Context<Self>) {
+        let Some(index) = self.grid.focused() else {
+            return;
+        };
+        let window = self.model.window();
+        let from = window.day(index as u64);
+        let to = match step {
+            GridStep::Left => from.pred_opt(),
+            GridStep::Right => from.succ_opt(),
+            GridStep::Up => from.checked_sub_days(Days::new(7)),
+            GridStep::Down => from.checked_add_days(Days::new(7)),
+            _ => None,
+        };
+        let Some(to) = to else {
+            return;
+        };
+        match window.index_of(to) {
+            Some(target) => {
+                self.grid.focus_index(Some(target));
+                cx.notify();
+            }
+            None => {
+                self.model.select(to);
+                self.focus_selected_day();
+                self.drive(cx);
+            }
+        }
+    }
+
+    pub(crate) fn set_filter(&mut self, filter: MediaFilter, cx: &mut Context<Self>) {
         self.model.set_filter(filter);
         self.drive(cx);
     }
@@ -288,8 +364,19 @@ impl CalendarScreen {
         }
     }
 
-    /// Covers for the selected day's releases. Others are let go.
-    fn sync_artwork(&mut self, wanted: Vec<(IntegrationProvider, String)>, cx: &mut Context<Self>) {
+    /// Covers for the selected day's releases, as the filter shows them.
+    /// Others are let go: their loads stop and their images leave the atlas
+    /// unless the shared cache keeps them. Runs from [`Self::drive`], so
+    /// drawing never starts a download.
+    pub(super) fn sync_artwork(&mut self, cx: &mut Context<Self>) {
+        let mut wanted: Vec<(IntegrationProvider, String)> = Vec::new();
+        for event in self.model.day_events(self.model.selected()) {
+            if let Some(url) = &event.image_url
+                && !wanted.iter().any(|(_, known)| known == url)
+            {
+                wanted.push((event.source, url.clone()));
+            }
+        }
         let keys: HashSet<&str> = wanted.iter().map(|(_, url)| url.as_str()).collect();
         let loader = self.loader.clone();
         self.art.retain(|url, art| {
@@ -459,6 +546,37 @@ fn release_count_label(count: usize) -> String {
     format!("{count} scheduled {noun}")
 }
 
+/// What the panel says for a day with no releases. Nothing when the
+/// connection guidance is shown instead. A day is called empty only when
+/// every connected source answered its month; a source that failed is named,
+/// because its releases may be missing rather than absent.
+pub(super) fn empty_day_line<Z: chrono::TimeZone>(model: &CalendarModel<Z>) -> Option<String> {
+    if model.overview() == Overview::NothingConnected {
+        return None;
+    }
+    if model.settled() {
+        return Some("Nothing is scheduled for this day.".to_string());
+    }
+    let waiting = PROVIDERS.iter().any(|provider| {
+        matches!(
+            model.status(*provider),
+            SourceStatus::Loading | SourceStatus::Checking
+        )
+    });
+    if waiting {
+        return Some("Waiting for every connected source to answer this month.".to_string());
+    }
+    let failed: Vec<&str> = PROVIDERS
+        .iter()
+        .filter(|provider| matches!(model.status(**provider), SourceStatus::Failed(_)))
+        .map(|provider| source_name(*provider))
+        .collect();
+    Some(format!(
+        "Releases from {} could not be loaded for this month.",
+        failed.join(" and ")
+    ))
+}
+
 fn clock_label(at: chrono::DateTime<Utc>) -> String {
     at.with_timezone(&Local).format("%-I:%M %p").to_string()
 }
@@ -508,11 +626,23 @@ impl Render for CalendarScreen {
             .into_iter()
             .cloned()
             .collect();
-        let wanted: Vec<(IntegrationProvider, String)> = selected_events
+        while self.row_focus.len() < selected_events.len() {
+            // A tab stop, as a `Pressable`'s own handle is.
+            self.row_focus
+                .push(cx.focus_handle().tab_index(0).tab_stop(true));
+        }
+        let (panel, first_row) = self.panel(&theme, &selected_events, cx);
+        // Rows take focus from the keyboard only (a press does not focus
+        // them), so a newly focused row is one Tab reached: bring it into view.
+        let focused_row = self.row_focus[..selected_events.len()]
             .iter()
-            .filter_map(|event| Some((event.source, event.image_url.clone()?)))
-            .collect();
-        self.sync_artwork(wanted, cx);
+            .position(|handle| handle.is_focused(window));
+        if focused_row != self.revealed_row {
+            if let Some(row) = focused_row {
+                self.panel_scroll.reveal_child(first_row + row);
+            }
+            self.revealed_row = focused_row;
+        }
 
         v_stack(Space::S4)
             .size_full()
@@ -528,7 +658,7 @@ impl Render for CalendarScreen {
                     .flex_1()
                     .min_h(px(0.0))
                     .child(self.month(&theme, cx))
-                    .child(self.panel(&theme, &selected_events, cx)),
+                    .child(panel),
             )
     }
 }
@@ -684,9 +814,15 @@ impl CalendarScreen {
             move |cell, _, _| day_cell(&grid_theme, &cells[cell.index], cell.focused),
         )
         .sizing(grid_sizing())
-        .on_activate(move |index, _, cx| {
-            weak.update(cx, |this, cx| this.select_index(index, cx))
-                .ok();
+        .on_activate({
+            let weak = weak.clone();
+            move |index, _, cx| {
+                weak.update(cx, |this, cx| this.select_index(index, cx))
+                    .ok();
+            }
+        })
+        .on_edge(move |step, _, cx| {
+            weak.update(cx, |this, cx| this.edge(step, cx)).ok();
         });
 
         let mut weekdays = h_stack(Space::S1).w_full();
@@ -706,38 +842,37 @@ impl CalendarScreen {
             .into_any_element()
     }
 
-    /// The selected day's releases, and the one the person chose.
-    fn panel(&self, theme: &Theme, events: &[CalendarEvent], cx: &mut Context<Self>) -> AnyElement {
+    /// The selected day's releases, and the one the person chose. Each part
+    /// is a direct child of the panel's scroll view, so a row can be scrolled
+    /// into view by its position; the second value is the first row's.
+    fn panel(
+        &self,
+        theme: &Theme,
+        events: &[CalendarEvent],
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, usize) {
         let day = self.model.selected();
         let focused = self.model.focused_event().map(|event| event.id.clone());
-        let mut column = v_stack(Space::S3)
-            .w_full()
-            .child(Text::new(day_title(day)).role(TextRole::Subheading));
-
+        let mut parts: Vec<AnyElement> = vec![
+            Text::new(day_title(day))
+                .role(TextRole::Subheading)
+                .into_any_element(),
+        ];
         match self.model.overview() {
             Overview::Checking => {
-                column = column.child(note(theme, "Checking Radarr and Sonarr…"));
+                parts.push(note(theme, "Checking Radarr and Sonarr…").into_any_element());
             }
-            Overview::NothingConnected => {
-                column = column.child(Self::disconnected(cx));
-            }
+            Overview::NothingConnected => parts.push(Self::disconnected(cx)),
             Overview::Connected => {}
         }
-
+        let first_row = parts.len();
         if events.is_empty() {
-            let line = if self.model.overview() == Overview::NothingConnected {
-                None
-            } else if self.model.settled() {
-                Some("Nothing is scheduled for this day.")
-            } else {
-                Some("Waiting for every connected source to answer this month.")
-            };
-            if let Some(line) = line {
-                column = column.child(note(theme, line));
+            if let Some(line) = empty_day_line(&self.model) {
+                parts.push(note(theme, &line).into_any_element());
             }
         } else {
             for (index, event) in events.iter().enumerate() {
-                column = column.child(self.event_row(
+                parts.push(self.event_row(
                     theme,
                     index,
                     event,
@@ -750,21 +885,26 @@ impl CalendarScreen {
                 .find(|event| focused.as_deref() == Some(event.id.as_str()))
                 .or_else(|| events.first())
             {
-                column = column.child(Self::detail(event));
+                parts.push(Self::detail(event).into_any_element());
             }
         }
 
-        div()
+        let panel = div()
             .w(px(PANEL_WIDTH))
             .flex_none()
             .h_full()
             .min_h(px(0.0))
             .child(
                 ScrollView::vertical("calendar-panel-scroll")
+                    .control(self.panel_scroll.clone())
                     .size_full()
-                    .child(column),
+                    .flex()
+                    .flex_col()
+                    .gap(Space::S3.px())
+                    .children(parts),
             )
-            .into_any_element()
+            .into_any_element();
+        (panel, first_row)
     }
 
     fn disconnected(cx: &mut Context<Self>) -> AnyElement {
@@ -820,8 +960,12 @@ impl CalendarScreen {
             .clone()
             .unwrap_or_else(|| kind_label(event).to_string());
         let weak = cx.entity().downgrade();
-        Pressable::new(("calendar-release", index), event.title.clone())
-            .radius(Radius::Medium)
+        let row = Pressable::new(("calendar-release", index), event.title.clone());
+        let row = match self.row_focus.get(index) {
+            Some(handle) => row.focus_handle(handle.clone()),
+            None => row,
+        };
+        row.radius(Radius::Medium)
             .on_press(move |_, _, cx| {
                 weak.update(cx, |this, cx| this.focus_event(&id, cx)).ok();
             })

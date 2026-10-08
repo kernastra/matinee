@@ -31,6 +31,11 @@ pub(crate) const RETAINED_WINDOWS: usize = 4;
 /// is shown; its events stay on screen until the new answer replaces them.
 pub(crate) const FRESH_FOR: TimeDelta = TimeDelta::minutes(5);
 
+/// How long a failed month stays failed when Calendar is shown again. Moving
+/// between roots does not ask a failing server again within this time;
+/// Refresh, Try again, and choosing the month again still do.
+pub(crate) const RETRY_AFTER: TimeDelta = TimeDelta::seconds(30);
+
 /// Both sources, in the order the bar and the status line show them.
 pub(crate) const PROVIDERS: [IntegrationProvider; 2] =
     [IntegrationProvider::Radarr, IntegrationProvider::Sonarr];
@@ -180,12 +185,20 @@ struct Source {
     link_ticket: Option<Ticket>,
     /// The month request in flight, and the month it is for.
     fetch: Option<Fetch>,
-    /// The last failed month, cleared on refresh and on a new visit.
-    failure: Option<(Window, SourceFailure)>,
+    /// The last failed month. Cleared by refresh, by any answered month,
+    /// and by a visit once it is [`RETRY_AFTER`] old.
+    failure: Option<Failure>,
     /// Answered months, least recently used first.
     loaded: Vec<Loaded>,
     /// Events on the days of the loaded months.
     events: Vec<CalendarEvent>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Failure {
+    window: Window,
+    kind: SourceFailure,
+    at: DateTime<Utc>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -263,12 +276,20 @@ impl<Z: TimeZone> CalendarModel<Z> {
         self.today = now.with_timezone(&self.zone).date_naive();
     }
 
-    /// The calendar is shown again. Reads every connection, and clears
-    /// earlier failures so the shown month is asked for again.
-    pub(crate) fn show(&mut self) {
+    /// The calendar is shown again at `now`. Reads every connection again,
+    /// so one saved elsewhere shows up, and retries a failed month once its
+    /// failure is [`RETRY_AFTER`] old. A month still in flight is not asked
+    /// for twice, so going back and forth between roots starts nothing new.
+    pub(crate) fn show(&mut self, now: DateTime<Utc>) {
+        self.observe_now(now);
         self.recheck_links = true;
         for source in &mut self.sources {
-            source.failure = None;
+            if source
+                .failure
+                .is_some_and(|failure| now - failure.at >= RETRY_AFTER)
+            {
+                source.failure = None;
+            }
         }
     }
 
@@ -336,10 +357,10 @@ impl<Z: TimeZone> CalendarModel<Z> {
                 let window = self.window();
                 if source.fresh(window, self.clock) {
                     SourceStatus::Ready
-                } else if let Some((failed, failure)) = source.failure
-                    && failed == window
+                } else if let Some(failure) = source.failure
+                    && failure.window == window
                 {
-                    SourceStatus::Failed(failure)
+                    SourceStatus::Failed(failure.kind)
                 } else {
                     SourceStatus::Loading
                 }
@@ -494,7 +515,9 @@ impl<Z: TimeZone> CalendarModel<Z> {
             self.sources[index].touch(window);
             let source = &self.sources[index];
             let asked = source.fetch.is_some_and(|fetch| fetch.window == window);
-            let failed = source.failure.is_some_and(|(failed, _)| failed == window);
+            let failed = source
+                .failure
+                .is_some_and(|failure| failure.window == window);
             if asked || failed || source.fresh(window, self.clock) {
                 continue;
             }
@@ -584,11 +607,41 @@ impl<Z: TimeZone> CalendarModel<Z> {
                 source.link = Link::Disconnected;
                 disconnect(source);
             }
-            Err(failure) => {
-                self.sources[index].failure = Some((window, failure));
+            Err(kind) => {
+                self.sources[index].failure = Some(Failure { window, kind, at });
             }
         }
         Applied::Updated
+    }
+
+    /// The work for `ticket` ended without an answer: its task was stopped
+    /// or failed before it could reply. A source still waiting on it shows
+    /// the request as unavailable, so it is never left loading, and the
+    /// usual retries apply. Nothing changes for a ticket no longer waited on.
+    pub(crate) fn abandon(&mut self, ticket: Ticket, now: DateTime<Utc>) -> Applied {
+        self.observe_now(now);
+        for source in &mut self.sources {
+            if source.link_ticket == Some(ticket) {
+                source.link_ticket = None;
+                // A known connection stays known; only a first check fails.
+                if source.link == Link::Checking {
+                    source.link = Link::Failed(SourceFailure::Unavailable);
+                }
+                return Applied::Updated;
+            }
+            if let Some(fetch) = source.fetch
+                && fetch.ticket == ticket
+            {
+                source.fetch = None;
+                source.failure = Some(Failure {
+                    window: fetch.window,
+                    kind: SourceFailure::Unavailable,
+                    at: now,
+                });
+                return Applied::Updated;
+            }
+        }
+        Applied::Ignored
     }
 
     /// Keep the most recent months, never the shown one, and drop events no

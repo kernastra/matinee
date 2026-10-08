@@ -1870,10 +1870,18 @@ mod tests {
         root.read_with(cx, |root, _| {
             assert_eq!(root.root, RootDestination::Calendar)
         });
-        // A month moved and a day chosen, then the calendar is left.
-        calendar.update(cx, |calendar, _| calendar.model.next_month());
+        // A month moved, a day chosen, and a filter set; then it is left.
+        calendar.update(cx, |calendar, cx| {
+            calendar.model.next_month();
+            calendar.set_filter(crate::calendar::MediaFilter::Series, cx);
+        });
         let kept = calendar.read_with(cx, |calendar, _| {
-            (calendar.model.month(), calendar.model.selected())
+            (
+                calendar.model.month(),
+                calendar.model.selected(),
+                calendar.model.filter(),
+                calendar.model.grid_events().len(),
+            )
         });
         go(&root, RootDestination::Home, cx);
         root.read_with(cx, |root, _| assert_eq!(root.root, RootDestination::Home));
@@ -1883,11 +1891,23 @@ mod tests {
         assert_eq!(calendar_of(&root, cx), calendar, "the same Calendar");
         assert_eq!(
             calendar.read_with(cx, |calendar, _| {
-                (calendar.model.month(), calendar.model.selected())
+                (
+                    calendar.model.month(),
+                    calendar.model.selected(),
+                    calendar.model.filter(),
+                    calendar.model.grid_events().len(),
+                )
             }),
             kept,
-            "the month and the day are where the person left them"
+            "the month, day, filter, and releases are where the person left them"
         );
+        let (focused, selected) = calendar.read_with(cx, |calendar, _| {
+            (
+                calendar.focused_cell(),
+                calendar.model.window().index_of(calendar.model.selected()),
+            )
+        });
+        assert_eq!(focused, selected, "the keyboard is back on the chosen day");
         root.read_with(cx, |root, _| {
             assert_eq!(root.root, RootDestination::Calendar)
         });
@@ -1903,6 +1923,26 @@ mod tests {
             assert!(root.pages.is_empty(), "no page above Calendar");
             assert_eq!(root.root.root(), Root::Calendar);
         });
+    }
+
+    #[gpui::test]
+    fn a_jellyfin_session_ending_while_calendar_shows_drops_it_like_every_root(
+        cx: &mut TestAppContext,
+    ) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Calendar, cx);
+        let weak = calendar_of(&root, cx).downgrade();
+        // Calendar has no session-expired report of its own: a Radarr or
+        // Sonarr refusal is a source failure. Another root reports it.
+        let home = home_of(&root, cx);
+        home.update(cx, |_, cx| cx.emit(HomeEvent::SessionExpired));
+        cx.run_until_parked();
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login());
+            assert!(root.calendar.is_none());
+            assert_eq!(root.model.notice(), Some(crate::model::SESSION_ENDED));
+        });
+        assert!(weak.upgrade().is_none(), "the Calendar was released");
     }
 
     #[gpui::test]

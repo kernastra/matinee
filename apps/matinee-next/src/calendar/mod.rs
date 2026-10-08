@@ -18,6 +18,8 @@ mod screen;
 #[cfg(test)]
 mod model_tests;
 
+#[cfg(test)]
+pub(crate) use event::MediaFilter;
 pub(crate) use load::CalendarService;
 pub(crate) use preview::CalendarPreview;
 pub(crate) use screen::{CalendarScreen, CalendarScreenEvent};

@@ -1,7 +1,10 @@
 //! The calendar model, with no GPUI and no HTTP. Every instant and offset is
 //! explicit, so each rule is checked for the zone and day it names.
 
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, TimeDelta, Utc};
+use chrono::{
+    DateTime, Datelike, Days, FixedOffset, MappedLocalTime, NaiveDate, NaiveDateTime, TimeDelta,
+    TimeZone, Utc,
+};
 use matinee_integrations::{
     IntegrationProvider, ReleaseKind, ReleaseMilestone, ReleaseTiming, UpcomingRelease,
 };
@@ -9,8 +12,8 @@ use matinee_integrations::{
 use super::event::MediaFilter;
 use super::grid::Window;
 use super::model::{
-    Applied, CalendarModel, FRESH_FOR, Link, Overview, RETAINED_WINDOWS, Request, Response,
-    SourceFailure, SourceStatus,
+    Applied, CalendarModel, FRESH_FOR, Link, Overview, RETAINED_WINDOWS, RETRY_AFTER, Request,
+    Response, SourceFailure, SourceStatus,
 };
 
 const RADARR: IntegrationProvider = IntegrationProvider::Radarr;
@@ -122,7 +125,7 @@ fn link_for(requests: &[Request], provider: IntegrationProvider) -> Option<super
 }
 
 /// Connect both sources and answer their connection checks.
-fn connect_both(model: &mut CalendarModel<FixedOffset>) -> Vec<Request> {
+fn connect_both<Z: TimeZone>(model: &mut CalendarModel<Z>) -> Vec<Request> {
     let requests = model.plan();
     for provider in [RADARR, SONARR] {
         let ticket = link_for(&requests, provider).expect("a link check");
@@ -138,8 +141,8 @@ fn connect_both(model: &mut CalendarModel<FixedOffset>) -> Vec<Request> {
     model.plan()
 }
 
-fn answer(
-    model: &mut CalendarModel<FixedOffset>,
+fn answer<Z: TimeZone>(
+    model: &mut CalendarModel<Z>,
     ticket: super::model::Ticket,
     provider: IntegrationProvider,
     releases: Vec<UpcomingRelease>,
@@ -334,8 +337,7 @@ fn a_month_older_than_the_freshness_window_is_asked_for_again_without_losing_its
     );
     answer(&mut model, sonarr, SONARR, Vec::new());
 
-    model.observe_now(now() + FRESH_FOR + TimeDelta::seconds(1));
-    model.show();
+    model.show(now() + FRESH_FOR + TimeDelta::seconds(1));
     let requests = model.plan();
     let (ticket, _) = releases_for(&requests, RADARR).expect("refetch once stale");
     assert_eq!(model.status(RADARR), SourceStatus::Loading);
@@ -500,7 +502,7 @@ fn refresh_is_the_retry_for_a_failed_month() {
 }
 
 #[test]
-fn a_new_visit_clears_an_old_failure_and_asks_again() {
+fn a_visit_once_the_retry_interval_has_passed_asks_for_a_failed_month_again() {
     let mut model = model();
     let requests = connect_both(&mut model);
     let (ticket, _) = releases_for(&requests, SONARR).unwrap();
@@ -510,7 +512,7 @@ fn a_new_visit_clears_an_old_failure_and_asks_again() {
         at: now(),
         result: Err(SourceFailure::Malformed),
     });
-    model.show();
+    model.show(now() + RETRY_AFTER);
     let again = model.plan();
     assert!(releases_for(&again, SONARR).is_some());
 }
@@ -993,7 +995,7 @@ fn losing_a_connection_removes_that_source_and_nothing_else() {
         vec![episode(22, "Night Shift", "2026-08-11T01:00:00Z")],
     );
 
-    model.show();
+    model.show(now());
     let checks = model.plan();
     let check = link_for(&checks, SONARR).unwrap();
     model.apply(Response::Link {
@@ -1026,7 +1028,7 @@ fn a_connection_added_later_is_asked_for_on_the_next_visit() {
     assert_eq!(model.status(SONARR), SourceStatus::Unlinked);
     assert_eq!(model.overview(), Overview::Connected);
 
-    model.show();
+    model.show(now());
     let checks = model.plan();
     let sonarr_check = link_for(&checks, SONARR).expect("rechecked on show");
     model.apply(Response::Link {
@@ -1050,7 +1052,7 @@ fn a_connection_that_cannot_be_read_keeps_the_events_it_had() {
         vec![movie(1, "Film", ReleaseKind::Theatrical, "2026-08-12")],
     );
 
-    model.show();
+    model.show(now());
     let checks = model.plan();
     let check = link_for(&checks, RADARR).unwrap();
     model.apply(Response::Link {
@@ -1295,4 +1297,286 @@ fn a_busy_calendar_reports_it_is_busy_until_its_answers_arrive() {
         answer(&mut model, ticket, provider, Vec::new());
     }
     assert!(!model.busy());
+}
+
+// Returning to Calendar.
+
+/// Answer every connection check in `requests` as connected.
+fn answer_links(model: &mut CalendarModel<FixedOffset>, requests: &[Request]) {
+    for provider in [RADARR, SONARR] {
+        if let Some(ticket) = link_for(requests, provider) {
+            model.apply(Response::Link {
+                ticket,
+                provider,
+                result: Ok(true),
+            });
+        }
+    }
+}
+
+#[test]
+fn coming_back_right_after_a_failure_does_not_retry_it_but_a_later_visit_does() {
+    let mut model = model();
+    let requests = connect_both(&mut model);
+    let (ticket, _) = releases_for(&requests, SONARR).unwrap();
+    model.apply(Response::Releases {
+        ticket,
+        provider: SONARR,
+        at: now(),
+        result: Err(SourceFailure::Unavailable),
+    });
+    // Calendar, Home, Calendar, and again, a few seconds apart.
+    for second in 1..=5 {
+        model.show(now() + TimeDelta::seconds(second));
+        let requests = model.plan();
+        assert!(
+            releases_for(&requests, SONARR).is_none(),
+            "visit {second} asked the failing server again"
+        );
+        answer_links(&mut model, &requests);
+        assert_eq!(
+            model.status(SONARR),
+            SourceStatus::Failed(SourceFailure::Unavailable)
+        );
+    }
+    // A visit a minute later is a deliberate retry.
+    model.show(now() + TimeDelta::minutes(1));
+    let requests = model.plan();
+    assert!(releases_for(&requests, SONARR).is_some(), "retried");
+    assert!(
+        releases_for(&requests, RADARR).is_none(),
+        "Radarr's first request is still in flight, so it is not repeated"
+    );
+}
+
+#[test]
+fn coming_back_while_the_month_is_loading_asks_for_nothing_more() {
+    let mut model = model();
+    let requests = connect_both(&mut model);
+    assert!(releases_for(&requests, RADARR).is_some());
+    assert!(releases_for(&requests, SONARR).is_some());
+    for second in 1..=5 {
+        model.show(now() + TimeDelta::seconds(second));
+        let requests = model.plan();
+        assert!(
+            requests
+                .iter()
+                .all(|request| matches!(request, Request::Link { .. })),
+            "visit {second} started another month request: {requests:?}"
+        );
+        answer_links(&mut model, &requests);
+    }
+    assert!(
+        model.busy(),
+        "the first requests are still the ones in flight"
+    );
+}
+
+#[test]
+fn a_month_request_that_ends_without_an_answer_never_leaves_its_source_loading() {
+    let mut model = model();
+    let requests = connect_both(&mut model);
+    let (ticket, _) = releases_for(&requests, SONARR).unwrap();
+    assert_eq!(model.abandon(ticket, now()), Applied::Updated);
+    assert!(!model.waiting_on(ticket));
+    assert_eq!(
+        model.status(SONARR),
+        SourceStatus::Failed(SourceFailure::Unavailable),
+        "shown as a failure, so Try again appears"
+    );
+    assert!(model.plan().is_empty(), "and not asked for in a loop");
+    assert_eq!(
+        model.abandon(ticket, now()),
+        Applied::Ignored,
+        "a ticket no longer waited on changes nothing"
+    );
+    model.refresh();
+    assert!(
+        releases_for(&model.plan(), SONARR).is_some(),
+        "Refresh retries"
+    );
+}
+
+#[test]
+fn a_connection_check_that_ends_without_an_answer_fails_only_a_first_check() {
+    let mut model = model();
+    let first = model.plan();
+    let ticket = link_for(&first, RADARR).unwrap();
+    model.abandon(ticket, now());
+    assert_eq!(
+        model.link(RADARR),
+        Link::Failed(SourceFailure::Unavailable),
+        "never read, so not left checking"
+    );
+
+    let mut model = super::model_tests::model();
+    connect_both(&mut model);
+    model.show(now());
+    let recheck = link_for(&model.plan(), RADARR).unwrap();
+    model.abandon(recheck, now());
+    assert_eq!(
+        model.link(RADARR),
+        Link::Connected,
+        "a known connection is kept when its recheck is lost"
+    );
+}
+
+// Zones, the fetch padding, and daylight saving.
+
+/// Every offset in use, from UTC-12 to UTC+14, in quarter hours.
+fn every_offset() -> impl Iterator<Item = FixedOffset> {
+    (-12 * 4..=14 * 4).map(|quarters| FixedOffset::east_opt(quarters * 15 * 60).expect("offset"))
+}
+
+/// The UTC instant of `day`'s local midnight in `zone`.
+pub(super) fn local_midnight<Z: TimeZone>(zone: &Z, day: NaiveDate) -> DateTime<Utc> {
+    zone.from_local_datetime(&day.and_hms_opt(0, 0, 0).expect("midnight"))
+        .earliest()
+        .expect("a local midnight")
+        .with_timezone(&Utc)
+}
+
+#[test]
+fn the_fetch_range_holds_every_local_moment_of_every_grid_day_in_every_zone() {
+    for year in 2024..=2030 {
+        for month in 1..=12 {
+            let window = Window::for_month(NaiveDate::from_ymd_opt(year, month, 1).unwrap());
+            let (from, to) = window.fetch_range();
+            let after_last = window.last().checked_add_days(Days::new(1)).unwrap();
+            for zone in every_offset() {
+                let first = local_midnight(&zone, window.start());
+                let end = local_midnight(&zone, after_last);
+                assert!(from <= first, "{year}-{month} at {zone}: {from} > {first}");
+                assert!(end <= to, "{year}-{month} at {zone}: {end} > {to}");
+            }
+        }
+    }
+}
+
+/// US Eastern time for 2026 only: UTC-5, and UTC-4 from 07:00 UTC on 8 March
+/// to 06:00 UTC on 1 November. A real zone with real transitions, without a
+/// time zone database.
+#[derive(Clone, Copy, Debug)]
+struct Eastern2026;
+
+impl Eastern2026 {
+    fn at(utc: &NaiveDateTime) -> FixedOffset {
+        let spring = day("2026-03-08").and_hms_opt(7, 0, 0).unwrap();
+        let fall = day("2026-11-01").and_hms_opt(6, 0, 0).unwrap();
+        let hours = if *utc >= spring && *utc < fall {
+            -4
+        } else {
+            -5
+        };
+        FixedOffset::east_opt(hours * 3600).unwrap()
+    }
+}
+
+impl TimeZone for Eastern2026 {
+    type Offset = FixedOffset;
+
+    fn from_offset(_: &FixedOffset) -> Self {
+        Self
+    }
+
+    fn offset_from_local_date(&self, local: &NaiveDate) -> MappedLocalTime<FixedOffset> {
+        self.offset_from_local_datetime(&local.and_hms_opt(0, 0, 0).unwrap())
+    }
+
+    fn offset_from_local_datetime(&self, local: &NaiveDateTime) -> MappedLocalTime<FixedOffset> {
+        let fits: Vec<FixedOffset> = [-5, -4]
+            .into_iter()
+            .map(|hours| FixedOffset::east_opt(hours * 3600).unwrap())
+            .filter(|offset| {
+                Self::at(&(*local - TimeDelta::seconds(offset.local_minus_utc().into()))) == *offset
+            })
+            .collect();
+        match fits[..] {
+            [only] => MappedLocalTime::Single(only),
+            [early, late] => MappedLocalTime::Ambiguous(early, late),
+            _ => MappedLocalTime::None,
+        }
+    }
+
+    fn offset_from_utc_date(&self, utc: &NaiveDate) -> FixedOffset {
+        Self::at(&utc.and_hms_opt(0, 0, 0).unwrap())
+    }
+
+    fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> FixedOffset {
+        Self::at(utc)
+    }
+}
+
+#[test]
+fn daylight_saving_places_each_air_time_by_the_offset_in_force_then() {
+    // Spring forward. Today turns at each local midnight, on either side.
+    let mut model = CalendarModel::new(Eastern2026, at("2026-03-08T04:59:00Z"));
+    assert_eq!(model.today(), day("2026-03-07"), "23:59 EST");
+    model.observe_now(at("2026-03-08T05:00:00Z"));
+    assert_eq!(model.today(), day("2026-03-08"), "midnight EST");
+    model.observe_now(at("2026-03-09T03:59:00Z"));
+    assert_eq!(model.today(), day("2026-03-08"), "23:59 EDT");
+    model.observe_now(at("2026-03-09T04:00:00Z"));
+    assert_eq!(model.today(), day("2026-03-09"), "midnight EDT");
+
+    let requests = connect_both(&mut model);
+    let (sonarr, _) = releases_for(&requests, SONARR).unwrap();
+    let (radarr, _) = releases_for(&requests, RADARR).unwrap();
+    answer(
+        &mut model,
+        sonarr,
+        SONARR,
+        vec![
+            // 23:30 EST on the 7th. A fixed EDT offset would say the 8th.
+            episode(1, "Before", "2026-03-08T04:30:00Z"),
+            // 00:30 EDT on the 9th. A fixed EST offset would say the 8th.
+            episode(2, "After", "2026-03-09T04:30:00Z"),
+        ],
+    );
+    answer(
+        &mut model,
+        radarr,
+        RADARR,
+        vec![movie(3, "Spring", ReleaseKind::Digital, "2026-03-08")],
+    );
+    assert_eq!(ids(&model.day_events(day("2026-03-07"))), vec!["sonarr-1"]);
+    assert_eq!(
+        ids(&model.day_events(day("2026-03-08"))),
+        vec!["radarr-3-digital"],
+        "the short day keeps its civil release and nothing else"
+    );
+    assert_eq!(ids(&model.day_events(day("2026-03-09"))), vec!["sonarr-2"]);
+
+    // Fall back. November's grid starts on Sunday the 1st.
+    let mut model = CalendarModel::new(Eastern2026, at("2026-11-15T17:00:00Z"));
+    let requests = connect_both(&mut model);
+    let (sonarr, window) = releases_for(&requests, SONARR).unwrap();
+    assert_eq!(window.start(), day("2026-11-01"));
+    answer(
+        &mut model,
+        sonarr,
+        SONARR,
+        vec![
+            // 23:30 EDT on 31 October: before this grid, so not on it.
+            episode(1, "Halloween", "2026-11-01T03:30:00Z"),
+            // 01:30 on the 1st, the hour that happens twice: EDT, then EST.
+            episode(2, "Once", "2026-11-01T05:30:00Z"),
+            episode(3, "Twice", "2026-11-01T06:30:00Z"),
+            // 23:30 EST on the 1st. A fixed EDT offset would say the 2nd.
+            episode(4, "Late", "2026-11-02T04:30:00Z"),
+        ],
+    );
+    assert!(
+        model
+            .grid_events()
+            .iter()
+            .all(|event| event.id != "sonarr-1"),
+        "an air time on the day before the grid is not drawn on it"
+    );
+    assert_eq!(
+        ids(&model.day_events(day("2026-11-01"))),
+        vec!["sonarr-2", "sonarr-3", "sonarr-4"],
+        "in air-time order through the repeated hour"
+    );
+    assert!(model.day_events(day("2026-11-02")).is_empty());
 }

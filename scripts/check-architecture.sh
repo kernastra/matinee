@@ -271,8 +271,9 @@ if matches=$(grep -RIn '\bfetch_image(' apps/matinee-next/src --include='*.rs' \
 fi
 
 # 23. Calendar never opens Details. Its releases have no Jellyfin item, and
-#     an identity is not inferred across services.
-if matches=$(grep -RInE 'DetailsScreen::|open_details\(|PlayerScreen::|ItemId::' apps/matinee-next/src/calendar --include='*.rs'); then
+#     an identity is not inferred across services: no Jellyfin client, item
+#     id, or Details/Player route is reachable from calendar/.
+if matches=$(grep -RInE 'DetailsScreen|open_details\(|PlayerScreen|ItemId|matinee_jellyfin|JellyfinClient' apps/matinee-next/src/calendar --include='*.rs'); then
   fail "Calendar must not open Details or the Player, or build Jellyfin identities:"
   echo "$matches" >&2
 fi

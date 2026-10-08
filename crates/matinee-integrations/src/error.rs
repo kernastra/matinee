@@ -44,7 +44,9 @@ pub enum IntegrationError {
     },
     IncompleteKey,
     InvalidWindow,
-    /// An artwork address that is not http or https, or an oversized body.
+    /// An artwork address Matinee does not load (not http or https, with a
+    /// user or password, or on a local or private host), or a body over the
+    /// artwork limit.
     InvalidImage {
         provider: IntegrationProvider,
     },

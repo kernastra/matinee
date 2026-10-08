@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::net::Ipv4Addr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
@@ -17,7 +18,7 @@ use futures::FutureExt;
 use futures::future::Shared;
 use serde::Deserialize;
 use serde_json::Value;
-use url::Url;
+use url::{Host, Url};
 use zeroize::Zeroize;
 
 use matinee_secrets::{CredentialKey, CredentialNamespace, CredentialStore, Secret};
@@ -231,10 +232,17 @@ where
 
     /// Bytes of one artwork address that a calendar response named.
     ///
-    /// Only http and https addresses are fetched, and no credential is sent:
-    /// the image host is a public cover host, not the Radarr or Sonarr server.
-    /// Redirects are not followed (the shared transport does not follow them).
-    /// A body over 16 MiB is refused after it arrives.
+    /// The address comes from the server's JSON, so it is checked before any
+    /// request: http or https, no user or password, and a public host. A
+    /// name such as `localhost` and an address on this machine, a private
+    /// network, or a link-local range are refused, so a server cannot point
+    /// Matinee at local services. No credential is sent: the image host is a
+    /// public cover host, not the Radarr or Sonarr server. Redirects are not
+    /// followed (the shared transport does not follow them), and a 3xx is
+    /// [`IntegrationError::ImageUnavailable`]. A body over 16 MiB is refused
+    /// from its announced length or as it streams, before it is held.
+    ///
+    /// A public name that resolves to a private address is not detected.
     pub async fn fetch_image(
         &self,
         provider: IntegrationProvider,
@@ -242,9 +250,9 @@ where
     ) -> Result<Vec<u8>, IntegrationError> {
         let parsed = Url::parse(url).map_err(|_| IntegrationError::InvalidImage { provider })?;
         if !matches!(parsed.scheme(), "http" | "https")
-            || parsed.host_str().is_none()
             || !parsed.username().is_empty()
             || parsed.password().is_some()
+            || !public_host(&parsed)
         {
             return Err(IntegrationError::InvalidImage { provider });
         }
@@ -252,18 +260,26 @@ where
             .transport
             .send(IntegrationRequest {
                 method: "GET",
-                url: url.to_string(),
+                url: parsed.into(),
                 headers: Vec::new(),
                 query: Vec::new(),
+                max_body: Some(MAX_IMAGE_BYTES),
             })
             .await
-            .map_err(|error| IntegrationError::unreachable(provider, error.detail))?;
+            .map_err(|error| {
+                if error.is_body_too_large() {
+                    IntegrationError::InvalidImage { provider }
+                } else {
+                    IntegrationError::unreachable(provider, error.detail)
+                }
+            })?;
         if !(200..300).contains(&response.status) {
             return Err(IntegrationError::ImageUnavailable {
                 provider,
                 status: response.status,
             });
         }
+        // The transport enforces the cap; a test transport may not.
         if response.body.len() > MAX_IMAGE_BYTES {
             return Err(IntegrationError::InvalidImage { provider });
         }
@@ -502,9 +518,48 @@ async fn send<T: Transport>(
             url,
             headers: vec![("X-Api-Key".to_string(), api_key.to_string())],
             query,
+            max_body: None,
         })
         .await
         .map_err(|error| IntegrationError::unreachable(provider, error.detail))
+}
+
+/// Whether an artwork address names a host on the public internet, as far
+/// as the address itself says. Names are not resolved here.
+fn public_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            !name.is_empty() && name != "localhost" && !name.ends_with(".localhost")
+        }
+        Some(Host::Ipv4(address)) => public_v4(address),
+        Some(Host::Ipv6(address)) => match address.to_ipv4_mapped() {
+            Some(mapped) => public_v4(mapped),
+            None => {
+                !(address.is_loopback()
+                    || address.is_unspecified()
+                    || address.is_multicast()
+                    || address.is_unique_local()
+                    || address.is_unicast_link_local())
+            }
+        },
+        None => false,
+    }
+}
+
+fn public_v4(address: Ipv4Addr) -> bool {
+    let [first, second, ..] = address.octets();
+    let shared = first == 100 && (64..128).contains(&second);
+    !(address.is_private()
+        || address.is_loopback()
+        || address.is_link_local()
+        || address.is_unspecified()
+        || address.is_broadcast()
+        || address.is_multicast()
+        || address.is_documentation()
+        || shared
+        || first == 0
+        || first >= 240)
 }
 
 fn decode_json(

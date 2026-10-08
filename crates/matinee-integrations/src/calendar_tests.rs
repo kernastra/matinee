@@ -125,6 +125,10 @@ fn radarr_calendar_sends_the_range_unchanged_and_the_key_only_in_a_header() {
         !format!("{request:?}").contains(RADARR_KEY),
         "debug is redacted"
     );
+    assert_eq!(
+        request.max_body, None,
+        "a calendar body is read as the shipping app has always read it"
+    );
 }
 
 #[test]
@@ -469,6 +473,11 @@ fn artwork_is_fetched_over_http_or_https_only_and_never_with_a_key() {
     assert!(images[0].headers.is_empty(), "no X-Api-Key to a cover host");
     assert!(images[0].query.is_empty());
     assert!(!format!("{:?}", images[0]).contains(RADARR_KEY));
+    assert_eq!(
+        images[0].max_body,
+        Some(16 * 1024 * 1024),
+        "the transport caps a cover's body while it streams"
+    );
 }
 
 /// Fetch one artwork address through a transport that answers `answer`.
@@ -500,6 +509,12 @@ fn artwork_failures_are_typed_by_their_cause() {
     .expect_err("timeout");
     assert!(matches!(timed_out, IntegrationError::Unreachable { .. }));
 
+    let refused = image_with(|| Err(TransportError::body_too_large())).expect_err("refused");
+    assert!(
+        matches!(refused, IntegrationError::InvalidImage { .. }),
+        "a body the transport refused for its size is an invalid image, not an outage"
+    );
+
     let oversized = image_with(|| {
         Ok(IntegrationResponse {
             status: 200,
@@ -517,4 +532,70 @@ fn artwork_failures_are_typed_by_their_cause() {
     })
     .expect("the limit itself is accepted");
     assert_eq!(at_the_limit.len(), 16 * 1024 * 1024);
+}
+
+#[test]
+fn artwork_is_never_fetched_from_this_machine_or_a_private_network() {
+    // Cover addresses come from the server's JSON. A hostile or confused
+    // server must not turn Matinee into a client for local services.
+    let image_log: Log = Arc::default();
+    let sink = Arc::clone(&image_log);
+    let integrations = Integrations::new(
+        MemoryStore::new(),
+        Script::new(move |request| {
+            sink.lock().unwrap().push(request.clone());
+            Ok(IntegrationResponse {
+                status: 200,
+                body: vec![1, 2, 3],
+            })
+        }),
+    );
+    for address in [
+        "http://localhost/poster.jpg",
+        "http://LOCALHOST./poster.jpg",
+        "http://images.localhost/poster.jpg",
+        "http://127.0.0.1:7878/MediaCover/1/poster.jpg",
+        "http://127.1.2.3/poster.jpg",
+        "http://10.0.0.5/poster.jpg",
+        "http://172.16.4.4/poster.jpg",
+        "http://192.168.1.20:7878/poster.jpg",
+        "http://169.254.169.254/latest/meta-data",
+        "http://100.100.100.100/poster.jpg",
+        "http://0.0.0.0/poster.jpg",
+        "http://255.255.255.255/poster.jpg",
+        "http://224.0.0.1/poster.jpg",
+        "http://[::1]/poster.jpg",
+        "http://[::]/poster.jpg",
+        "http://[fe80::1]/poster.jpg",
+        "http://[fd00::1]/poster.jpg",
+        "http://[::ffff:127.0.0.1]/poster.jpg",
+        "http://[::ffff:192.168.1.1]/poster.jpg",
+        "http://2130706433/poster.jpg",
+        "http://0x7f000001/poster.jpg",
+    ] {
+        let error = block_on(integrations.fetch_image(IntegrationProvider::Radarr, address))
+            .expect_err(address);
+        assert!(
+            matches!(error, IntegrationError::InvalidImage { .. }),
+            "{address}: {error:?}"
+        );
+    }
+    assert!(
+        image_log.lock().unwrap().is_empty(),
+        "no request left for a local or private host"
+    );
+    for address in [
+        "https://image.tmdb.org/t/p/original/poster.jpg",
+        "https://artworks.thetvdb.com/banners/poster.jpg",
+        "http://93.184.216.34/poster.jpg",
+        "http://[2606:4700::6810:84e5]/poster.jpg",
+    ] {
+        block_on(integrations.fetch_image(IntegrationProvider::Radarr, address))
+            .unwrap_or_else(|error| panic!("{address}: {error:?}"));
+    }
+    assert_eq!(
+        image_log.lock().unwrap().len(),
+        4,
+        "public hosts are fetched"
+    );
 }

@@ -146,6 +146,7 @@ fn review_scene() -> Option<ReviewScene> {
         Some("calendar-partial-error") => Some(ReviewScene::CalendarPartialError),
         Some("calendar-loading") => Some(ReviewScene::CalendarLoading),
         Some("calendar-error") => Some(ReviewScene::CalendarError),
+        Some("calendar-next-month") => Some(ReviewScene::CalendarNextMonth),
         Some("calendar-small-window") => Some(ReviewScene::CalendarSmallWindow),
         Some("calendar-large-window") => Some(ReviewScene::CalendarLargeWindow),
 

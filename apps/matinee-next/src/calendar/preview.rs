@@ -9,12 +9,12 @@ use std::sync::Arc;
 
 use atelier_ui::gpui::Context;
 use atelier_ui::prelude::DecodedImage;
-use chrono::{DateTime, Local, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, TimeDelta, Utc};
 use matinee_integrations::{
     IntegrationProvider, ReleaseKind, ReleaseMilestone, ReleaseTiming, UpcomingRelease,
 };
 
-use super::grid::month_start;
+use super::grid::{Window, month_start};
 use super::model::{CalendarModel, Request, Response, SourceFailure};
 use super::screen::CalendarScreen;
 use crate::artwork::ArtworkLoader;
@@ -35,7 +35,7 @@ pub(crate) enum CalendarPreview {
     SelectedDay,
     /// Mostly movies.
     MovieHeavy,
-    /// Mostly episodes, several on one day.
+    /// Mostly episodes, four on most days and six on the 15th.
     EpisodeHeavy,
     /// Movies and episodes on the same days.
     Mixed,
@@ -49,6 +49,9 @@ pub(crate) enum CalendarPreview {
     Loading,
     /// Both sources could not be reached.
     Error,
+    /// The month after this one, reached with Next, with releases on the
+    /// grid's leading and trailing days and one of those days selected.
+    NextMonth,
 }
 
 impl CalendarPreview {
@@ -64,13 +67,24 @@ impl CalendarPreview {
         if self == Self::SelectedDay {
             model.select(day_of(model.month(), 14));
         }
+        if self == Self::NextMonth {
+            model.next_month();
+        }
         self.prepare(&mut model, now);
         if self == Self::SelectedDay {
             model.focus_event("sonarr-204");
         }
+        if self == Self::NextMonth {
+            // The grid's last day belongs to the month after: choosing it
+            // would show that month, so the scene keeps the leading day's
+            // releases in view and selects the 1st instead.
+            model.select(model.month());
+        }
         let mut screen =
             CalendarScreen::with_model(runtime, None, loader, "Fixture".to_string(), model, cx);
         screen.set_fixture_cover(DecodedImage::decode(COVER, 480).ok());
+        // A scene is never driven by a visit, so its covers are set here.
+        screen.sync_artwork(cx);
         screen
     }
 
@@ -131,6 +145,34 @@ impl CalendarPreview {
             )],
             (Self::EpisodeHeavy, SONARR) => episode_heavy(month),
             (Self::EpisodeHeavy, _) => Vec::new(),
+            (Self::NextMonth, RADARR) => {
+                let mut releases = populated_movies(month);
+                releases.push(movie(
+                    105,
+                    "Last Light",
+                    ReleaseKind::Digital,
+                    Window::for_month(month).start(),
+                    &[],
+                    false,
+                ));
+                releases
+            }
+            (Self::NextMonth, _) => {
+                let mut releases = populated_episodes(month);
+                let last = Window::for_month(month).last();
+                releases.push(episode(
+                    208,
+                    407,
+                    "Harbour Watch",
+                    2,
+                    1,
+                    "Opening Night",
+                    month_start(last),
+                    last.day(),
+                    0,
+                ));
+                releases
+            }
             (Self::Mixed | Self::SelectedDay, RADARR) => populated_movies_for_mixed(month),
             (Self::Mixed | Self::SelectedDay, _) => mixed_episodes(month),
             (_, RADARR) => populated_movies(month),
@@ -384,7 +426,10 @@ fn episode_heavy(month: NaiveDate) -> Vec<UpcomingRelease> {
     let mut releases = Vec::new();
     let mut id = 500;
     for day in [3, 5, 8, 12, 15, 19, 22, 27] {
-        for (offset, show) in shows.iter().take(4).enumerate() {
+        // The 15th carries every series: more rows than the panel shows at
+        // the narrow size, so its list scrolls.
+        let count = if day == 15 { shows.len() } else { 4 };
+        for (offset, show) in shows.iter().take(count).enumerate() {
             id += 1;
             releases.push(episode(
                 id,

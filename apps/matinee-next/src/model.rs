@@ -126,6 +126,7 @@ pub enum ReviewScene {
     CalendarPartialError,
     CalendarLoading,
     CalendarError,
+    CalendarNextMonth,
     CalendarSmallWindow,
     CalendarLargeWindow,
 }
@@ -148,6 +149,7 @@ impl ReviewScene {
             Self::CalendarPartialError => Some(CalendarPreview::PartialFailure),
             Self::CalendarLoading => Some(CalendarPreview::Loading),
             Self::CalendarError => Some(CalendarPreview::Error),
+            Self::CalendarNextMonth => Some(CalendarPreview::NextMonth),
             _ => None,
         }
     }
@@ -847,6 +849,7 @@ mod tests {
             ReviewScene::CalendarPartialError,
             ReviewScene::CalendarLoading,
             ReviewScene::CalendarError,
+            ReviewScene::CalendarNextMonth,
             ReviewScene::CalendarSmallWindow,
             ReviewScene::CalendarLargeWindow,
         ] {

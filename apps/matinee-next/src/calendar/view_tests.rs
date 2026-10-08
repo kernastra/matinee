@@ -20,7 +20,7 @@ use matinee_integrations::IntegrationProvider;
 use super::grid::{month_start, shift_month};
 use super::model::{Link, Overview, SourceFailure, SourceStatus};
 use super::preview::CalendarPreview;
-use super::screen::{CalendarScreen, Step, grid_sizing, source_line};
+use super::screen::{CalendarScreen, Step, empty_day_line, grid_sizing, source_line};
 use crate::artwork::ArtworkLoader;
 use crate::runtime::ServiceRuntime;
 
@@ -215,6 +215,46 @@ fn a_selected_day_lists_its_releases_movies_first(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn covers_are_kept_for_the_selected_day_only_and_follow_the_selection(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, CalendarPreview::SelectedDay);
+    let covers = |view: &Entity<CalendarScreen>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |screen, _| {
+            let mut urls: Vec<String> = screen.art.keys().cloned().collect();
+            urls.sort();
+            urls
+        })
+    };
+    assert_eq!(
+        covers(&view, cx),
+        vec![
+            "https://covers.example/radarr/104.jpg",
+            "https://covers.example/sonarr/403.jpg",
+            "https://covers.example/sonarr/405.jpg",
+        ],
+        "the 14th's three covers, before any action"
+    );
+    view.update(cx, |screen, cx| {
+        screen.set_filter(super::event::MediaFilter::Movies, cx)
+    });
+    assert_eq!(
+        covers(&view, cx),
+        vec!["https://covers.example/radarr/104.jpg"],
+        "a filtered-out release lets its cover go"
+    );
+    view.update(cx, |screen, cx| {
+        let index = screen
+            .model
+            .window()
+            .index_of(day_of_month(&screen.model, 2));
+        screen.select_index(index.expect("the 2nd"), cx);
+    });
+    assert!(
+        covers(&view, cx).is_empty(),
+        "a day without releases holds none"
+    );
+}
+
+#[gpui::test]
 fn choosing_a_day_outside_the_shown_month_shows_its_month(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, CalendarPreview::Populated);
     // Cell 0 is the leading day of the grid, which belongs to the month before.
@@ -229,6 +269,79 @@ fn choosing_a_day_outside_the_shown_month_shows_its_month(cx: &mut TestAppContex
         month_start(leading),
         "and its month is the one shown"
     );
+    let (focused, index) = view.read_with(cx, |screen, _| {
+        (
+            screen.grid_state().focused(),
+            screen.model.window().index_of(selected),
+        )
+    });
+    assert_eq!(focused, index, "focus is on the chosen day in its month");
+}
+
+#[gpui::test]
+fn enter_on_a_day_of_the_next_month_keeps_focus_on_that_day(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, CalendarPreview::Populated);
+    // The last cell always belongs to the following month.
+    let last = view.read_with(cx, |screen, _| screen.model.window().last());
+    press(cx, "end");
+    press(cx, "enter");
+    let (selected, month, focused, index) = view.read_with(cx, |screen, _| {
+        (
+            screen.model.selected(),
+            screen.model.month(),
+            screen.grid_state().focused(),
+            screen.model.window().index_of(screen.model.selected()),
+        )
+    });
+    assert_eq!(selected, last);
+    assert_eq!(month, month_start(last), "the next month is shown");
+    assert_eq!(focused, index, "the focus ring is on the chosen day");
+    assert!(grid_focused(&view, cx));
+}
+
+#[gpui::test]
+fn arrows_move_day_by_day_across_weeks_and_months(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, CalendarPreview::Populated);
+    let focused = |view: &Entity<CalendarScreen>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |screen, _| {
+            let index = screen.grid_state().focused().expect("a focused cell");
+            screen.model.window().day(index as u64)
+        })
+    };
+    // Saturday of the first week: Right is the Sunday after it.
+    view.update(cx, |screen, cx| {
+        screen.grid_state().focus_index(Some(6));
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let saturday = focused(&view, cx);
+    press(cx, "right");
+    assert_eq!(focused(&view, cx), saturday.succ_opt().unwrap());
+    press(cx, "left");
+    assert_eq!(focused(&view, cx), saturday, "and Left goes back");
+
+    // The last cell: Right shows the month of the next day, focused on it.
+    press(cx, "end");
+    let last = focused(&view, cx);
+    press(cx, "right");
+    let next = last.succ_opt().unwrap();
+    assert_eq!(focused(&view, cx), next);
+    assert_eq!(
+        view.read_with(cx, |screen, _| screen.model.month()),
+        month_start(next)
+    );
+
+    // The first row: Up shows the week before, in the month before.
+    press(cx, "home");
+    let first = focused(&view, cx);
+    press(cx, "up");
+    let week_before = first - chrono::TimeDelta::days(7);
+    assert_eq!(focused(&view, cx), week_before);
+    assert_eq!(
+        view.read_with(cx, |screen, _| screen.model.month()),
+        month_start(week_before)
+    );
+    assert!(grid_focused(&view, cx), "the grid keeps the keyboard");
 }
 
 #[gpui::test]
@@ -252,6 +365,46 @@ fn the_populated_month_places_movies_and_episodes_on_their_days(cx: &mut TestApp
     assert_eq!(
         event_ids(&view, cx, month.with_day(4).unwrap()),
         vec!["radarr-101-theatrical"]
+    );
+}
+
+#[gpui::test]
+fn the_next_month_draws_releases_on_the_days_its_grid_borrows(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, CalendarPreview::NextMonth);
+    let (month, today, window) = view.read_with(cx, |screen, _| {
+        (
+            screen.model.month(),
+            screen.model.today(),
+            screen.model.window(),
+        )
+    });
+    assert_eq!(
+        month,
+        shift_month(month_start(today), 1),
+        "the month after this one"
+    );
+    assert_eq!(
+        event_ids(&view, cx, window.start()),
+        vec!["radarr-105-digital"]
+    );
+    assert_eq!(event_ids(&view, cx, window.last()), vec!["sonarr-208"]);
+    let (on_grid, in_month) = view.read_with(cx, |screen, _| {
+        (
+            screen.model.grid_events().len(),
+            screen.model.month_release_count(),
+        )
+    });
+    // The trailing day always belongs to the next month; the leading one
+    // does unless the month starts on a Sunday.
+    let borrowed = [window.start(), window.last()]
+        .into_iter()
+        .filter(|day| month_start(*day) != month)
+        .count();
+    assert!(borrowed >= 1);
+    assert_eq!(
+        on_grid,
+        in_month + borrowed,
+        "borrowed days are drawn but not counted in the month"
     );
 }
 
@@ -327,6 +480,41 @@ fn each_failure_has_its_own_plain_sentence() {
         source_line(SONARR, SourceStatus::Checking),
         "Checking Sonarr…"
     );
+}
+
+#[gpui::test]
+fn a_day_without_releases_names_the_source_that_failed_instead_of_waiting(cx: &mut TestAppContext) {
+    let line = |scene, cx: &mut TestAppContext| {
+        let (view, cx) = open(cx, scene);
+        view.read_with(cx, |screen, _| empty_day_line(&screen.model))
+    };
+    // The 2nd has no fixture release in either scene.
+    let (view, vcx) = open(cx, CalendarPreview::PartialFailure);
+    view.update(vcx, |screen, cx| {
+        let index = screen
+            .model
+            .window()
+            .index_of(day_of_month(&screen.model, 2));
+        screen.select_index(index.expect("the 2nd is in the grid"), cx);
+    });
+    assert_eq!(
+        view.read_with(vcx, |screen, _| empty_day_line(&screen.model)),
+        Some("Releases from Sonarr could not be loaded for this month.".to_string()),
+        "Sonarr failed: the day is not known to be empty, and nothing is still loading"
+    );
+    assert_eq!(
+        line(CalendarPreview::Error, cx),
+        Some("Releases from Radarr and Sonarr could not be loaded for this month.".to_string())
+    );
+    assert_eq!(
+        line(CalendarPreview::Loading, cx),
+        Some("Waiting for every connected source to answer this month.".to_string())
+    );
+    assert_eq!(
+        line(CalendarPreview::Empty, cx),
+        Some("Nothing is scheduled for this day.".to_string())
+    );
+    assert_eq!(line(CalendarPreview::Disconnected, cx), None);
 }
 
 #[gpui::test]
@@ -499,6 +687,7 @@ fn every_review_scene_draws_at_each_standard_window_size(cx: &mut TestAppContext
         CalendarPreview::PartialFailure,
         CalendarPreview::Loading,
         CalendarPreview::Error,
+        CalendarPreview::NextMonth,
     ];
     let sizes = [
         (960.0, 620.0),
@@ -549,5 +738,36 @@ fn a_calendar_remembers_its_month_and_selection_while_it_is_not_shown(cx: &mut T
             screen.model.selected()
         )),
         kept
+    );
+}
+
+#[gpui::test]
+fn tabbing_to_a_release_below_the_fold_scrolls_the_panel_to_it(cx: &mut TestAppContext) {
+    // The narrow standard window, on a day with six episodes: the last rows
+    // are below the panel's fold.
+    let (view, cx) = open(cx, CalendarPreview::EpisodeHeavy);
+    cx.simulate_resize(size(px(960.0), px(620.0)));
+    view.update(cx, |screen, cx| {
+        let index = screen
+            .model
+            .window()
+            .index_of(day_of_month(&screen.model, 15));
+        screen.select_index(index.expect("the 15th is in the grid"), cx);
+    });
+    redraw(&view, cx);
+    let rows = event_ids(&view, cx, view.read_with(cx, |s, _| s.model.selected())).len();
+    assert_eq!(rows, 6);
+    assert!(grid_focused(&view, cx));
+    let top = view.read_with(cx, |screen, _| f32::from(screen.panel_scroll().offset().y));
+    assert_eq!(top, 0.0, "the panel starts at its top");
+    for _ in 0..rows {
+        cx.update(|window, _| window.focus_next());
+        cx.run_until_parked();
+        redraw(&view, cx);
+    }
+    let offset = view.read_with(cx, |screen, _| f32::from(screen.panel_scroll().offset().y));
+    assert!(
+        offset < 0.0,
+        "the panel scrolled to the focused last row (offset {offset})"
     );
 }
