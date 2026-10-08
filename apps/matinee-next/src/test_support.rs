@@ -77,6 +77,12 @@ fn read_request(stream: &mut std::net::TcpStream) -> Option<String> {
     Some(String::from_utf8_lossy(&request).into_owned())
 }
 
+/// The integrations transport for calendar tests. It lives here so the
+/// application shell and test support are the only places that build one.
+pub(crate) fn integrations_transport() -> matinee_integrations::ReqwestTransport {
+    matinee_integrations::ReqwestTransport::new().expect("transport")
+}
+
 pub(crate) const FIXTURE_TOKEN: &str = "fixture-token";
 
 pub(crate) fn client(address: &str) -> Arc<JellyfinClient<ReqwestTransport>> {

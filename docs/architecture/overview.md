@@ -4,8 +4,9 @@ Status: **Phase 3E (native Library) on the Phase 3A runtime, the Phase 3B Player
 app in `src/` and `src-tauri/`. It remains the reference implementation. Its
 calendar and Poster Studio commands are thin adapters over the shared crates.
 The native app opens Login, then Home; Library is a second root
-destination, and Details and the Player open above either. Search,
-Calendar, Settings, and Poster Studio are not built.
+destination, and Search and Calendar are the third and fourth. Details and
+the Player open above Home, Library, or Search. Calendar opens no page.
+Settings and Poster Studio are not built.
 
 Related documents:
 

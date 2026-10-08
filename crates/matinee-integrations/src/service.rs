@@ -17,10 +17,12 @@ use futures::FutureExt;
 use futures::future::Shared;
 use serde::Deserialize;
 use serde_json::Value;
+use url::Url;
 use zeroize::Zeroize;
 
 use matinee_secrets::{CredentialKey, CredentialNamespace, CredentialStore, Secret};
 
+use crate::destination::public_url;
 use crate::error::IntegrationError;
 use crate::home::home_upcoming;
 use crate::model::{
@@ -34,6 +36,8 @@ use crate::url::normalize_server_url;
 
 pub const UPCOMING_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const MIN_API_KEY_CHARS: usize = 8;
+/// Largest artwork body accepted: 16 MiB. Cover art is far smaller.
+const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 
 type UpcomingFuture = Shared<Pin<Box<dyn Future<Output = UpcomingResult> + Send>>>;
 
@@ -196,6 +200,12 @@ where
         })
     }
 
+    /// One provider's calendar for `[start, end)`, with no cache.
+    ///
+    /// This is the native path. It fails on a body that is not a JSON array,
+    /// where [`Integrations::upcoming`] reports no releases, so a broken server
+    /// is not shown as an empty month. Results are ordered by instant, then by
+    /// id.
     pub async fn fetch_calendar(
         &self,
         provider: IntegrationProvider,
@@ -207,8 +217,72 @@ where
         if end_instant <= start_instant {
             return Err(IntegrationError::InvalidWindow);
         }
-        self.fetch_provider(provider, start, end, start_instant, end_instant)
+        let body = request_calendar(&*self.store, &*self.transport, provider, start, end).await?;
+        if !body.is_array() {
+            return Err(IntegrationError::MalformedResponse { provider });
+        }
+        let mut events = normalize_in_window(provider, &body, start_instant, end_instant);
+        events.sort_by(|left, right| {
+            left.instant
+                .cmp(&right.instant)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(events)
+    }
+
+    /// Bytes of one artwork address that a calendar response named.
+    ///
+    /// The address comes from the server's JSON, so it is checked before any
+    /// request: http or https, no user or password, and a public host. A
+    /// name such as `localhost` and an address on this machine, a private
+    /// network, or a link-local range are refused, so a server cannot point
+    /// Matinee at local services. The request is `public_only`: the
+    /// transport resolves a name once, refuses it if any answer is not
+    /// public, and connects only to the addresses it checked (see
+    /// [`crate::destination`]). No credential is sent: the image host is a
+    /// public cover host, not the Radarr or Sonarr server. Redirects are not
+    /// followed, and a 3xx is [`IntegrationError::ImageUnavailable`]. A body
+    /// over 16 MiB is refused from its announced length or as it streams,
+    /// before it is held. A refused host is
+    /// [`IntegrationError::InvalidImage`], like a refused address.
+    pub async fn fetch_image(
+        &self,
+        provider: IntegrationProvider,
+        url: &str,
+    ) -> Result<Vec<u8>, IntegrationError> {
+        let parsed = Url::parse(url).map_err(|_| IntegrationError::InvalidImage { provider })?;
+        if !public_url(&parsed) {
+            return Err(IntegrationError::InvalidImage { provider });
+        }
+        let response = self
+            .transport
+            .send(IntegrationRequest {
+                method: "GET",
+                url: parsed.into(),
+                headers: Vec::new(),
+                query: Vec::new(),
+                max_body: Some(MAX_IMAGE_BYTES),
+                public_only: true,
+            })
             .await
+            .map_err(|error| {
+                if error.is_body_too_large() || error.is_forbidden_destination() {
+                    IntegrationError::InvalidImage { provider }
+                } else {
+                    IntegrationError::unreachable(provider, error.detail)
+                }
+            })?;
+        if !(200..300).contains(&response.status) {
+            return Err(IntegrationError::ImageUnavailable {
+                provider,
+                status: response.status,
+            });
+        }
+        // The transport enforces the cap; a test transport may not.
+        if response.body.len() > MAX_IMAGE_BYTES {
+            return Err(IntegrationError::InvalidImage { provider });
+        }
+        Ok(response.body)
     }
 
     pub async fn upcoming(&self, query: UpcomingQuery) -> UpcomingResult {
@@ -265,26 +339,6 @@ where
         let store = Arc::clone(&self.store);
         let transport = Arc::clone(&self.transport);
         async move { collect_upcoming(store.as_ref(), transport.as_ref(), query).await }
-    }
-
-    async fn fetch_provider(
-        &self,
-        provider: IntegrationProvider,
-        start: &str,
-        end: &str,
-        start_instant: DateTime<Utc>,
-        end_instant: DateTime<Utc>,
-    ) -> Result<Vec<UpcomingRelease>, IntegrationError> {
-        fetch_provider(
-            &*self.store,
-            &*self.transport,
-            provider,
-            start,
-            end,
-            start_instant,
-            end_instant,
-        )
-        .await
     }
 
     async fn status_document(
@@ -376,6 +430,8 @@ fn window_failure(query: &UpcomingQuery) -> UpcomingResult {
     }
 }
 
+/// The shared upcoming path. A body that is not an array yields no releases,
+/// as the shipping UI has always seen it.
 async fn fetch_provider<S, T>(
     store: &S,
     transport: &T,
@@ -385,6 +441,39 @@ async fn fetch_provider<S, T>(
     start_instant: DateTime<Utc>,
     end_instant: DateTime<Utc>,
 ) -> Result<Vec<UpcomingRelease>, IntegrationError>
+where
+    S: CredentialStore,
+    T: Transport,
+{
+    let body = request_calendar(store, transport, provider, start, end).await?;
+    Ok(normalize_in_window(
+        provider,
+        &body,
+        start_instant,
+        end_instant,
+    ))
+}
+
+fn normalize_in_window(
+    provider: IntegrationProvider,
+    body: &Value,
+    start_instant: DateTime<Utc>,
+    end_instant: DateTime<Utc>,
+) -> Vec<UpcomingRelease> {
+    let mut events = normalize_calendar(provider, body, start_instant, end_instant);
+    events.retain(|event| in_window(event.instant, start_instant, end_instant));
+    events
+}
+
+/// `GET /api/v3/calendar` for one provider. The key is a header. The range
+/// goes in the query exactly as the caller wrote it.
+async fn request_calendar<S, T>(
+    store: &S,
+    transport: &T,
+    provider: IntegrationProvider,
+    start: &str,
+    end: &str,
+) -> Result<Value, IntegrationError>
 where
     S: CredentialStore,
     T: Transport,
@@ -412,10 +501,7 @@ where
         query,
     )
     .await?;
-    let body = decode_json(provider, response.status, &response.body)?;
-    let mut events = normalize_calendar(provider, &body, start_instant, end_instant);
-    events.retain(|event| in_window(event.instant, start_instant, end_instant));
-    Ok(events)
+    decode_json(provider, response.status, &response.body)
 }
 
 async fn send<T: Transport>(
@@ -431,6 +517,8 @@ async fn send<T: Transport>(
             url,
             headers: vec![("X-Api-Key".to_string(), api_key.to_string())],
             query,
+            max_body: None,
+            public_only: false,
         })
         .await
         .map_err(|error| IntegrationError::unreachable(provider, error.detail))

@@ -254,6 +254,47 @@ if matches=$(grep -RInE '\b(e?println|e?print|dbg|log::[a-z]+|tracing::[a-z]+)!'
   echo "$matches" >&2
 fi
 
+# 21. Calendar requests and the connection checks that precede them are made
+#     in one place, on the service runtime, like Library's and Search's.
+if matches=$(grep -RInE '\b(fetch_calendar|key_status)\(' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/calendar/load.rs:'); then
+  fail "Calendar requests are made only by apps/matinee-next/src/calendar/load.rs:"
+  echo "$matches" >&2
+fi
+
+# 22. Calendar covers are fetched only through the artwork loader, which
+#     decodes them and keeps them in the shared cache.
+if matches=$(grep -RIn '\bfetch_image(' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/artwork.rs:'); then
+  fail "Calendar covers are fetched only by apps/matinee-next/src/artwork.rs:"
+  echo "$matches" >&2
+fi
+
+# 23. Calendar never opens Details. Its releases have no Jellyfin item, and
+#     an identity is not inferred across services: no Jellyfin client, item
+#     id, or Details/Player route is reachable from calendar/.
+if matches=$(grep -RInE 'DetailsScreen|open_details\(|PlayerScreen|ItemId|matinee_jellyfin|JellyfinClient' apps/matinee-next/src/calendar --include='*.rs'); then
+  fail "Calendar must not open Details or the Player, or build Jellyfin identities:"
+  echo "$matches" >&2
+fi
+
+# 24. The calendar writes no log lines: its days and titles are personal, like
+#     Search's queries (guard 20).
+if matches=$(grep -RInE '\b(e?println|e?print|dbg|log::[a-z]+|tracing::[a-z]+)!' apps/matinee-next/src/calendar --include='*.rs'); then
+  fail "logging in apps/matinee-next/src/calendar (releases are private):"
+  echo "$matches" >&2
+fi
+
+# 25. Artwork reaches only public addresses. Its client resolves through
+#     PublicResolver and must ignore proxy settings: a proxy would resolve the
+#     name itself, past the check. Tests cover the resolver; this keeps the
+#     one setting they cannot exercise without changing the environment.
+transport=crates/matinee-integrations/src/transport.rs
+if ! grep -q 'dns_resolver(Arc::new(resolver))' "$transport" \
+  || ! grep -q '\.no_proxy()' "$transport"; then
+  fail "the artwork client in $transport must keep its PublicResolver and .no_proxy()"
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

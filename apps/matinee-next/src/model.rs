@@ -114,9 +114,46 @@ pub enum ReviewScene {
     SearchEpisodes,
     SearchSmallWindow,
     SearchLargeWindow,
+    CalendarPopulated,
+    CalendarEmpty,
+    CalendarSelectedDay,
+    CalendarMovies,
+    CalendarEpisodes,
+    CalendarMixed,
+    CalendarRadarrOnly,
+    CalendarSonarrOnly,
+    CalendarDisconnected,
+    CalendarPartialError,
+    CalendarLoading,
+    CalendarError,
+    CalendarNextMonth,
+    CalendarSmallWindow,
+    CalendarLargeWindow,
 }
 
 impl ReviewScene {
+    pub(crate) fn calendar_preview(self) -> Option<crate::calendar::CalendarPreview> {
+        use crate::calendar::CalendarPreview;
+        match self {
+            Self::CalendarPopulated | Self::CalendarSmallWindow | Self::CalendarLargeWindow => {
+                Some(CalendarPreview::Populated)
+            }
+            Self::CalendarEmpty => Some(CalendarPreview::Empty),
+            Self::CalendarSelectedDay => Some(CalendarPreview::SelectedDay),
+            Self::CalendarMovies => Some(CalendarPreview::MovieHeavy),
+            Self::CalendarEpisodes => Some(CalendarPreview::EpisodeHeavy),
+            Self::CalendarMixed => Some(CalendarPreview::Mixed),
+            Self::CalendarRadarrOnly => Some(CalendarPreview::RadarrOnly),
+            Self::CalendarSonarrOnly => Some(CalendarPreview::SonarrOnly),
+            Self::CalendarDisconnected => Some(CalendarPreview::Disconnected),
+            Self::CalendarPartialError => Some(CalendarPreview::PartialFailure),
+            Self::CalendarLoading => Some(CalendarPreview::Loading),
+            Self::CalendarError => Some(CalendarPreview::Error),
+            Self::CalendarNextMonth => Some(CalendarPreview::NextMonth),
+            _ => None,
+        }
+    }
+
     pub(crate) fn player_preview(self) -> Option<crate::player::PlayerPreview> {
         match self {
             Self::PlayerPlaying => Some(crate::player::PlayerPreview::Playing),
@@ -185,12 +222,14 @@ impl ReviewScene {
     /// The window size a scene is reviewed at, unless one is given.
     pub(crate) fn size(self) -> (f32, f32) {
         match self {
-            Self::HomeSmallWindow | Self::LibrarySmallWindow | Self::SearchSmallWindow => {
-                (960.0, 620.0)
-            }
-            Self::HomeLargeWindow | Self::LibraryLargeWindow | Self::SearchLargeWindow => {
-                (1920.0, 1080.0)
-            }
+            Self::HomeSmallWindow
+            | Self::LibrarySmallWindow
+            | Self::SearchSmallWindow
+            | Self::CalendarSmallWindow => (960.0, 620.0),
+            Self::HomeLargeWindow
+            | Self::LibraryLargeWindow
+            | Self::SearchLargeWindow
+            | Self::CalendarLargeWindow => (1920.0, 1080.0),
             _ => (1200.0, 760.0),
         }
     }
@@ -798,6 +837,21 @@ mod tests {
             ReviewScene::SearchEpisodes,
             ReviewScene::SearchSmallWindow,
             ReviewScene::SearchLargeWindow,
+            ReviewScene::CalendarPopulated,
+            ReviewScene::CalendarEmpty,
+            ReviewScene::CalendarSelectedDay,
+            ReviewScene::CalendarMovies,
+            ReviewScene::CalendarEpisodes,
+            ReviewScene::CalendarMixed,
+            ReviewScene::CalendarRadarrOnly,
+            ReviewScene::CalendarSonarrOnly,
+            ReviewScene::CalendarDisconnected,
+            ReviewScene::CalendarPartialError,
+            ReviewScene::CalendarLoading,
+            ReviewScene::CalendarError,
+            ReviewScene::CalendarNextMonth,
+            ReviewScene::CalendarSmallWindow,
+            ReviewScene::CalendarLargeWindow,
         ] {
             let model = AppModel::review(scene);
             let rendered = model.visible_lines().join("\n");

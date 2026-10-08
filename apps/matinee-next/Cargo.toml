@@ -18,8 +18,10 @@ path = "src/main.rs"
 [dependencies]
 atelier-app.workspace = true
 atelier-ui.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 futures = "0.3"
 matinee-core.workspace = true
+matinee-integrations.workspace = true
 matinee-jellyfin.workspace = true
 matinee-player.workspace = true
 matinee-secrets.workspace = true

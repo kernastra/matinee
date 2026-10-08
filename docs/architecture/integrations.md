@@ -90,6 +90,65 @@ series, sorts by instant, and limits to 12. The shipping Home shelf reads
 `home`. `homeUpcoming` remains in TypeScript as the synchronous helper and
 is covered by the Vitest file. Provider JSON parsing lives only in Rust.
 
-`fetch_integration_calendar` returns the normalized events for one provider
-and does not use the cache. `fetch_upcoming_releases` is the aggregated
-command the React calendar calls.
+`fetch_upcoming_releases` is the aggregated command the React calendar calls.
+`fetch_integration_calendar` is registered and returns one provider's events
+without the cache, but the shipping UI does not invoke it. Its only behaviour
+change is the native one below: a body that is not a JSON array is an error
+there, where the aggregated path reads it as no releases.
+
+## Native calendar contract
+
+The native Calendar (see [calendar.md](calendar.md)) uses four additions. The
+shipping payloads are unchanged: none of these fields is serialized.
+
+- **`UpcomingRelease.timing: ReleaseTiming`** says what `date` means.
+  `CivilDay` is a day as the source wrote it: Radarr's release fields (UTC
+  midnight stamps that name a day) and Sonarr's `airDate`. `Instant` is a
+  moment: Sonarr's `airDateUtc`. Normalization sets it from the field that
+  supplied the date. A present but malformed `airDateUtc` still never falls
+  back to `airDate`.
+- **`UpcomingRelease::civil_day()`** and **`ReleaseMilestone::civil_day()`**
+  return the `YYYY-MM-DD` the source wrote, ignoring any time and zone after
+  it. They return `None` for an instant, or for text that does not start with a
+  day. Placing a release on a local day is the application's policy, not this
+  crate's.
+- **`Integrations::fetch_calendar(provider, start, end)`** is the native path.
+  It reads the saved connection from the vault, makes one request, and does
+  not use the five-minute cache. Unlike `upcoming`, it returns
+  `MalformedResponse` for a body that is not a JSON array. Results are
+  ordered by instant, then by id. Radarr and Sonarr are independent calls, so
+  a slow one does not hold up the other.
+- **`Integrations::fetch_image(provider, url)`** fetches one artwork address a
+  calendar response named. Only `http` and `https` addresses without
+  credentials, on a public host, are fetched: `localhost`, `*.localhost`, and
+  loopback, private, link-local, shared, unspecified, broadcast, multicast,
+  documentation, and reserved addresses (IPv4, IPv6, and IPv4-mapped) are
+  refused before any request. The request is `public_only`, so a name is
+  resolved by the artwork client's `PublicResolver`, refused whole if any
+  answer is not public, and connected only at the addresses checked (see
+  [calendar.md](calendar.md#artwork-trust-policy)). No header or query is sent, so the key
+  never goes to an image host. Redirects are not followed, which the shared
+  transport enforces. The body is capped at 16 MiB by the transport (below).
+  A non-2xx status is `ImageUnavailable { provider, status }`. A refused
+  address or an oversized body is `InvalidImage { provider }`. A timeout or
+  refused connection is `Unreachable`, as for the API.
+- **`IntegrationRequest.max_body`** caps a response body. `ReqwestTransport`
+  refuses an announced `Content-Length` over the cap before reading, and
+  drops a streamed body at the chunk that crosses it, returning a
+  `TransportError` for which `is_body_too_large()` is true. Every Radarr and
+  Sonarr API call sends `None` and is read whole, exactly as the shipping app
+  has always read it.
+- **`IntegrationRequest.public_only`** sends a request through
+  `ReqwestTransport`'s second client, which reaches only public addresses:
+  an IP literal is checked before sending, names resolve through
+  `PublicResolver`, proxies are ignored, and redirects are not followed. A
+  refused host is a `TransportError` for which `is_forbidden_destination()`
+  is true. API calls send `false` and use the unchanged client, which may
+  reach a server on the person's own network.
+
+`IntegrationError` gained `InvalidImage` and `ImageUnavailable`. Matching on
+the enum is the supported way to tell an unauthorized key (401,
+`AuthenticationRejected`), an unreachable server (`Unreachable`), a server
+failure (`Server`), an unreadable body (`MalformedResponse`), and a missing
+connection (`NotConfigured`) apart. Display text is for people and is not a
+contract.

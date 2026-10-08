@@ -18,6 +18,7 @@ use matinee_ui::palette::FADED_TEAL;
 use tokio::task::JoinHandle;
 
 use crate::artwork::{ArtworkLoader, Client};
+use crate::calendar::{CalendarPreview, CalendarScreen, CalendarScreenEvent, CalendarService};
 use crate::details::{DetailsEvent, DetailsScreen};
 use crate::home::{HomeEvent, HomeScreen};
 use crate::library::{LibraryEvent, LibraryScreen};
@@ -34,6 +35,9 @@ use crate::model::{AppModel, LOGIN_COPY, Phase, ReviewScene};
 pub struct Services {
     runtime: Arc<ServiceRuntime>,
     store: SharedStore,
+    /// Radarr and Sonarr, reading the same vault namespace as the shipping app.
+    /// The Calendar's only route to them.
+    calendar: Arc<CalendarService>,
     /// Orders vault writes that can overlap: removing an ended session and
     /// saving the next sign-in. Whoever takes it first finishes first.
     vault: Arc<tokio::sync::Mutex<()>>,
@@ -41,17 +45,21 @@ pub struct Services {
 
 impl Services {
     pub fn production() -> std::io::Result<Self> {
+        let store = SharedStore::new(KeyringStore::new());
         Ok(Self {
             runtime: Arc::new(ServiceRuntime::new()?),
-            store: SharedStore::new(KeyringStore::new()),
+            calendar: calendar_service(store.clone())?,
+            store,
             vault: Arc::default(),
         })
     }
 
     pub fn memory() -> std::io::Result<Self> {
+        let store = SharedStore::new(MemoryStore::new());
         Ok(Self {
             runtime: Arc::new(ServiceRuntime::new()?),
-            store: SharedStore::new(MemoryStore::new()),
+            calendar: calendar_service(store.clone())?,
+            store,
             vault: Arc::default(),
         })
     }
@@ -59,6 +67,12 @@ impl Services {
     pub fn runtime(&self) -> Arc<ServiceRuntime> {
         Arc::clone(&self.runtime)
     }
+}
+
+fn calendar_service(store: SharedStore) -> std::io::Result<Arc<CalendarService>> {
+    let transport = matinee_integrations::ReqwestTransport::new()
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(Arc::new(CalendarService::new(store, transport)))
 }
 
 pub struct MatineeRoot {
@@ -78,6 +92,8 @@ pub struct MatineeRoot {
     library: Option<Entity<LibraryScreen>>,
     /// Search, created the first time it is chosen and kept like Library.
     search: Option<Entity<SearchScreen>>,
+    /// Calendar, created the first time it is chosen and kept like Search.
+    calendar: Option<Entity<CalendarScreen>>,
     /// Which root shows when no page covers it.
     root: RootDestination,
     /// Roots that reload what playback changed when they next show.
@@ -121,6 +137,7 @@ impl MatineeRoot {
             home: None,
             library: None,
             search: None,
+            calendar: None,
             root: RootDestination::Home,
             stale: StaleRoots::default(),
             review: review.is_some(),
@@ -147,6 +164,13 @@ impl MatineeRoot {
             let search = cx.new(|cx| SearchScreen::preview(runtime, loader, scene, cx));
             root.root = RootDestination::Search;
             root.adopt_search(search, window, cx);
+        }
+        if let Some(scene) = review.and_then(ReviewScene::calendar_preview) {
+            let runtime = Arc::clone(&root.services.runtime);
+            let loader = root.artwork.clone();
+            let calendar = cx.new(|cx| scene.screen(runtime, loader, cx));
+            root.root = RootDestination::Calendar;
+            root.adopt_calendar(calendar, window, cx);
         }
         if review.is_none() {
             root.start_restore(cx);
@@ -255,6 +279,9 @@ impl MatineeRoot {
         if let Some(search) = &self.search {
             search.update(cx, |search, cx| search.set_signing_out(true, cx));
         }
+        if let Some(calendar) = &self.calendar {
+            calendar.update(cx, |calendar, cx| calendar.set_signing_out(true, cx));
+        }
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -282,6 +309,9 @@ impl MatineeRoot {
                     }
                     if let Some(search) = &this.search {
                         search.update(cx, |search, cx| search.set_signing_out(false, cx));
+                    }
+                    if let Some(calendar) = &this.calendar {
+                        calendar.update(cx, |calendar, cx| calendar.set_signing_out(false, cx));
                     }
                 }
                 cx.notify();
@@ -341,6 +371,10 @@ impl MatineeRoot {
         self.search.as_ref() == Some(search)
     }
 
+    fn is_current_calendar(&self, calendar: &Entity<CalendarScreen>) -> bool {
+        self.calendar.as_ref() == Some(calendar)
+    }
+
     fn is_current_details(&self, details: &Entity<DetailsScreen>) -> bool {
         self.pages
             .any(|page| matches!(page, Page::Details(open) if open == details))
@@ -357,6 +391,7 @@ impl MatineeRoot {
         self.home = None;
         self.library = None;
         self.search = None;
+        self.calendar = None;
         self.root = RootDestination::Home;
         self.stale.clear();
         self.client = None;
@@ -511,6 +546,56 @@ impl MatineeRoot {
         self.search.clone()
     }
 
+    fn adopt_calendar(
+        &mut self,
+        calendar: Entity<CalendarScreen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
+            &calendar,
+            window,
+            |this, calendar, event: &CalendarScreenEvent, window, cx| match event {
+                // Reports from a Calendar that is no longer current are stale.
+                _ if !this.is_current_calendar(calendar) => {}
+                CalendarScreenEvent::Navigate(destination) => {
+                    this.navigate(*destination, None, window, cx)
+                }
+                CalendarScreenEvent::SignOut => this.start_sign_out(cx),
+            },
+        )
+        .detach();
+        self.calendar = Some(calendar);
+        self.focus_page = true;
+    }
+
+    /// Calendar for a signed-in session, created the first time it is chosen.
+    /// It reads the integrations vault, not the Jellyfin session, so a
+    /// review scene gets a fixture with no socket.
+    fn ensure_calendar(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<CalendarScreen>> {
+        if self.calendar.is_none() && self.model.shows_home() {
+            let runtime = Arc::clone(&self.services.runtime);
+            let loader = self.artwork.clone();
+            let calendar = if self.review {
+                cx.new(|cx| CalendarPreview::Populated.screen(runtime, loader, cx))
+            } else {
+                let service = Arc::clone(&self.services.calendar);
+                let name = self
+                    .model
+                    .session()
+                    .map(|session| session.user().name().to_string())
+                    .unwrap_or_default();
+                cx.new(|cx| CalendarScreen::open(runtime, service, loader, name, cx))
+            };
+            self.adopt_calendar(calendar, window, cx);
+        }
+        self.calendar.clone()
+    }
+
     /// Move between root destinations from the app bar or Home's "View
     /// all". Pages are not touched (the bar is only on roots). Each root
     /// keeps its state; a root that missed playback reloads what it changed.
@@ -552,6 +637,13 @@ impl MatineeRoot {
                 let playback = self.stale.take(Root::Search);
                 search.update(cx, |search, cx| search.show(playback, cx));
             }
+            RootDestination::Calendar => {
+                let Some(calendar) = self.ensure_calendar(window, cx) else {
+                    return;
+                };
+                self.root = destination;
+                calendar.update(cx, |calendar, cx| calendar.show(cx));
+            }
         }
         self.focus_page = true;
         cx.notify();
@@ -582,6 +674,8 @@ impl MatineeRoot {
                     search.update(cx, |search, cx| search.resume(playback, cx));
                 }
             }
+            // No page opens above Calendar, so there is nothing to resume.
+            Root::Calendar => {}
         }
     }
 
@@ -874,6 +968,7 @@ impl MatineeRoot {
             Root::Home => self.home.clone().map(AnyView::from),
             Root::Library => self.library.clone().map(AnyView::from),
             Root::Search => self.search.clone().map(AnyView::from),
+            Root::Calendar => self.calendar.clone().map(AnyView::from),
         }
     }
 
@@ -1756,5 +1851,122 @@ mod tests {
             weak.upgrade().is_none(),
             "Search is released with the session"
         );
+    }
+
+    fn calendar_of(
+        root: &Entity<MatineeRoot>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<CalendarScreen> {
+        root.read_with(cx, |root, _| {
+            root.calendar.clone().expect("Calendar exists")
+        })
+    }
+
+    #[gpui::test]
+    fn calendar_is_a_retained_root_beside_home_library_and_search(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Calendar, cx);
+        let calendar = calendar_of(&root, cx);
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.root, RootDestination::Calendar)
+        });
+        // A month moved, a day chosen, and a filter set; then it is left.
+        calendar.update(cx, |calendar, cx| {
+            calendar.model.next_month();
+            calendar.set_filter(crate::calendar::MediaFilter::Series, cx);
+        });
+        let kept = calendar.read_with(cx, |calendar, _| {
+            (
+                calendar.model.month(),
+                calendar.model.selected(),
+                calendar.model.filter(),
+                calendar.model.grid_events().len(),
+            )
+        });
+        go(&root, RootDestination::Home, cx);
+        root.read_with(cx, |root, _| assert_eq!(root.root, RootDestination::Home));
+        go(&root, RootDestination::Search, cx);
+        go(&root, RootDestination::Library(LibraryKind::Movies), cx);
+        go(&root, RootDestination::Calendar, cx);
+        assert_eq!(calendar_of(&root, cx), calendar, "the same Calendar");
+        assert_eq!(
+            calendar.read_with(cx, |calendar, _| {
+                (
+                    calendar.model.month(),
+                    calendar.model.selected(),
+                    calendar.model.filter(),
+                    calendar.model.grid_events().len(),
+                )
+            }),
+            kept,
+            "the month, day, filter, and releases are where the person left them"
+        );
+        let (focused, selected) = calendar.read_with(cx, |calendar, _| {
+            (
+                calendar.focused_cell(),
+                calendar.model.window().index_of(calendar.model.selected()),
+            )
+        });
+        assert_eq!(focused, selected, "the keyboard is back on the chosen day");
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.root, RootDestination::Calendar)
+        });
+    }
+
+    #[gpui::test]
+    fn calendar_has_no_live_home_and_no_details_route(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Calendar, cx);
+        // Calendar never opens Details: its events have no Jellyfin identity.
+        // The only pages above a root come from Home, Library, and Search.
+        root.read_with(cx, |root, _| {
+            assert!(root.pages.is_empty(), "no page above Calendar");
+            assert_eq!(root.root.root(), Root::Calendar);
+        });
+    }
+
+    #[gpui::test]
+    fn a_jellyfin_session_ending_while_calendar_shows_drops_it_like_every_root(
+        cx: &mut TestAppContext,
+    ) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Calendar, cx);
+        let weak = calendar_of(&root, cx).downgrade();
+        // Calendar has no session-expired report of its own: a Radarr or
+        // Sonarr refusal is a source failure. Another root reports it.
+        let home = home_of(&root, cx);
+        home.update(cx, |_, cx| cx.emit(HomeEvent::SessionExpired));
+        cx.run_until_parked();
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login());
+            assert!(root.calendar.is_none());
+            assert_eq!(root.model.notice(), Some(crate::model::SESSION_ENDED));
+        });
+        assert!(weak.upgrade().is_none(), "the Calendar was released");
+    }
+
+    #[gpui::test]
+    fn sign_out_from_calendar_drops_it(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Calendar, cx);
+        let calendar = calendar_of(&root, cx);
+        let weak = calendar.downgrade();
+        calendar.update(cx, |_, cx| cx.emit(CalendarScreenEvent::SignOut));
+        drop(calendar);
+        // The vault work runs on the service runtime; wait for its answer.
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if root.read_with(cx, |root, _| root.model.shows_login()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login(), "signed out");
+            assert!(root.calendar.is_none());
+            assert_eq!(root.root, RootDestination::Home);
+        });
+        cx.run_until_parked();
+        assert!(weak.upgrade().is_none(), "the Calendar was released");
     }
 }
