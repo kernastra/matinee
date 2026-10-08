@@ -1,8 +1,7 @@
 //! Where the signed-in window is.
 //!
 //! Two layers. A [`RootDestination`] is a place the person goes to from the
-//! app bar: Home or Library today; Search, Calendar, and Settings join the
-//! enum later. Each root screen is created once per sign-in and stays alive
+//! app bar: Home, Library, Search, or Calendar today; Settings joins later. Each root screen is created once per sign-in and stays alive
 //! while another root or a page is showing, so it keeps its state.
 //!
 //! Pages stack above whichever root is current: Details, and the Player
@@ -22,15 +21,19 @@ pub(crate) enum RootDestination {
     /// Search: type a title and open it. Its text and results are kept while
     /// another root shows.
     Search,
+    /// Calendar: upcoming movie and episode releases, by day. Its month, day,
+    /// and loaded answers are kept while another root shows.
+    Calendar,
 }
 
 impl RootDestination {
     /// App bar entries, in order. Only destinations that exist natively.
-    pub(crate) const BAR: [RootDestination; 4] = [
+    pub(crate) const BAR: [RootDestination; 5] = [
         RootDestination::Home,
         RootDestination::Library(LibraryKind::Movies),
         RootDestination::Library(LibraryKind::Series),
         RootDestination::Search,
+        RootDestination::Calendar,
     ];
 
     pub(crate) fn label(self) -> &'static str {
@@ -38,6 +41,7 @@ impl RootDestination {
             Self::Home => "Home",
             Self::Library(kind) => kind.title(),
             Self::Search => "Search",
+            Self::Calendar => "Calendar",
         }
     }
 
@@ -47,6 +51,7 @@ impl RootDestination {
             Self::Home => Root::Home,
             Self::Library(_) => Root::Library,
             Self::Search => Root::Search,
+            Self::Calendar => Root::Calendar,
         }
     }
 }
@@ -57,6 +62,7 @@ pub(crate) enum Root {
     Home,
     Library,
     Search,
+    Calendar,
 }
 
 /// Which roots must reload what playback may have changed the next time
@@ -75,12 +81,14 @@ impl StaleRoots {
         self.search = true;
     }
 
-    /// Whether `root` should refresh now. Clears its mark.
+    /// Whether `root` should refresh now. Clears its mark. Calendar never
+    /// takes one: releases and monitoring do not come from playback.
     pub(crate) fn take(&mut self, root: Root) -> bool {
         match root {
             Root::Home => std::mem::take(&mut self.home),
             Root::Library => std::mem::take(&mut self.library),
             Root::Search => std::mem::take(&mut self.search),
+            Root::Calendar => false,
         }
     }
 
@@ -226,7 +234,12 @@ mod tests {
     #[test]
     fn the_bar_lists_only_native_destinations() {
         let labels: Vec<&str> = RootDestination::BAR.iter().map(|d| d.label()).collect();
-        assert_eq!(labels, vec!["Home", "Movies", "Series", "Search"]);
+        assert_eq!(
+            labels,
+            vec!["Home", "Movies", "Series", "Search", "Calendar"]
+        );
+        assert_eq!(RootDestination::Calendar.root(), Root::Calendar);
+        assert!(!StaleRoots::default().take(Root::Calendar));
         assert_eq!(RootDestination::Search.root(), Root::Search);
         assert_eq!(RootDestination::Home.root(), Root::Home);
         assert_eq!(

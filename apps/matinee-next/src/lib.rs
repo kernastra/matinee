@@ -15,6 +15,7 @@
 
 mod app_bar;
 mod artwork;
+mod calendar;
 mod details;
 mod home;
 mod library;
@@ -133,6 +134,21 @@ fn review_scene() -> Option<ReviewScene> {
         Some("search-episodes") => Some(ReviewScene::SearchEpisodes),
         Some("search-small-window") => Some(ReviewScene::SearchSmallWindow),
         Some("search-large-window") => Some(ReviewScene::SearchLargeWindow),
+        Some("calendar") => Some(ReviewScene::CalendarPopulated),
+        Some("calendar-empty") => Some(ReviewScene::CalendarEmpty),
+        Some("calendar-selected") => Some(ReviewScene::CalendarSelectedDay),
+        Some("calendar-movies") => Some(ReviewScene::CalendarMovies),
+        Some("calendar-episodes") => Some(ReviewScene::CalendarEpisodes),
+        Some("calendar-mixed") => Some(ReviewScene::CalendarMixed),
+        Some("calendar-radarr-only") => Some(ReviewScene::CalendarRadarrOnly),
+        Some("calendar-sonarr-only") => Some(ReviewScene::CalendarSonarrOnly),
+        Some("calendar-disconnected") => Some(ReviewScene::CalendarDisconnected),
+        Some("calendar-partial-error") => Some(ReviewScene::CalendarPartialError),
+        Some("calendar-loading") => Some(ReviewScene::CalendarLoading),
+        Some("calendar-error") => Some(ReviewScene::CalendarError),
+        Some("calendar-small-window") => Some(ReviewScene::CalendarSmallWindow),
+        Some("calendar-large-window") => Some(ReviewScene::CalendarLargeWindow),
+
         _ => None,
     }
 }

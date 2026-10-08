@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{ReleaseKind, ReleaseMilestone, UpcomingRelease};
+use crate::model::{ReleaseKind, ReleaseMilestone, ReleaseTiming, UpcomingRelease};
 use crate::provider::IntegrationProvider;
 use crate::time::{in_window, parse_instant};
 
@@ -127,6 +127,7 @@ fn radarr_events(
             subtitle: None,
             overview: overview.clone(),
             date,
+            timing: ReleaseTiming::CivilDay,
             release_kind: kind,
             image_url: image.clone(),
             genres: genres.clone(),
@@ -160,7 +161,12 @@ fn sonarr_event(
     end: DateTime<Utc>,
 ) -> Option<UpcomingRelease> {
     let id = episode.id.filter(|id| *id != 0)?;
-    let raw_date = first_non_empty(episode.air_date_utc, episode.air_date)?;
+    // `airDateUtc` wins whenever it is present, even when it is malformed.
+    // Only an absent or empty value falls back to the network-local day.
+    let (raw_date, timing) = match non_empty(episode.air_date_utc) {
+        Some(utc) => (utc, ReleaseTiming::Instant),
+        None => (non_empty(episode.air_date)?, ReleaseTiming::CivilDay),
+    };
     let instant = parse_instant(&raw_date)?;
     if !in_window(instant, start, end) {
         return None;
@@ -200,6 +206,7 @@ fn sonarr_event(
             .as_ref()
             .and_then(|series| blank_to_none(series.overview.clone())),
         date: raw_date,
+        timing,
         release_kind: ReleaseKind::Episode,
         image_url: image,
         genres: series.and_then(|series| series.genres).unwrap_or_default(),
@@ -212,10 +219,8 @@ fn sonarr_event(
     })
 }
 
-fn first_non_empty(primary: Option<String>, fallback: Option<String>) -> Option<String> {
-    primary
-        .filter(|value| !value.is_empty())
-        .or(fallback.filter(|value| !value.is_empty()))
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.is_empty())
 }
 
 fn nonzero(value: Option<i64>) -> Option<i64> {

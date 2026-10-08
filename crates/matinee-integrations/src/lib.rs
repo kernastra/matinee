@@ -28,6 +28,8 @@
 
 #[cfg(test)]
 mod behavior;
+#[cfg(test)]
+mod calendar_tests;
 mod error;
 mod home;
 mod model;
@@ -43,8 +45,8 @@ mod window;
 pub use error::IntegrationError;
 pub use home::home_upcoming;
 pub use model::{
-    IntegrationConnection, IntegrationKeyStatus, ReleaseKind, ReleaseMilestone, UpcomingQuery,
-    UpcomingRelease, UpcomingResult,
+    IntegrationConnection, IntegrationKeyStatus, ReleaseKind, ReleaseMilestone, ReleaseTiming,
+    UpcomingQuery, UpcomingRelease, UpcomingResult,
 };
 pub use normalize::normalize_calendar;
 pub use provider::IntegrationProvider;

@@ -16,13 +16,13 @@ use crate::{IntegrationError, UpcomingQuery};
 type ScriptHandler =
     Box<dyn Fn(&IntegrationRequest) -> Result<IntegrationResponse, TransportError> + Send>;
 
-struct Script {
+pub(super) struct Script {
     hits: AtomicUsize,
     handler: Mutex<ScriptHandler>,
 }
 
 impl Script {
-    fn new<F>(handler: F) -> Self
+    pub(super) fn new<F>(handler: F) -> Self
     where
         F: Fn(&IntegrationRequest) -> Result<IntegrationResponse, TransportError> + Send + 'static,
     {
@@ -47,14 +47,14 @@ impl Transport for Script {
     }
 }
 
-fn json_response(status: u16, body: Value) -> IntegrationResponse {
+pub(super) fn json_response(status: u16, body: Value) -> IntegrationResponse {
     IntegrationResponse {
         status,
         body: body.to_string().into_bytes(),
     }
 }
 
-fn status_body(request: &IntegrationRequest) -> Option<IntegrationResponse> {
+pub(super) fn status_body(request: &IntegrationRequest) -> Option<IntegrationResponse> {
     if request.url.contains("/system/status") {
         let app = if request.url.contains("8989") {
             "Sonarr"

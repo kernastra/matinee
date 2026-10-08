@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::provider::IntegrationProvider;
@@ -36,6 +36,20 @@ pub struct ReleaseMilestone {
     pub kind: ReleaseKind,
 }
 
+/// What a source's date string means. The shipping UI ignores this and
+/// converts every string with `Date.parse`. Native callers need it to place a
+/// release on a calendar day without moving it to another day.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReleaseTiming {
+    /// A calendar day as the source wrote it. Radarr's release fields are
+    /// UTC-midnight stamps that name a day, and Sonarr's `airDate` is a
+    /// network-local day. The day is the date as written, in no zone.
+    CivilDay,
+    /// A moment (Sonarr's `airDateUtc`). It belongs to whichever local day it
+    /// falls on for the viewer.
+    Instant,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpcomingRelease {
@@ -51,6 +65,9 @@ pub struct UpcomingRelease {
     pub overview: Option<String>,
     /// Original server timestamp. Not a second clock.
     pub date: String,
+    /// Meaning of `date`. Not part of the shipping payload.
+    #[serde(skip, default = "default_timing")]
+    pub timing: ReleaseTiming,
     pub release_kind: ReleaseKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_url: Option<String>,
@@ -70,6 +87,36 @@ pub struct UpcomingRelease {
 
 fn default_instant() -> DateTime<Utc> {
     DateTime::UNIX_EPOCH
+}
+
+fn default_timing() -> ReleaseTiming {
+    ReleaseTiming::Instant
+}
+
+impl UpcomingRelease {
+    /// The calendar day the source wrote, for [`ReleaseTiming::CivilDay`].
+    ///
+    /// `None` for an instant, and for a string that does not start with a
+    /// `YYYY-MM-DD` day. The time and zone after the day are ignored: a
+    /// Radarr stamp of `2026-08-20T00:00:00Z` is the 20th.
+    pub fn civil_day(&self) -> Option<NaiveDate> {
+        if self.timing != ReleaseTiming::CivilDay {
+            return None;
+        }
+        written_day(&self.date)
+    }
+}
+
+impl ReleaseMilestone {
+    /// The calendar day the source wrote. Milestones are always civil days.
+    pub fn civil_day(&self) -> Option<NaiveDate> {
+        written_day(&self.date)
+    }
+}
+
+fn written_day(text: &str) -> Option<NaiveDate> {
+    let day = text.get(..10)?;
+    NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

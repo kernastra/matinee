@@ -20,10 +20,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use atelier_ui::prelude::*;
+use matinee_integrations::{IntegrationError, IntegrationProvider};
 use matinee_jellyfin::{ArtworkRequest, JellyfinClient, JellyfinError, ReqwestTransport};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use crate::calendar::CalendarService;
 use crate::runtime::ServiceRuntime;
 
 /// Decoded artwork kept for reuse across screens. About a dozen backdrops.
@@ -130,6 +132,31 @@ impl ArtworkLoader {
         ArtworkLoad::Pending { task, result }
     }
 
+    /// A calendar cover, from the same cache and under the same rules as
+    /// [`Self::load`]. Store the result under [`release_key`].
+    pub(crate) fn load_release(
+        &self,
+        service: &Arc<CalendarService>,
+        provider: IntegrationProvider,
+        url: &str,
+    ) -> ArtworkLoad {
+        let key = release_key(url);
+        let mut stats = self.stats.get();
+        if let Some(image) = self.cache.borrow_mut().get(&key) {
+            stats.hits += 1;
+            self.stats.set(stats);
+            return ArtworkLoad::Cached(image);
+        }
+        stats.misses += 1;
+        self.stats.set(stats);
+        let service = Arc::clone(service);
+        let url = url.to_string();
+        let (task, result) = self
+            .runtime
+            .spawn(async move { fetch_release(&service, provider, &url).await });
+        ArtworkLoad::Pending { task, result }
+    }
+
     /// Whether the cache holds this exact image, so its owner must not release it.
     pub(crate) fn is_cached(&self, image: &DecodedImage) -> bool {
         self.cache.borrow().contains(image)
@@ -146,15 +173,37 @@ impl ArtworkLoader {
 
 /// Fetch with the session header, then decode off the async workers.
 pub(crate) async fn fetch_and_decode(client: &Client, request: &ArtworkRequest) -> ArtworkResult {
-    let bytes = match client.fetch_artwork(request, None).await {
-        Ok(bytes) => bytes,
-        Err(JellyfinError::NotFound) => return Artwork::Missing,
-        Err(_) => return Artwork::Failed,
-    };
+    match client.fetch_artwork(request, None).await {
+        Ok(bytes) => decode(bytes).await,
+        Err(JellyfinError::NotFound) => Artwork::Missing,
+        Err(_) => Artwork::Failed,
+    }
+}
+
+/// Fetch a calendar cover with no credential, then decode it the same way.
+pub(crate) async fn fetch_release(
+    service: &CalendarService,
+    provider: IntegrationProvider,
+    url: &str,
+) -> ArtworkResult {
+    match service.fetch_image(provider, url).await {
+        Ok(bytes) => decode(bytes).await,
+        Err(IntegrationError::ImageUnavailable { .. }) => Artwork::Missing,
+        Err(_) => Artwork::Failed,
+    }
+}
+
+async fn decode(bytes: Vec<u8>) -> ArtworkResult {
     match tokio::task::spawn_blocking(move || DecodedImage::decode(&bytes, MAX_SIDE)).await {
         Ok(Ok(image)) => Artwork::Ready(image),
         _ => Artwork::Failed,
     }
+}
+
+/// The cache key for a calendar cover. The prefix keeps it apart from every
+/// Jellyfin address, which are on the server and never start with it.
+pub(crate) fn release_key(url: &str) -> String {
+    format!("release\n{url}")
 }
 
 /// Least-recently-used decoded images, bounded by pixel bytes.

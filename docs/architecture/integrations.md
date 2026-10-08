@@ -90,6 +90,45 @@ series, sorts by instant, and limits to 12. The shipping Home shelf reads
 `home`. `homeUpcoming` remains in TypeScript as the synchronous helper and
 is covered by the Vitest file. Provider JSON parsing lives only in Rust.
 
-`fetch_integration_calendar` returns the normalized events for one provider
-and does not use the cache. `fetch_upcoming_releases` is the aggregated
-command the React calendar calls.
+`fetch_upcoming_releases` is the aggregated command the React calendar calls.
+`fetch_integration_calendar` is registered and returns one provider's events
+without the cache, but the shipping UI does not invoke it. Its only behaviour
+change is the native one below: a body that is not a JSON array is an error
+there, where the aggregated path reads it as no releases.
+
+## Native calendar contract
+
+The native Calendar (see [calendar.md](calendar.md)) uses four additions. The
+shipping payloads are unchanged: none of these fields is serialized.
+
+- **`UpcomingRelease.timing: ReleaseTiming`** says what `date` means.
+  `CivilDay` is a day as the source wrote it: Radarr's release fields (UTC
+  midnight stamps that name a day) and Sonarr's `airDate`. `Instant` is a
+  moment: Sonarr's `airDateUtc`. Normalization sets it from the field that
+  supplied the date. A present but malformed `airDateUtc` still never falls
+  back to `airDate`.
+- **`UpcomingRelease::civil_day()`** and **`ReleaseMilestone::civil_day()`**
+  return the `YYYY-MM-DD` the source wrote, ignoring any time and zone after
+  it. They return `None` for an instant, or for text that does not start with a
+  day. Placing a release on a local day is the application's policy, not this
+  crate's.
+- **`Integrations::fetch_calendar(provider, start, end)`** is the native path.
+  It reads the saved connection from the vault, makes one request, and does
+  not use the five-minute cache. Unlike `upcoming`, it returns
+  `MalformedResponse` for a body that is not a JSON array. Results are
+  ordered by instant, then by id. Radarr and Sonarr are independent calls, so
+  a slow one does not hold up the other.
+- **`Integrations::fetch_image(provider, url)`** fetches one artwork address a
+  calendar response named. Only `http` and `https` addresses without
+  credentials are fetched. No header or query is sent, so the key never goes to
+  an image host. Redirects are not followed, which the shared transport
+  enforces. A non-2xx status is `ImageUnavailable { provider, status }`. An
+  unsupported address or a body over 16 MiB is `InvalidImage { provider }`.
+  A timeout or refused connection is `Unreachable`, as for the API.
+
+`IntegrationError` gained `InvalidImage` and `ImageUnavailable`. Matching on
+the enum is the supported way to tell an unauthorized key (401,
+`AuthenticationRejected`), an unreachable server (`Unreachable`), a server
+failure (`Server`), an unreadable body (`MalformedResponse`), and a missing
+connection (`NotConfigured`) apart. Display text is for people and is not a
+contract.

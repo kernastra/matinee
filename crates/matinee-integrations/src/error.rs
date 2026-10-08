@@ -44,6 +44,15 @@ pub enum IntegrationError {
     },
     IncompleteKey,
     InvalidWindow,
+    /// An artwork address that is not http or https, or an oversized body.
+    InvalidImage {
+        provider: IntegrationProvider,
+    },
+    /// The image host answered with a failure status.
+    ImageUnavailable {
+        provider: IntegrationProvider,
+        status: u16,
+    },
     Client {
         detail: String,
     },
@@ -122,6 +131,15 @@ impl fmt::Display for IntegrationError {
                 f.write_str("Enter a complete API key before testing the connection.")
             }
             Self::InvalidWindow => f.write_str("The release window is not a valid time range."),
+            Self::InvalidImage { provider } => {
+                write!(
+                    f,
+                    "{provider} artwork uses an address Matinee does not load."
+                )
+            }
+            Self::ImageUnavailable { provider, status } => {
+                write!(f, "{provider} artwork returned HTTP {status}.")
+            }
             Self::Client { .. } => f.write_str("Matinee could not prepare the integration client."),
         }
     }

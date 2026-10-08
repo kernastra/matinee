@@ -253,7 +253,32 @@ reference app, including the product rules in `docs/design-spec.md`.
   See [search.md](../architecture/search.md), which includes the shipping
   audit.
 
-Phase 3G (Calendar) and later screens are not started. The compatibility
+**Phase 3G: Native Calendar — in review.**
+
+- Calendar is a fourth root destination beside Home, Library, and Search. It
+  shows Radarr movie releases and Sonarr episodes by day in a seven-column
+  month grid with a release panel for the selected day, the shipping All,
+  Movies, and Series filter, and month, today, and day navigation.
+- A pure `CalendarModel` with generation tickets per source: one slow source
+  never holds back another, a late answer for a month no longer shown is
+  ignored, and each source keeps up to four months with a five-minute
+  freshness rule (the shipping cache's). A failed source keeps the other
+  source's releases, and each failure names its cause.
+- Date policy: a Radarr stamp and a Sonarr `airDate` are the days they name,
+  never converted through UTC; a Sonarr `airDateUtc` belongs to the viewer's
+  local day. The shipping calendar moves both kinds a day early for viewers
+  west of UTC; native does not. See [calendar.md](../architecture/calendar.md).
+- `matinee-integrations` gains a typed `ReleaseTiming`, a native
+  `fetch_calendar` that fails on a non-calendar body, and `fetch_image` for
+  cover art with no credential. The shipping payloads are unchanged.
+- Covers load through the shared artwork loader for the selected day only.
+  Calendar never opens Details or the Player: a Radarr or Sonarr id is not a
+  Jellyfin item id.
+- Deferred: the 120-day "Next up" strip (shipping's second request), Settings
+  (connections come from the shipping app's vault), and the modal detail.
+  Visual capture of the review scenes is not available in this environment.
+
+Settings, Poster Studio, and later screens are not started. The compatibility
 builders that still put `api_key` on artwork URLs stay for the shipping
 app; the native app is guarded against them.
 
