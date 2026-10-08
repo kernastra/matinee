@@ -285,6 +285,16 @@ if matches=$(grep -RInE '\b(e?println|e?print|dbg|log::[a-z]+|tracing::[a-z]+)!'
   echo "$matches" >&2
 fi
 
+# 25. Artwork reaches only public addresses. Its client resolves through
+#     PublicResolver and must ignore proxy settings: a proxy would resolve the
+#     name itself, past the check. Tests cover the resolver; this keeps the
+#     one setting they cannot exercise without changing the environment.
+transport=crates/matinee-integrations/src/transport.rs
+if ! grep -q 'dns_resolver(Arc::new(resolver))' "$transport" \
+  || ! grep -q '\.no_proxy()' "$transport"; then
+  fail "the artwork client in $transport must keep its PublicResolver and .no_proxy()"
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

@@ -44,15 +44,20 @@ pub(crate) enum CalendarScreenEvent {
     SignOut,
 }
 
-/// Height of a day cell: a day number and up to three release chips.
-const CELL_HEIGHT: f32 = Space::S16.value() + Space::S5.value();
 /// Gaps between day cells. The weekday row uses the same gap to line up.
 const CELL_GAP: f32 = Space::S1.value();
+/// A day cell's padding, and the gap between its lines.
+const CELL_PADDING: f32 = Space::S1.value();
+/// Lines below the day number that every cell has room for, however short
+/// the window: two chips, or one and "+N more". At the 960 × 620 minimum
+/// this is what lets all six weeks show without scrolling; taller windows
+/// give each row more lines.
+const MIN_CELL_LINES: usize = 2;
+/// Weeks in the grid.
+const GRID_ROWS: usize = (GRID_DAYS / 7) as usize;
 /// Release panel width on wide windows. Narrow windows keep it too: the
 /// standard minimum is 960 points, and the grid is still seven columns there.
 const PANEL_WIDTH: f32 = 336.0;
-/// Chips per day cell before "+N more".
-const CHIPS_PER_DAY: usize = 3;
 /// Cover size in the release panel.
 const COVER_WIDTH: f32 = 40.0;
 const COVER_HEIGHT: f32 = 60.0;
@@ -468,13 +473,15 @@ struct DayCell {
 
 /// A release on a day cell. Several episodes of one series read as one chip.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Chip {
+pub(super) struct Chip {
     title: String,
     movie: bool,
     count: usize,
 }
 
-fn chips_for(events: &[&CalendarEvent]) -> (Vec<Chip>, usize) {
+/// A cell's chips for `events`, with room for `lines` lines below the day
+/// number. Everything fits, or one line is kept for "+N more".
+pub(super) fn chips_for(events: &[&CalendarEvent], lines: usize) -> (Vec<Chip>, usize) {
     let mut chips: Vec<Chip> = Vec::new();
     let mut series_index: HashMap<i64, usize> = HashMap::new();
     for event in events {
@@ -497,8 +504,12 @@ fn chips_for(events: &[&CalendarEvent]) -> (Vec<Chip>, usize) {
             }),
         }
     }
-    let more = chips.len().saturating_sub(CHIPS_PER_DAY);
-    chips.truncate(CHIPS_PER_DAY);
+    if chips.len() <= lines {
+        return (chips, 0);
+    }
+    let shown = lines.saturating_sub(1);
+    let more = chips.len() - shown;
+    chips.truncate(shown);
     (chips, more)
 }
 
@@ -591,12 +602,54 @@ fn short_day(day: NaiveDate) -> String {
     day.format("%b %-d").to_string()
 }
 
-pub(super) fn grid_sizing() -> GridSizing {
+/// The heights a day cell is laid out from: the theme's type, so a change of
+/// scale keeps lines whole.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct CellMetrics {
+    /// Padding above and below, plus the day number's line.
+    chrome: f32,
+    /// One chip or "+N more" line, with the gap above it.
+    line: f32,
+}
+
+impl CellMetrics {
+    pub(super) fn of(theme: &Theme) -> Self {
+        let number = theme.typography.style(TextRole::Metadata).line_height;
+        let caption = theme.typography.style(TextRole::Caption).line_height;
+        Self {
+            chrome: 2.0 * CELL_PADDING + number,
+            // The chip's colour bar is 12 points; the text line is taller.
+            line: CELL_PADDING + caption.max(12.0),
+        }
+    }
+
+    /// The shortest row: the day number and [`MIN_CELL_LINES`] lines.
+    pub(super) fn min_row(self) -> f32 {
+        self.chrome + MIN_CELL_LINES as f32 * self.line
+    }
+
+    /// Row height for a grid area `area` points tall: the six weeks share it
+    /// whole, so a tall window has no empty band under the grid, and the
+    /// grid scrolls only when even the shortest rows do not fit.
+    pub(super) fn row_height(self, area: Option<f32>) -> f32 {
+        let share = area.map_or(0.0, |area| {
+            ((area - GRID_ROWS as f32 * CELL_GAP) / GRID_ROWS as f32).floor()
+        });
+        share.max(self.min_row())
+    }
+
+    /// Lines a row of `height` has room for below the day number.
+    pub(super) fn lines(self, height: f32) -> usize {
+        ((height - self.chrome) / self.line).floor().max(1.0) as usize
+    }
+}
+
+pub(super) fn grid_sizing(row_height: f32) -> GridSizing {
     GridSizing {
         min_cell_width: Space::S10.value(),
         max_cell_width: 400.0,
         aspect: 0.0,
-        extra_height: CELL_HEIGHT,
+        extra_height: row_height,
         column_gap: CELL_GAP,
         row_gap: CELL_GAP,
         inset_x: 0.0,
@@ -648,7 +701,7 @@ impl Render for CalendarScreen {
         // the panel share what is left and scroll inside it. Without
         // `flex_none`, a short window squeezed the header and the status line
         // under the grid.
-        v_stack(Space::S4)
+        v_stack(Space::S3)
             .size_full()
             .overflow_hidden()
             .p(Space::S4.px())
@@ -802,6 +855,11 @@ impl CalendarScreen {
 
     /// The month: a weekday row and the six weeks, in a virtualized grid.
     fn month(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        // The grid reports the area it was given; the first frame uses the
+        // shortest rows and the grid draws again once it is measured.
+        let metrics = CellMetrics::of(theme);
+        let row_height = metrics.row_height(self.grid.measured().map(|(_, height)| height));
+        let lines = metrics.lines(row_height);
         let window: MonthWindow = self.model.window();
         let month = self.model.month();
         let today = self.model.today();
@@ -813,7 +871,8 @@ impl CalendarScreen {
         let cells: Vec<DayCell> = (0..GRID_DAYS)
             .map(|index| {
                 let day = window.day(index);
-                let (chips, more) = chips_for(by_day.get(&day).map(Vec::as_slice).unwrap_or(&[]));
+                let (chips, more) =
+                    chips_for(by_day.get(&day).map(Vec::as_slice).unwrap_or(&[]), lines);
                 DayCell {
                     day,
                     in_month: month_start(day) == month,
@@ -833,7 +892,7 @@ impl CalendarScreen {
             cells.len(),
             move |cell, _, _| day_cell(&grid_theme, &cells[cell.index], cell.focused),
         )
-        .sizing(grid_sizing())
+        .sizing(grid_sizing(row_height))
         .on_activate({
             let weak = weak.clone();
             move |index, _, cx| {

@@ -123,8 +123,10 @@ shipping payloads are unchanged: none of these fields is serialized.
   credentials, on a public host, are fetched: `localhost`, `*.localhost`, and
   loopback, private, link-local, shared, unspecified, broadcast, multicast,
   documentation, and reserved addresses (IPv4, IPv6, and IPv4-mapped) are
-  refused before any request. Names are not resolved, so a public name with a
-  private DNS answer is not caught. No header or query is sent, so the key
+  refused before any request. The request is `public_only`, so a name is
+  resolved by the artwork client's `PublicResolver`, refused whole if any
+  answer is not public, and connected only at the addresses checked (see
+  [calendar.md](calendar.md#artwork-trust-policy)). No header or query is sent, so the key
   never goes to an image host. Redirects are not followed, which the shared
   transport enforces. The body is capped at 16 MiB by the transport (below).
   A non-2xx status is `ImageUnavailable { provider, status }`. A refused
@@ -136,6 +138,13 @@ shipping payloads are unchanged: none of these fields is serialized.
   `TransportError` for which `is_body_too_large()` is true. Every Radarr and
   Sonarr API call sends `None` and is read whole, exactly as the shipping app
   has always read it.
+- **`IntegrationRequest.public_only`** sends a request through
+  `ReqwestTransport`'s second client, which reaches only public addresses:
+  an IP literal is checked before sending, names resolve through
+  `PublicResolver`, proxies are ignored, and redirects are not followed. A
+  refused host is a `TransportError` for which `is_forbidden_destination()`
+  is true. API calls send `false` and use the unchanged client, which may
+  reach a server on the person's own network.
 
 `IntegrationError` gained `InvalidImage` and `ImageUnavailable`. Matching on
 the enum is the supported way to tell an unauthorized key (401,

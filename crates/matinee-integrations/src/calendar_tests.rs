@@ -129,6 +129,10 @@ fn radarr_calendar_sends_the_range_unchanged_and_the_key_only_in_a_header() {
         request.max_body, None,
         "a calendar body is read as the shipping app has always read it"
     );
+    assert!(
+        !request.public_only,
+        "the configured server may be on the person's own network"
+    );
 }
 
 #[test]
@@ -478,6 +482,10 @@ fn artwork_is_fetched_over_http_or_https_only_and_never_with_a_key() {
         Some(16 * 1024 * 1024),
         "the transport caps a cover's body while it streams"
     );
+    assert!(
+        images[0].public_only,
+        "a cover goes through the client that reaches only public addresses"
+    );
 }
 
 /// Fetch one artwork address through a transport that answers `answer`.
@@ -508,6 +516,13 @@ fn artwork_failures_are_typed_by_their_cause() {
     })
     .expect_err("timeout");
     assert!(matches!(timed_out, IntegrationError::Unreachable { .. }));
+
+    let forbidden =
+        image_with(|| Err(TransportError::forbidden_destination())).expect_err("forbidden");
+    assert!(
+        matches!(forbidden, IntegrationError::InvalidImage { .. }),
+        "a host that resolved to a private address is an address Matinee does not load"
+    );
 
     let refused = image_with(|| Err(TransportError::body_too_large())).expect_err("refused");
     assert!(

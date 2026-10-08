@@ -283,6 +283,11 @@ reference app, including the product rules in `docs/design-spec.md`.
   overlaps the header and the status line, and day chips no longer run into
   each other. Each has a regression test that failed on the first
   implementation. The scenes were captured as real pixels under XWayland.
+- Final pass: cover hosts are resolved by the artwork client's own resolver,
+  which refuses any name with a non-public answer and hands the connector
+  only the addresses it checked, closing DNS rebinding; covers ignore
+  proxies. The month's six weeks share the grid area, so tall windows have
+  no empty band and no standard size scrolls.
 - Deferred: the 120-day "Next up" strip (a separate enhancement with its own
   request lifecycle) and Settings (connections come from the shipping app's
   vault). The release panel covers the shipping modal's detail, so there is

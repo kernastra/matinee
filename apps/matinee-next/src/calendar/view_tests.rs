@@ -21,7 +21,8 @@ use super::grid::{month_start, shift_month};
 use super::model::{Link, Overview, SourceFailure, SourceStatus};
 use super::preview::CalendarPreview;
 use super::screen::{
-    CalendarScreen, Step, day_number_color, empty_day_line, grid_sizing, source_line,
+    CalendarScreen, CellMetrics, Step, chips_for, day_number_color, empty_day_line, grid_sizing,
+    source_line,
 };
 use crate::artwork::ArtworkLoader;
 use crate::runtime::ServiceRuntime;
@@ -718,7 +719,7 @@ fn every_review_scene_draws_at_each_standard_window_size(cx: &mut TestAppContext
 /// beside it. Columns follow the width the grid is given.
 #[test]
 fn the_month_is_seven_columns_at_every_standard_width() {
-    let sizing = grid_sizing();
+    let sizing = grid_sizing(80.0);
     for width in [560.0, 760.0, 1100.0, 1500.0] {
         assert_eq!(sizing.columns(width), 7, "width {width}");
     }
@@ -855,4 +856,81 @@ fn a_release_row_spans_the_panel_whether_or_not_the_panel_scrolls(cx: &mut TestA
             "{scene:?}: row {row:?} in panel {panel:?}"
         );
     }
+}
+
+#[gpui::test]
+fn the_month_fills_its_area_without_scrolling_at_every_standard_size(cx: &mut TestAppContext) {
+    // With fixed 84-point rows, tall windows left an empty band under the
+    // sixth week. Rows now share the area whole, never below the height of
+    // the day number and two lines.
+    let theme = cx.update(|cx| cx.theme().clone());
+    let metrics = CellMetrics::of(&theme);
+    for (width, height) in [
+        (960.0, 620.0),
+        (1200.0, 760.0),
+        (1440.0, 900.0),
+        (1920.0, 1080.0),
+        (1920.0, 1011.0),
+    ] {
+        let (view, vcx) = open(cx, CalendarPreview::EpisodeHeavy);
+        vcx.simulate_resize(size(px(width), px(height)));
+        redraw(&view, vcx);
+        redraw(&view, vcx);
+        let at = format!("{width}x{height}");
+        let area = f32::from(vcx.debug_bounds("calendar-grid").expect("grid").size.height);
+        let row = metrics.row_height(Some(area));
+        let content = 6.0 * (row + 4.0);
+        assert!(content <= area, "{at}: six weeks of {row} fit in {area}");
+        assert!(
+            area - content < 10.0,
+            "{at}: no empty band ({} left)",
+            area - content
+        );
+        let scroll = view.read_with(vcx, |screen, _| screen.grid_state().scroll().max_offset());
+        assert_eq!(
+            f32::from(scroll.height),
+            0.0,
+            "{at}: the month does not scroll"
+        );
+        let lines = metrics.lines(row);
+        assert!(lines >= 2, "{at}: {lines} lines");
+        assert!(
+            metrics.min_row() <= row && row >= 62.0,
+            "{at}: the day number and two lines always fit ({row})"
+        );
+    }
+    // Taller windows earn more lines per day.
+    assert!(metrics.lines(metrics.row_height(Some(856.0))) > metrics.lines(62.0));
+}
+
+#[test]
+fn a_cell_shows_every_chip_that_fits_and_counts_the_rest() {
+    use super::event::CalendarEvent;
+    use matinee_integrations::{IntegrationProvider, ReleaseKind};
+    let movie = |id: i64| CalendarEvent {
+        id: format!("radarr-{id}-theatrical"),
+        source: IntegrationProvider::Radarr,
+        source_id: id,
+        series_id: None,
+        day: NaiveDate::from_ymd_opt(2026, 10, 14).unwrap(),
+        instant: None,
+        title: format!("Film {id}"),
+        subtitle: None,
+        overview: None,
+        genres: Vec::new(),
+        kind: ReleaseKind::Theatrical,
+        milestones: Vec::new(),
+        image_url: None,
+        downloaded: false,
+    };
+    let four: Vec<CalendarEvent> = (1..=4).map(movie).collect();
+    let refs: Vec<&CalendarEvent> = four.iter().collect();
+    let counts = |lines| {
+        let (chips, more) = chips_for(&refs, lines);
+        (chips.len(), more)
+    };
+    assert_eq!(counts(2), (1, 3), "two lines: one chip and +3 more");
+    assert_eq!(counts(3), (2, 2));
+    assert_eq!(counts(4), (4, 0), "everything fits, so no +N line");
+    assert_eq!(counts(6), (4, 0));
 }

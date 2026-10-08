@@ -257,8 +257,15 @@ carries it, and errors arrive redacted. Calendar writes no log lines (guard
 
 ## Presentation
 
-- A seven-column, six-row grid at every standard width. Cells are 84 points
-  tall, so a day holds its number and up to three chips. Each chip is one
+- A seven-column, six-row grid at every standard width. The six weeks share
+  the grid area whole (`CellMetrics::row_height`), so a tall window has no
+  empty band under the grid, and no row is shorter than the day number and
+  two lines. The lines a cell shows follow its height, from the theme's type
+  metrics: every chip if they fit, otherwise one line less and *+N more*.
+  Measured: 62-point rows with 2 lines at 960 × 620, 85 with 3 at
+  1200 × 760, 108 with 4 at 1440 × 900, and 138 with 6 at 1920 × 1080. The
+  month does not scroll at any standard size; the bands above it are 12
+  points apart so that the minimum size fits two lines. Each chip is one
   line, truncated, with a series' episode count (`×2`) kept beside it: a
   wrapped title ran into the chip below it in a narrow cell.
 - A day the grid borrows from a neighbouring month has a muted number.
@@ -291,26 +298,47 @@ grid that shows none of them. The covers wanted are worked out in `drive`,
 after an action or an answer, never while drawing; a review scene sets its
 fixture covers when it is built.
 
-The address comes from the server's JSON, so `fetch_image` checks it before
-any request:
+### Artwork trust policy
 
-- `http` or `https`, with no user or password;
-- a public host: `localhost` and `*.localhost`, and addresses that are
-  loopback, private, link-local (including `169.254.169.254`), shared
-  (`100.64.0.0/10`), unspecified, broadcast, multicast, documentation, or
-  reserved are refused, for IPv4, IPv6, and IPv4-mapped IPv6;
-- no header and no query, so no key goes to a cover host.
+A cover address comes from the server's JSON, so the server names the host.
+Matinee fetches covers only from the public internet
+(`matinee-integrations/src/destination.rs`):
 
-The body is capped at 16 MiB by the transport: an announced length over the
-cap is refused before the body is read, and a stream is dropped at the chunk
-that crosses it, so an oversized answer is never held in memory. The 20-second
-timeout covers the body. Decoding then refuses images over 2560 pixels on a
-side before allocating them.
+1. **The address.** `http` or `https`, no user or password, not `localhost`
+   or `*.localhost`, and any IP literal must be public (`public_url`).
+2. **The client.** Artwork requests are `public_only` and go through a
+   separate reqwest client from the Radarr and Sonarr API client.
+3. **Resolution.** That client's resolver (`PublicResolver`) looks a name up
+   once per connection and refuses the whole name if any answer is not
+   public. "Public" means global IPv4, or IPv6 in 2000::/3 outside
+   documentation; loopback, private, link-local (including
+   169.254.169.254), shared, unspecified, broadcast, multicast, benchmarking,
+   and reserved ranges are refused, and an IPv4 address carried in IPv6
+   (mapped, NAT64, 6to4) is judged as that IPv4 address.
+4. **Connection.** The connector dials only the addresses the resolver
+   returned. There is no separate validation lookup, so a DNS server that
+   answers differently the second time (rebinding) has no second time to
+   answer: each new connection is resolved and checked afresh. IP literals
+   never reach a resolver, which is why step 1 checks them.
+5. **No proxy.** The artwork client ignores proxy settings, because a proxy
+   would resolve the name itself (guard 25).
+6. **No redirects.** A 3xx is the answer (the fallback cover); no hop is
+   followed, so a redirect cannot reach a host the rules refuse.
+7. **No credential.** No header and no query: no key goes to a cover host.
+8. **Bounded.** The body is capped at 16 MiB from its announced length or as
+   it streams; 20 seconds covers DNS, connection, and body; decoding refuses
+   images over 2560 pixels on a side before allocating them.
 
-Redirects are not followed, because the shared transport disables them. An
-image host that answers with a redirect shows the fallback. Following them
-safely would mean checking every hop against the host rule, and today's
-cover hosts (TMDb, TheTVDB, fanart.tv) answer directly.
+A refused host is `InvalidImage`, and the cover shows its fallback. The API
+client is unchanged: Radarr and Sonarr are usually on the person's own
+network.
+
+**Lifecycle.** A lookup runs on its own short-lived thread, as reqwest's own
+resolver runs `getaddrinfo` off the async workers. Lookups happen per new
+connection, and connections are pooled per host, so a day's covers cost a
+few. Dropping a cover's task drops its request, which closes the connection
+at once (`a_cancelled_fetch_closes_its_connection_at_once`); a lookup already
+running finishes and its answer is discarded.
 
 ## Known limitations
 
@@ -321,8 +349,6 @@ cover hosts (TMDb, TheTVDB, fanart.tv) answer directly.
   with `XResizeWindow`, since Mutter ignores the requested size), and at
   1920 × 1011, the largest the 1920 × 1080 display's work area allows. Layout
   is also asserted headlessly with GPUI debug bounds at all four sizes.
-- **Tall windows.** Cells keep their 84-point height, so at 1440 × 900 and
-  above the grid leaves empty space below its sixth week.
 - **Zone changes while open.** Each air time is placed with the system zone's
   offset for that instant, so daylight-saving changes are handled per event.
   A change to the system zone itself is applied when the next answer arrives,
@@ -336,9 +362,12 @@ cover hosts (TMDb, TheTVDB, fanart.tv) answer directly.
   read on the next visit, but months answered by the old server stay until
   they are five minutes old or Refresh is used. Native Settings (Phase 3H)
   is the place to refresh Calendar when a connection is saved.
-- **Host names are not resolved** by the cover check. A public name whose DNS
-  answer is a private address is fetched; doing better needs a resolver hook
-  on the shared client.
+- **Artwork and proxies.** Covers are fetched directly, never through a
+  configured proxy. Where only a proxy reaches the internet, covers show
+  their fallback.
+- **Trust in the resolver.** The check applies to what the system resolver
+  answers. An address that is public but routes into a private network
+  (unusual, and outside what DNS can show) is not detected.
 - **Home and End** move to the grid's first and last cells, as `VirtualGrid`
   defines them, not to the start and end of the week.
 
@@ -407,16 +436,25 @@ scene.
   request in eight zones and five months, and the transport under hostile
   answers (an announced oversized body, an endless stream, a body at the cap,
   and a redirect that must not carry the key).
-- `calendar/view_tests.rs` (30): the rendered screen with real focus and
+- `calendar/view_tests.rs` (32): the rendered screen with real focus and
   keystrokes: opening on today, arrows across weeks and months, Home and
   Down, Enter on a day of the next month, the month controls, the selected
   day's order, covers for the selected day only, every source state and the
   empty-day line, refresh, Tab into the panel and its scrolling at 960 × 620,
-  the layout bounds of the header, status line, grid, and release rows,
-  muted borrowed days, and every scene at all four standard sizes.
+  the layout bounds of the header, status line, grid, and release rows, the
+  month filling its area without scrolling at every size, chips that fit and
+  *+N more*, muted borrowed days, and every scene at all four standard sizes.
 - `view.rs` (4): Calendar as a retained root that keeps its month, day,
   filter, releases, and focus; no page above it; sign-out and a Jellyfin
   session ending both drop it.
+- `matinee-integrations/src/destination_tests.rs` (10), on the real client
+  with loopback stand-ins for public and private hosts and a scripted DNS:
+  the address policy table, a public host reached once per connection with
+  no credential, private answers (IPv4, IPv6, mapped, metadata, ULA,
+  link-local) refused with nothing reaching them, mixed answers refused
+  whole, rebinding between connections, redirects toward private hosts,
+  IP literals, the API path still reaching a private server, the size cap
+  and timeout, and cancellation closing the connection.
 - `matinee-integrations/src/calendar_tests.rs` (17): request parameters, the
   key in a header only, the body cap on covers and not on the API, 401, 5xx,
   timeouts with redaction, malformed bodies, partial bodies, ordering, timing,

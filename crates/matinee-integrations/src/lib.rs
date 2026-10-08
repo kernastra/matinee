@@ -30,6 +30,9 @@
 mod behavior;
 #[cfg(test)]
 mod calendar_tests;
+mod destination;
+#[cfg(test)]
+mod destination_tests;
 mod error;
 mod home;
 mod model;

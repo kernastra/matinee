@@ -363,6 +363,7 @@ fn get(
                 headers,
                 query: Vec::new(),
                 max_body,
+                public_only: false,
             })
             .await
     });
