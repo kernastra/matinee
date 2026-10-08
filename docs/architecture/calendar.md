@@ -66,7 +66,7 @@ Read from `src/components/Calendar.tsx`, `src/lib/integrations.ts`,
 | Release detail | Modal dialog | Panel: source, title, subtitle, kind, milestone dates, overview, genres, in-library state | Intentional difference: no modal, no Escape to close |
 | Movie vs episode distinction | Chip colour and source label | Chip colour bar, source line, and the panel's source label | Parity |
 | Filter All / Movies / Series | Yes, in the agenda and the grid | Yes, in the grid and the panel | Parity |
-| Next up: 120-day agenda, five items | Yes, own request | **Deferred** | Deferred (see below) |
+| Next up: 120-day agenda, five items | Yes, own request | **Deferred** | Deferred: a separate enhancement (see below) |
 | Per-provider status | Connected, connecting, or unavailable for configured providers | Checking, not connected, loading, connected, or the specific failure | Parity, with the cause named |
 | Last updated time | Yes | Yes, in the local zone | Parity |
 | Refresh | Clears the 5-minute cache and refetches | Refetches the shown month and both connections; the old events stay until replaced | Native difference: no TTL cache, see lifecycle |
@@ -182,8 +182,10 @@ for days that other loaded months still cover, until a new answer replaces
 them.
 
 **Credentials.** The key is read from the vault and sent only as the
-`X-Api-Key` header. Neither the address nor a log line carries it, and errors
-arrive redacted. Calendar writes no log lines (guard 24).
+`X-Api-Key` header, to the address saved with it. Redirects are not followed,
+so the key never travels to another host. Neither the address nor a log line
+carries it, and errors arrive redacted. Calendar writes no log lines (guard
+24).
 
 ## Request lifecycle
 
@@ -209,9 +211,19 @@ arrive redacted. Calendar writes no log lines (guard 24).
 - **Refresh** (the app bar's Refresh, or *Try again*) re-reads both connections
   and asks again for the shown month. Failures are cleared. Events stay until
   replaced.
-- **Show.** Each time Calendar is chosen, both connections are read again and
-  failures are retried. This is how a connection added in Settings shows up
-  without restarting.
+- **Show.** Each time Calendar is chosen, both connections are read again, so
+  a connection added in Settings shows up without restarting. A failed month
+  is retried by a visit only once the failure is `RETRY_AFTER` (30 seconds)
+  old: going back and forth between roots does not ask a failing server again
+  on every visit (`coming_back_right_after_a_failure_does_not_retry_it_but_a_later_visit_does`).
+  A month still in flight is never asked for twice
+  (`coming_back_while_the_month_is_loading_asks_for_nothing_more`). Refresh,
+  *Try again*, and choosing another month retry at once.
+- **Abandoned requests.** If a request's task ends without an answer (it
+  panicked, or the runtime stopped), the screen tells the model
+  (`CalendarModel::abandon`). The month shows as unavailable with *Try again*,
+  rather than loading forever with Refresh disabled. A first connection check
+  that is lost reads as failed; a lost recheck keeps the known connection.
 - **Sign-out** drops the Calendar root, as it drops Home, Library, and Search.
   The saved connections are not Jellyfin credentials, so they stay saved.
 - **Window close** aborts every request and cover task in the screen's `Drop`.
@@ -228,15 +240,37 @@ arrive redacted. Calendar writes no log lines (guard 24).
   Details and the Player out of `calendar/`.
 - Keyboard: the month is one tab stop (`VirtualGrid`). Arrows move a day,
   Up and Down move a week, Home and End move to the first and last cell,
-  and Enter selects. Tab leaves the month for the release panel.
-- On opening Calendar, focus goes to the selected day.
+  and Enter selects. Left and Right continue across the week (Saturday to
+  the next Sunday). Past the grid's first or last day, and Up or Down past
+  its first or last week, the day reached is selected and its month shown,
+  through the grid's `on_edge`. Tab leaves the month for the release panel.
+- Choosing a day of another month (Enter, a click, or crossing an edge) shows
+  that month and moves the grid's focus to the chosen day's new cell, so the
+  focus ring never sits on an unrelated date.
+- The release panel's rows are direct children of its scroll view. When Tab
+  reaches a row below the fold, the panel scrolls to it
+  (`ScrollControl::reveal_child`). At 960 × 620 a day with six releases puts
+  rows below the fold
+  (`tabbing_to_a_release_below_the_fold_scrolls_the_panel_to_it`).
+- On opening Calendar, and on every return to it, focus goes to the selected
+  day.
 
 ## Presentation
 
 - A seven-column, six-row grid at every standard width. Cells are 84 points
-  tall, so a day holds its number and up to three chips.
+  tall, so a day holds its number and up to three chips. Each chip is one
+  line, truncated, with a series' episode count (`×2`) kept beside it: a
+  wrapped title ran into the chip below it in a narrow cell.
+- A day the grid borrows from a neighbouring month has a muted number.
+- The app bar, header, and status line keep their height; the month and the
+  panel share the rest. The month column is `h_full`, so the grid area is
+  bounded by it and scrolls inside it. Without that, at 960 × 620 the grid
+  area took its full 528-point content height and was centred over the
+  header and the status line, hiding each source's state
+  (`the_header_status_and_month_stack_without_overlap_at_every_standard_size`).
 - A release panel of 336 points beside the grid. At 960 points wide both fit,
-  and the grid stays seven columns.
+  and the grid stays seven columns. Release rows span the panel whether or not
+  it scrolls (`a_release_row_spans_the_panel_whether_or_not_the_panel_scrolls`).
 - Covers are drawn at 40 × 60 points through the shared `art_frame`, with the
   title as the fallback text.
 - The palette and type are Matinee's: amber for movies, faded teal for series,
@@ -250,18 +284,45 @@ shared `ArtworkLoader`. The loader uses the same 96 MiB cache, the same decode,
 and the same release of atlas images. Calendar keys its covers under
 `release\n{url}`, so they cannot collide with a Jellyfin address.
 
-Covers load only for the selected day's releases. Choosing another day releases
-the covers no longer shown and cancels their loads. Loading a whole month's
-covers would start dozens of downloads for a grid that shows none of them.
+Covers load only for the selected day's releases, as the filter shows them.
+Choosing another day releases the covers no longer shown and cancels their
+loads. Loading a whole month's covers would start dozens of downloads for a
+grid that shows none of them. The covers wanted are worked out in `drive`,
+after an action or an answer, never while drawing; a review scene sets its
+fixture covers when it is built.
 
-Known limitation: redirects are not followed, because the shared transport
-disables them. An image host that answers with a redirect shows the fallback.
+The address comes from the server's JSON, so `fetch_image` checks it before
+any request:
+
+- `http` or `https`, with no user or password;
+- a public host: `localhost` and `*.localhost`, and addresses that are
+  loopback, private, link-local (including `169.254.169.254`), shared
+  (`100.64.0.0/10`), unspecified, broadcast, multicast, documentation, or
+  reserved are refused, for IPv4, IPv6, and IPv4-mapped IPv6;
+- no header and no query, so no key goes to a cover host.
+
+The body is capped at 16 MiB by the transport: an announced length over the
+cap is refused before the body is read, and a stream is dropped at the chunk
+that crosses it, so an oversized answer is never held in memory. The 20-second
+timeout covers the body. Decoding then refuses images over 2560 pixels on a
+side before allocating them.
+
+Redirects are not followed, because the shared transport disables them. An
+image host that answers with a redirect shows the fallback. Following them
+safely would mean checking every hop against the host rule, and today's
+cover hosts (TMDb, TheTVDB, fanart.tv) answer directly.
 
 ## Known limitations
 
-- **No visual capture.** Pixel review is not available here. The scenes are
-  checked by drawing them at all four standard sizes and by state assertions.
-  Phase 3F reports the same limit: headless capture is blank.
+- **Visual capture.** GPUI's headless test window never paints, so pixels
+  come from the real app: every scene was run under XWayland
+  (`WAYLAND_DISPLAY` unset) on GNOME and captured with ImageMagick
+  `import -window <id>`, at 960 × 620, 1200 × 760, and 1440 × 900 (resized
+  with `XResizeWindow`, since Mutter ignores the requested size), and at
+  1920 × 1011, the largest the 1920 × 1080 display's work area allows. Layout
+  is also asserted headlessly with GPUI debug bounds at all four sizes.
+- **Tall windows.** Cells keep their 84-point height, so at 1440 × 900 and
+  above the grid leaves empty space below its sixth week.
 - **Zone changes while open.** Each air time is placed with the system zone's
   offset for that instant, so daylight-saving changes are handled per event.
   A change to the system zone itself is applied when the next answer arrives,
@@ -271,21 +332,30 @@ disables them. An image host that answers with a redirect shows the fallback.
   them. Native guidance does not yet say to reconnect.
 - **Two Calendars in a process** are two screens with their own requests.
   There is one service and one cache per process, as for the other roots.
-- **Keyboard focus on a narrow window** follows the tab order. The release
-  panel scrolls on its own, so Tab can move to a row below the fold.
+- **A connection changed in the shipping app** while native Calendar runs is
+  read on the next visit, but months answered by the old server stay until
+  they are five minutes old or Refresh is used. Native Settings (Phase 3H)
+  is the place to refresh Calendar when a connection is saved.
+- **Host names are not resolved** by the cover check. A public name whose DNS
+  answer is a private address is fetched; doing better needs a resolver hook
+  on the shared client.
+- **Home and End** move to the grid's first and last cells, as `VirtualGrid`
+  defines them, not to the start and end of the week.
 
 ## Intentional deferrals
 
-- **Next up (120-day agenda and its filter).** Shipping's strip is a second,
-  separate request for the next 120 days. The native pass uses the month grid
-  and the selected day's list instead. The month grid already holds the
-  Radarr and Sonarr data, and a second range would add a second cache policy
-  and a second set of tickets. Opus should decide whether the strip is worth
-  that.
+- **Next up (120-day agenda and its filter).** Deferred after review. The
+  strip is a separate enhancement, not part of a coherent calendar: the grid,
+  Today, and the selected day's panel already answer "what releases when".
+  It needs its own 120-day request per source, its own freshness and tickets,
+  and its own failure line, which is a second request lifecycle beside the
+  month's. It can be added later without changing the month model.
 - **Connecting a source from Calendar.** Settings is a later phase. Calendar
   guides the person and reads whatever the shipping app saved.
-- **Modal release detail and Escape.** The panel replaces the modal. A modal
-  would be a second way to see the same data.
+- **Modal release detail and Escape.** Not needed. The panel shows everything
+  the shipping modal does for the chosen release: source, title, subtitle,
+  kind and day, every milestone of a movie, overview, genres, and whether it
+  is in the library. A release never opens Jellyfin Details.
 - **Notifications, calendar export, and marking releases watched.** Not part
   of Phase 3G.
 - **Poster Studio, Settings, and Phase 4 packaging.** Unchanged.
@@ -301,7 +371,7 @@ Set `MATINEE_PREVIEW` to one of these names, optionally with
 | Empty month | `calendar-empty` | 1200 × 760 |
 | Selected day with a movie and episodes | `calendar-selected` | 1200 × 760 |
 | Movie-heavy month | `calendar-movies` | 1200 × 760 |
-| Episode-heavy month, several on one day | `calendar-episodes` | 1200 × 760 |
+| Episode-heavy month, four a day and six on the 15th | `calendar-episodes` | 1200 × 760 |
 | Movies and episodes on the same days | `calendar-mixed` | 1200 × 760 |
 | Radarr only | `calendar-radarr-only` | 1200 × 760 |
 | Sonarr only | `calendar-sonarr-only` | 1200 × 760 |
@@ -309,6 +379,7 @@ Set `MATINEE_PREVIEW` to one of these names, optionally with
 | Radarr answered, Sonarr unreachable | `calendar-partial-error` | 1200 × 760 |
 | Connected, nothing answered yet | `calendar-loading` | 1200 × 760 |
 | Both unreachable | `calendar-error` | 1200 × 760 |
+| Next month, releases on borrowed grid days | `calendar-next-month` | 1200 × 760 |
 | Narrow window | `calendar-small-window` | 960 × 620 |
 | Wide window | `calendar-large-window` | 1920 × 1080 |
 
@@ -322,23 +393,35 @@ scene.
 - `calendar/event.rs` (10): the day rule for each timing kind at several
   offsets, the exact local midnight, unreadable days, milestones, ordering,
   filters.
-- `calendar/model_tests.rs` (52): navigation, the selected day, the year
+- `calendar/model_tests.rs` (58): navigation, the selected day, the year
   boundary and leap day, freshness, source independence, partial success,
-  failure and retry, stale and repeated answers, refresh races, connection
-  changes, duplicates, filters, focus, and retained months and eviction.
-- `calendar/load_tests.rs` (10): the HTTP boundary on loopback. It covers the
-  vault and connection check, the grid range and the header-only key, Sonarr's
-  extra parameters, each failure kind, a refused connection, and an aborted
-  request that cannot answer.
-- `calendar/view_tests.rs` (21): the rendered screen with real focus and
-  keystrokes. It covers opening on today, arrows, Home and Down, Enter, the
-  month controls, the selected day's order, every source state, refresh,
-  Tab, and every scene at all four standard sizes.
-- `view.rs` (3): Calendar as a retained root, no page above it, and sign-out
-  dropping it.
-- `matinee-integrations/src/calendar_tests.rs` (16): request parameters, the
-  key in a header only, 401, 5xx, timeouts with redaction, malformed bodies,
-  partial bodies, ordering, timing, civil days, and the artwork fetch.
+  failure, retry and the retry interval, repeated visits, abandoned requests,
+  stale and repeated answers, refresh races, connection changes, duplicates,
+  filters, focus, retained months and eviction, the fetch padding for every
+  quarter-hour offset from UTC−12 to UTC+14 over 2024–2030, and daylight
+  saving in both directions with a US Eastern 2026 zone.
+- `calendar/load_tests.rs` (15): the HTTP boundary on loopback: the vault and
+  connection check, the grid range and the header-only key, Sonarr's extra
+  parameters, each failure kind, a refused connection, an aborted request, a
+  release at the first and last local moment of the grid surviving the real
+  request in eight zones and five months, and the transport under hostile
+  answers (an announced oversized body, an endless stream, a body at the cap,
+  and a redirect that must not carry the key).
+- `calendar/view_tests.rs` (30): the rendered screen with real focus and
+  keystrokes: opening on today, arrows across weeks and months, Home and
+  Down, Enter on a day of the next month, the month controls, the selected
+  day's order, covers for the selected day only, every source state and the
+  empty-day line, refresh, Tab into the panel and its scrolling at 960 × 620,
+  the layout bounds of the header, status line, grid, and release rows,
+  muted borrowed days, and every scene at all four standard sizes.
+- `view.rs` (4): Calendar as a retained root that keeps its month, day,
+  filter, releases, and focus; no page above it; sign-out and a Jellyfin
+  session ending both drop it.
+- `matinee-integrations/src/calendar_tests.rs` (17): request parameters, the
+  key in a header only, the body cap on covers and not on the API, 401, 5xx,
+  timeouts with redaction, malformed bodies, partial bodies, ordering, timing,
+  civil days, the artwork fetch and its failures, and the local and private
+  hosts a cover address may not name.
 
 ## Validation
 

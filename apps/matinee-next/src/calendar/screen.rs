@@ -644,19 +644,39 @@ impl Render for CalendarScreen {
             self.revealed_row = focused_row;
         }
 
+        // The bar, header, and status line keep their height; the month and
+        // the panel share what is left and scroll inside it. Without
+        // `flex_none`, a short window squeezed the header and the status line
+        // under the grid.
         v_stack(Space::S4)
             .size_full()
+            .overflow_hidden()
             .p(Space::S4.px())
             .bg(theme.colors.surface.canvas)
             .text_color(theme.colors.text.primary)
             .track_focus(&self.focus)
-            .child(app_bar(&theme, bar, cx, Self::bar_action))
-            .child(self.header(&theme, cx))
-            .child(self.status_strip(&theme, cx))
+            .child(
+                div()
+                    .flex_none()
+                    .child(app_bar(&theme, bar, cx, Self::bar_action)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .debug_selector(|| "calendar-header".into())
+                    .child(self.header(&theme, cx)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .debug_selector(|| "calendar-status".into())
+                    .child(self.status_strip(&theme, cx)),
+            )
             .child(
                 h_stack(Space::S4)
                     .flex_1()
                     .min_h(px(0.0))
+                    .debug_selector(|| "calendar-body".into())
                     .child(self.month(&theme, cx))
                     .child(panel),
             )
@@ -833,18 +853,30 @@ impl CalendarScreen {
                     .child(Text::new(day).role(TextRole::Caption).tone(TextTone::Muted)),
             );
         }
+        // `h_full`: a row's stretched child has no definite height while its
+        // own children are sized, so without it the grid area took its whole
+        // content height and overflowed the body on short windows.
         v_stack(Space::S2)
             .flex_1()
+            .h_full()
             .min_w(px(0.0))
             .min_h(px(0.0))
             .child(weekdays)
-            .child(div().flex_1().min_h(px(0.0)).child(grid))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .debug_selector(|| "calendar-grid".into())
+                    .child(grid),
+            )
             .into_any_element()
     }
 
     /// The selected day's releases, and the one the person chose. Each part
-    /// is a direct child of the panel's scroll view, so a row can be scrolled
-    /// into view by its position; the second value is the first row's.
+    /// is a direct, full-width block child of the panel's scroll view, so a
+    /// row can be scrolled into view by its position; the second value is the
+    /// first row's. (As children of a flex scroll view, rows shrank to their
+    /// content when the panel did not overflow.)
     fn panel(
         &self,
         theme: &Theme,
@@ -890,6 +922,7 @@ impl CalendarScreen {
         }
 
         let panel = div()
+            .debug_selector(|| "calendar-panel".into())
             .w(px(PANEL_WIDTH))
             .flex_none()
             .h_full()
@@ -898,10 +931,11 @@ impl CalendarScreen {
                 ScrollView::vertical("calendar-panel-scroll")
                     .control(self.panel_scroll.clone())
                     .size_full()
-                    .flex()
-                    .flex_col()
-                    .gap(Space::S3.px())
-                    .children(parts),
+                    .children(
+                        parts
+                            .into_iter()
+                            .map(|part| div().w_full().pb(Space::S3.px()).child(part)),
+                    ),
             )
             .into_any_element();
         (panel, first_row)
@@ -965,12 +999,14 @@ impl CalendarScreen {
             Some(handle) => row.focus_handle(handle.clone()),
             None => row,
         };
-        row.radius(Radius::Medium)
+        row.w_full()
+            .radius(Radius::Medium)
             .on_press(move |_, _, cx| {
                 weak.update(cx, |this, cx| this.focus_event(&id, cx)).ok();
             })
             .child(
                 h_stack(Space::S3)
+                    .debug_selector(move || format!("calendar-row-{index}"))
                     .w_full()
                     .items_start()
                     .p(Space::S2.px())
@@ -1107,22 +1143,24 @@ fn kind_label_of(kind: ReleaseKind) -> &'static str {
     }
 }
 
+/// A day number's colour: the accent for today, muted for a day the grid
+/// borrows from a neighbouring month, primary otherwise.
+pub(super) fn day_number_color(theme: &Theme, in_month: bool, today: bool) -> Color {
+    if today {
+        theme.colors.control.accent
+    } else if in_month {
+        theme.colors.text.primary
+    } else {
+        theme.colors.text.muted
+    }
+}
+
 /// One day cell: the number, up to three release chips, and a count of the rest.
 fn day_cell(theme: &Theme, cell: &DayCell, focused: bool) -> AnyElement {
-    let number_tone = if cell.in_month {
-        TextTone::Primary
-    } else {
-        TextTone::Muted
-    };
     let mut column = v_stack(Space::S1).size_full().p(Space::S1.px()).child(
         Text::new(cell.day.format("%-d").to_string())
             .role(TextRole::Metadata)
-            .tone(number_tone)
-            .color(if cell.today {
-                theme.colors.control.accent
-            } else {
-                theme.colors.text.primary
-            }),
+            .color(day_number_color(theme, cell.in_month, cell.today)),
     );
     for chip in &cell.chips {
         column = column.child(
@@ -1135,17 +1173,25 @@ fn day_cell(theme: &Theme, cell: &DayCell, focused: bool) -> AnyElement {
                 } else {
                     matinee_ui::palette::FADED_TEAL
                 }))
+                // One line per chip: a wrapped title ran into the chip below
+                // it in a narrow cell. The episode count stays visible.
                 .child(
                     div().min_w_0().flex_1().overflow_hidden().child(
-                        Text::new(if chip.count > 1 {
-                            format!("{} · {} episodes", chip.title, chip.count)
-                        } else {
-                            chip.title.clone()
-                        })
-                        .role(TextRole::Caption)
-                        .tone(TextTone::Primary),
+                        Text::new(chip.title.clone())
+                            .role(TextRole::Caption)
+                            .tone(TextTone::Primary)
+                            .truncate(),
                     ),
-                ),
+                )
+                .when(chip.count > 1, |row| {
+                    row.child(
+                        div().flex_none().child(
+                            Text::new(format!("×{}", chip.count))
+                                .role(TextRole::Caption)
+                                .tone(TextTone::Secondary),
+                        ),
+                    )
+                }),
         );
     }
     if cell.more > 0 {

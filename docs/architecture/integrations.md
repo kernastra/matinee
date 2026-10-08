@@ -120,11 +120,22 @@ shipping payloads are unchanged: none of these fields is serialized.
   a slow one does not hold up the other.
 - **`Integrations::fetch_image(provider, url)`** fetches one artwork address a
   calendar response named. Only `http` and `https` addresses without
-  credentials are fetched. No header or query is sent, so the key never goes to
-  an image host. Redirects are not followed, which the shared transport
-  enforces. A non-2xx status is `ImageUnavailable { provider, status }`. An
-  unsupported address or a body over 16 MiB is `InvalidImage { provider }`.
-  A timeout or refused connection is `Unreachable`, as for the API.
+  credentials, on a public host, are fetched: `localhost`, `*.localhost`, and
+  loopback, private, link-local, shared, unspecified, broadcast, multicast,
+  documentation, and reserved addresses (IPv4, IPv6, and IPv4-mapped) are
+  refused before any request. Names are not resolved, so a public name with a
+  private DNS answer is not caught. No header or query is sent, so the key
+  never goes to an image host. Redirects are not followed, which the shared
+  transport enforces. The body is capped at 16 MiB by the transport (below).
+  A non-2xx status is `ImageUnavailable { provider, status }`. A refused
+  address or an oversized body is `InvalidImage { provider }`. A timeout or
+  refused connection is `Unreachable`, as for the API.
+- **`IntegrationRequest.max_body`** caps a response body. `ReqwestTransport`
+  refuses an announced `Content-Length` over the cap before reading, and
+  drops a streamed body at the chunk that crosses it, returning a
+  `TransportError` for which `is_body_too_large()` is true. Every Radarr and
+  Sonarr API call sends `None` and is read whole, exactly as the shipping app
+  has always read it.
 
 `IntegrationError` gained `InvalidImage` and `ImageUnavailable`. Matching on
 the enum is the supported way to tell an unauthorized key (401,

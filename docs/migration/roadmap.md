@@ -274,9 +274,19 @@ reference app, including the product rules in `docs/design-spec.md`.
 - Covers load through the shared artwork loader for the selected day only.
   Calendar never opens Details or the Player: a Radarr or Sonarr id is not a
   Jellyfin item id.
-- Deferred: the 120-day "Next up" strip (shipping's second request), Settings
-  (connections come from the shipping app's vault), and the modal detail.
-  Visual capture of the review scenes is not available in this environment.
+- Independent hardening pass: cover downloads are capped while they stream
+  and refused for local or private hosts; returning to Calendar retries a
+  failed source only after 30 seconds; a request that ends without an answer
+  cannot leave a source loading; keyboard focus follows a day chosen in
+  another month, arrows cross weeks and month edges, and the release panel
+  scrolls to the row Tab reaches. At the 960 × 620 minimum the grid no longer
+  overlaps the header and the status line, and day chips no longer run into
+  each other. Each has a regression test that failed on the first
+  implementation. The scenes were captured as real pixels under XWayland.
+- Deferred: the 120-day "Next up" strip (a separate enhancement with its own
+  request lifecycle) and Settings (connections come from the shipping app's
+  vault). The release panel covers the shipping modal's detail, so there is
+  no modal.
 
 Settings, Poster Studio, and later screens are not started. The compatibility
 builders that still put `api_key` on artwork URLs stay for the shipping

@@ -20,7 +20,9 @@ use matinee_integrations::IntegrationProvider;
 use super::grid::{month_start, shift_month};
 use super::model::{Link, Overview, SourceFailure, SourceStatus};
 use super::preview::CalendarPreview;
-use super::screen::{CalendarScreen, Step, empty_day_line, grid_sizing, source_line};
+use super::screen::{
+    CalendarScreen, Step, day_number_color, empty_day_line, grid_sizing, source_line,
+};
 use crate::artwork::ArtworkLoader;
 use crate::runtime::ServiceRuntime;
 
@@ -770,4 +772,87 @@ fn tabbing_to_a_release_below_the_fold_scrolls_the_panel_to_it(cx: &mut TestAppC
         offset < 0.0,
         "the panel scrolled to the focused last row (offset {offset})"
     );
+}
+
+#[gpui::test]
+fn the_header_status_and_month_stack_without_overlap_at_every_standard_size(
+    cx: &mut TestAppContext,
+) {
+    // Drawing alone cannot catch this: at 960 × 620 the grid area used to
+    // take its full content height and was centred over the header and the
+    // status line, hiding each source's state.
+    for (width, height) in [
+        (960.0, 620.0),
+        (1200.0, 760.0),
+        (1440.0, 900.0),
+        (1920.0, 1080.0),
+    ] {
+        let (view, vcx) = open(cx, CalendarPreview::Populated);
+        vcx.simulate_resize(size(px(width), px(height)));
+        redraw(&view, vcx);
+        redraw(&view, vcx);
+        let bounds = |name: &'static str, vcx: &mut VisualTestContext| {
+            vcx.debug_bounds(name)
+                .unwrap_or_else(|| panic!("{name} at {width}x{height}"))
+        };
+        let header = bounds("calendar-header", vcx);
+        let status = bounds("calendar-status", vcx);
+        let body = bounds("calendar-body", vcx);
+        let grid = bounds("calendar-grid", vcx);
+        let at = format!("{width}x{height}");
+        assert!(header.bottom() <= status.top(), "{at}: header over status");
+        assert!(status.bottom() <= body.top(), "{at}: status over the month");
+        assert!(
+            grid.top() >= body.top(),
+            "{at}: grid above its area {grid:?}"
+        );
+        assert!(
+            grid.bottom() <= body.bottom(),
+            "{at}: grid below its area {grid:?}"
+        );
+        assert!(
+            body.bottom() <= px(height),
+            "{at}: the month leaves the window"
+        );
+    }
+}
+
+#[gpui::test]
+fn days_borrowed_from_a_neighbouring_month_read_as_muted(cx: &mut TestAppContext) {
+    // The number used to be painted primary over its muted tone, so the
+    // borrowed days read like the month's own.
+    let theme = cx.update(|cx| cx.theme().clone());
+    assert_eq!(
+        day_number_color(&theme, false, false),
+        theme.colors.text.muted
+    );
+    assert_eq!(
+        day_number_color(&theme, true, false),
+        theme.colors.text.primary
+    );
+    assert_eq!(
+        day_number_color(&theme, true, true),
+        theme.colors.control.accent
+    );
+    assert_ne!(theme.colors.text.muted, theme.colors.text.primary);
+}
+
+#[gpui::test]
+fn a_release_row_spans_the_panel_whether_or_not_the_panel_scrolls(cx: &mut TestAppContext) {
+    // One row (no scrolling) and three rows with the detail (scrolling) at
+    // the narrow size. Flattened into a flex scroll view, a lone row shrank
+    // to its text, so its highlight and click target stopped short.
+    for scene in [CalendarPreview::NextMonth, CalendarPreview::SelectedDay] {
+        let (view, vcx) = open(cx, scene);
+        vcx.simulate_resize(size(px(960.0), px(620.0)));
+        redraw(&view, vcx);
+        redraw(&view, vcx);
+        let panel = vcx.debug_bounds("calendar-panel").expect("panel");
+        let row = vcx.debug_bounds("calendar-row-0").expect("a row");
+        // The scroll bar may take its width at the right edge.
+        assert!(
+            row.size.width >= panel.size.width - px(12.0),
+            "{scene:?}: row {row:?} in panel {panel:?}"
+        );
+    }
 }
