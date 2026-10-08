@@ -8,8 +8,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    Window, div,
+    App, ElementId, FocusHandle, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    SharedString, Window, div,
 };
 
 use crate::components::{
@@ -29,6 +29,7 @@ pub struct SearchField {
     disabled: bool,
     on_change: Option<ChangeHandler>,
     on_dismiss: Option<DismissHandler>,
+    focus: Option<FocusHandle>,
     inspected: bool,
 }
 
@@ -41,6 +42,7 @@ impl SearchField {
             disabled: false,
             on_change: None,
             on_dismiss: None,
+            focus: None,
             inspected: false,
         }
     }
@@ -69,6 +71,12 @@ impl SearchField {
         self
     }
 
+    /// Keyboard focus the owner holds for the field. See `TextField::focus_handle`.
+    pub fn focus_handle(mut self, focus: FocusHandle) -> Self {
+        self.focus = Some(focus);
+        self
+    }
+
     pub fn inspected(mut self, inspected: bool) -> Self {
         self.inspected = inspected;
         self
@@ -89,6 +97,9 @@ impl RenderOnce for SearchField {
             .inspected(self.inspected)
             .inspection_name("Search field")
             .key_context(TEXT_FIELD_CONTEXT);
+        if let Some(focus) = self.focus.clone() {
+            field = field.focus_handle(focus);
+        }
         if let Some(handler) = on_change.clone() {
             field = field.on_change(move |value, window, cx| handler(value, window, cx));
         }

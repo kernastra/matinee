@@ -239,6 +239,21 @@ if matches=$(grep -RIniE 'movie|series|library|jellyfin|matinee' crates/atelier-
   echo "$matches" >&2
 fi
 
+# 19. Search requests are made in one place, on the service runtime, like
+#     Library's.
+if matches=$(grep -RIn '\bsearch_page(' apps/matinee-next/src --include='*.rs' \
+  | grep -v '^apps/matinee-next/src/search/load.rs:'); then
+  fail "Search queries are fetched only by apps/matinee-next/src/search/load.rs:"
+  echo "$matches" >&2
+fi
+
+# 20. What a person searches for is private: the Search module writes no
+#     log lines, so no query text can reach one.
+if matches=$(grep -RInE '\b(e?println|e?print|dbg|log::[a-z]+|tracing::[a-z]+)!' apps/matinee-next/src/search --include='*.rs'); then
+  fail "logging in apps/matinee-next/src/search (queries are private):"
+  echo "$matches" >&2
+fi
+
 if [ "$status" -eq 0 ]; then
   echo "architecture boundaries OK"
 fi

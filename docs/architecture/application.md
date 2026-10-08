@@ -5,8 +5,8 @@ service runtime, Login, and a minimal authenticated shell. Phase 3B adds
 the Player on that same runtime. Phase 3C adds Details, the first screen
 that loads Jellyfin artwork, and a small navigation stack. Phase 3D adds
 Home, which replaces the minimal shell as the signed-in root. Phase 3E adds
-Library as a second root destination. It is not Search, Calendar, Settings,
-or Poster Studio.
+Library as a second root destination. Phase 3F adds Search as a third. It is
+not Calendar, Settings, or Poster Studio.
 
 The shipping Tauri app remains the usable reference. This binary does not
 replace it.
@@ -244,12 +244,13 @@ previous sign-in) are dropped before that check.
 ## Navigation
 
 Two layers (`nav.rs`). **Root destinations** are the places in the app bar:
-`RootDestination::Home` and `RootDestination::Library(Movies | Series)`.
-`MatineeRoot` keeps `home` and `library` (one Library screen for both
-kinds) and which one is current. Each is created once per sign-in (Library
-the first time it is chosen) and dropped on sign-out or session end.
-Switching roots keeps each exactly as it was. Search, Calendar, and
-Settings will be further destinations; the bar lists only ones that exist.
+`RootDestination::Home`, `RootDestination::Library(Movies | Series)`, and
+`RootDestination::Search`. `MatineeRoot` keeps `home`, `library` (one Library
+screen for both kinds), and `search`, and which one is current. Each is created
+once per sign-in (Library and Search the first time they are chosen) and
+dropped on sign-out or session end. Switching roots keeps each exactly as it
+was. Calendar and Settings will be further destinations; the bar lists only
+ones that exist. Search is described in [search.md](search.md).
 
 A `Navigation<Page>` stack sits above whichever root is current. A page is
 Details or the Player. A Home or Library card pushes Details; Details'

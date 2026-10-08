@@ -16,6 +16,7 @@ mod library;
 mod media;
 mod playback;
 mod progress;
+mod search;
 mod user;
 
 pub use capability::{
@@ -41,4 +42,5 @@ pub use playback::{
     PlaybackMethod, PlaybackOptions, PlaybackPlan, PlaybackReport, ReportKind, StreamAuthorization,
 };
 pub use progress::{UserItemState, ViewingProgress};
+pub use search::{SEARCH_MIN_CHARS, SearchQuery};
 pub use user::User;

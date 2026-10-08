@@ -29,7 +29,7 @@ mod state;
 
 use std::rc::Rc;
 
-use gpui::{App, ElementId, SharedString, Window};
+use gpui::{App, ElementId, FocusHandle, SharedString, Window};
 
 use crate::components::{IconName, keybindings::TEXT_FIELD_CONTEXT};
 
@@ -56,6 +56,8 @@ pub struct TextField {
     pub(in crate::components::text_field) trailing_action: Option<TrailingHandler>,
     pub(in crate::components::text_field) on_change: Option<ChangeHandler>,
     pub(in crate::components::text_field) on_focus_change: Option<FocusHandler>,
+    /// Keyboard focus the owner holds for this field. `None` uses the field's own.
+    pub(in crate::components::text_field) focus: Option<FocusHandle>,
     pub(in crate::components::text_field) inspected: bool,
     pub(in crate::components::text_field) inspection_name: &'static str,
     pub(in crate::components::text_field) key_context: &'static str,
@@ -79,6 +81,7 @@ impl TextField {
             trailing_action: None,
             on_change: None,
             on_focus_change: None,
+            focus: None,
             inspected: false,
             inspection_name: "Text field",
             key_context: TEXT_FIELD_CONTEXT,
@@ -148,6 +151,15 @@ impl TextField {
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_change = Some(Rc::new(handler));
+        self
+    }
+
+    /// Take keyboard focus through `focus`, so the owner can move focus into
+    /// the field (and out of it) with `Window::focus`. The handle must come
+    /// from `cx.focus_handle()` in the owner's context. Without it, the field
+    /// keeps its own. Either way the field is a tab stop while enabled.
+    pub fn focus_handle(mut self, focus: FocusHandle) -> Self {
+        self.focus = Some(focus.tab_stop(true));
         self
     }
 

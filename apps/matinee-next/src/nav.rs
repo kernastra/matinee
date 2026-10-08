@@ -19,20 +19,25 @@ pub(crate) enum RootDestination {
     Home,
     /// Library, showing movies or series.
     Library(LibraryKind),
+    /// Search: type a title and open it. Its text and results are kept while
+    /// another root shows.
+    Search,
 }
 
 impl RootDestination {
     /// App bar entries, in order. Only destinations that exist natively.
-    pub(crate) const BAR: [RootDestination; 3] = [
+    pub(crate) const BAR: [RootDestination; 4] = [
         RootDestination::Home,
         RootDestination::Library(LibraryKind::Movies),
         RootDestination::Library(LibraryKind::Series),
+        RootDestination::Search,
     ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Home => "Home",
             Self::Library(kind) => kind.title(),
+            Self::Search => "Search",
         }
     }
 
@@ -41,6 +46,7 @@ impl RootDestination {
         match self {
             Self::Home => Root::Home,
             Self::Library(_) => Root::Library,
+            Self::Search => Root::Search,
         }
     }
 }
@@ -50,6 +56,7 @@ impl RootDestination {
 pub(crate) enum Root {
     Home,
     Library,
+    Search,
 }
 
 /// Which roots must reload what playback may have changed the next time
@@ -58,12 +65,14 @@ pub(crate) enum Root {
 pub(crate) struct StaleRoots {
     home: bool,
     library: bool,
+    search: bool,
 }
 
 impl StaleRoots {
     pub(crate) fn mark_all(&mut self) {
         self.home = true;
         self.library = true;
+        self.search = true;
     }
 
     /// Whether `root` should refresh now. Clears its mark.
@@ -71,6 +80,7 @@ impl StaleRoots {
         match root {
             Root::Home => std::mem::take(&mut self.home),
             Root::Library => std::mem::take(&mut self.library),
+            Root::Search => std::mem::take(&mut self.search),
         }
     }
 
@@ -216,7 +226,8 @@ mod tests {
     #[test]
     fn the_bar_lists_only_native_destinations() {
         let labels: Vec<&str> = RootDestination::BAR.iter().map(|d| d.label()).collect();
-        assert_eq!(labels, vec!["Home", "Movies", "Series"]);
+        assert_eq!(labels, vec!["Home", "Movies", "Series", "Search"]);
+        assert_eq!(RootDestination::Search.root(), Root::Search);
         assert_eq!(RootDestination::Home.root(), Root::Home);
         assert_eq!(
             RootDestination::Library(LibraryKind::Series).root(),

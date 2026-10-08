@@ -18,10 +18,12 @@ mod artwork;
 mod details;
 mod home;
 mod library;
+mod media_grid;
 mod model;
 mod nav;
 mod player;
 mod runtime;
+mod search;
 mod session;
 mod store;
 #[cfg(test)]
@@ -118,6 +120,19 @@ fn review_scene() -> Option<ReviewScene> {
         Some("library-small-window") => Some(ReviewScene::LibrarySmallWindow),
         Some("library-large-window") => Some(ReviewScene::LibraryLargeWindow),
         Some("library-many-items") => Some(ReviewScene::LibraryManyItems),
+        Some("search") => Some(ReviewScene::Search),
+        Some("search-empty") => Some(ReviewScene::SearchEmpty),
+        Some("search-short") => Some(ReviewScene::SearchTooShort),
+        Some("search-typing") => Some(ReviewScene::SearchTyping),
+        Some("search-loading") => Some(ReviewScene::SearchLoading),
+        Some("search-many-results") => Some(ReviewScene::SearchManyResults),
+        Some("search-no-results") => Some(ReviewScene::SearchNoResults),
+        Some("search-error") => Some(ReviewScene::SearchError),
+        Some("search-partial-page") => Some(ReviewScene::SearchPartialPage),
+        Some("search-stale") => Some(ReviewScene::SearchStale),
+        Some("search-episodes") => Some(ReviewScene::SearchEpisodes),
+        Some("search-small-window") => Some(ReviewScene::SearchSmallWindow),
+        Some("search-large-window") => Some(ReviewScene::SearchLargeWindow),
         _ => None,
     }
 }

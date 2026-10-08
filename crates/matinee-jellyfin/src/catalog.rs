@@ -3,7 +3,7 @@
 use matinee_core::{
     CollectionContext, HomeFeed, HomeShelf, ItemId, LibraryContent, LibraryGenre, LibraryId,
     LibraryKind, LibraryPage, LibraryPageRequest, LibraryQuery, LibrarySort, LibraryView,
-    MediaItem,
+    MediaItem, SearchQuery,
 };
 use serde_json::json;
 
@@ -14,7 +14,7 @@ use crate::error::JellyfinError;
 use crate::query::encode_component;
 use crate::query::{
     collection_items_path, collections_path, favorites_path, genres_path, item_path, latest_path,
-    library_page_path, library_path, movies_path, next_up_feed_path, resume_path, search_path,
+    library_page_path, library_path, movies_path, next_up_feed_path, resume_path, search_page_path,
     series_path, similar_path, top_rated_path, views_path,
 };
 use crate::session::ServerInfo;
@@ -183,20 +183,31 @@ impl<T: Transport> JellyfinClient<T> {
         Ok(contexts)
     }
 
-    pub async fn search_library(
+    /// One page of search results. The server does the matching and the
+    /// paging, so only `page.limit` titles come back.
+    pub async fn search_page(
         &self,
-        term: &str,
+        query: &SearchQuery,
+        page: LibraryPageRequest,
         cancel: Option<&CancelFlag>,
-    ) -> Result<Vec<MediaItem>, JellyfinError> {
+    ) -> Result<LibraryPage, JellyfinError> {
         let user_id = self.session().user().id().as_str();
-        let path = search_path(user_id, term);
+        let path = search_page_path(user_id, query.term(), page);
         let response = self
             .request(Endpoint::Search, Method::Get, &path, None, cancel)
             .await?;
         let dto: ItemsDto = serde_json::from_slice(&response.body)
             .map_err(|_| JellyfinError::malformed("items"))?;
         let items = dto.items.ok_or_else(|| JellyfinError::malformed("items"))?;
-        items_from_dtos(items)
+        let mut items = items_from_dtos(items)?;
+        items.truncate(page.limit);
+        Ok(LibraryPage {
+            items,
+            start: page.start,
+            total: dto
+                .total_record_count
+                .and_then(|total| usize::try_from(total).ok()),
+        })
     }
 
     pub async fn set_item_favorite(

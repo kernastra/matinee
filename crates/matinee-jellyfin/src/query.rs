@@ -385,15 +385,22 @@ pub(crate) fn following_path(user_id: &str, series_id: &ItemId, episode_id: &Ite
     )
 }
 
-pub(crate) fn search_path(user_id: &str, term: &str) -> String {
+/// One page of a search: matching movies, series, and episodes, in the
+/// server's relevance order. Episodes are included because Details opens
+/// them cleanly; people, collections, and other types have no native
+/// destination yet (see `docs/architecture/search.md`).
+pub(crate) fn search_page_path(user_id: &str, term: &str, page: LibraryPageRequest) -> String {
     user_items(
         user_id,
         Query::new()
             .pair("Recursive", "true")
             .pair("SearchTerm", term)
             .pair("IncludeItemTypes", "Movie,Series,Episode")
-            .pair("Limit", "40")
-            .pair("Fields", ITEM_FIELDS)
-            .pair("EnableUserData", "true"),
+            .pair("StartIndex", page.start.to_string())
+            .pair("Limit", page.limit.to_string())
+            .pair("Fields", LIBRARY_FIELDS)
+            .pair("ImageTypeLimit", "1")
+            .pair("EnableUserData", "true")
+            .pair("EnableTotalRecordCount", "true"),
     )
 }

@@ -120,8 +120,9 @@ struct Navigation<Page>                                // Details, Player
 ```
 
 - A **root destination** is a place in the app bar. `RootDestination::BAR`
-  lists only native ones (Home, Movies, Series). Search, Calendar, and
-  Settings join the enum when they exist; nothing else changes.
+  lists only native ones (Home, Movies, Series). Search joined in Phase 3F
+  ([search.md](search.md)); Calendar and Settings join the enum when they
+  exist; nothing else changes.
 - Each root screen (`Root::Home`, `Root::Library`) is created once per
   sign-in (Library on first use) and kept alive while another root or a
   page is showing. Switching roots never touches the page stack, and the
@@ -313,6 +314,10 @@ architecture rule checks the file).
 Atelier also gained `Menu::max_height` / `Popover::menu_max_height` so a long
 menu (genres) scrolls inside its panel with the keyboard cursor kept in
 view; the Menu story has a 30-row example.
+
+The card, the grid sizing, the skeleton, and the artwork window live in
+`apps/matinee-next/src/media_grid.rs` since Phase 3F, shared with Search.
+Library's cards, sizes, and element ids are unchanged by the move.
 
 ## Responsive columns
 

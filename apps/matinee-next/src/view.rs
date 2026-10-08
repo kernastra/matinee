@@ -24,6 +24,7 @@ use crate::library::{LibraryEvent, LibraryScreen};
 use crate::nav::{Navigation, Root, RootDestination, StaleRoots};
 use crate::player::{KeyOutcome, LeavePlayer, PlayerScreen, PlayerSessionEnded};
 use crate::runtime::ServiceRuntime;
+use crate::search::{SearchEvent, SearchScreen};
 use crate::session::{accept_authentication, forget_session, restore_session};
 use crate::store::SharedStore;
 
@@ -75,6 +76,8 @@ pub struct MatineeRoot {
     /// The other root destination, created the first time it is chosen and
     /// kept like Home.
     library: Option<Entity<LibraryScreen>>,
+    /// Search, created the first time it is chosen and kept like Library.
+    search: Option<Entity<SearchScreen>>,
     /// Which root shows when no page covers it.
     root: RootDestination,
     /// Roots that reload what playback changed when they next show.
@@ -117,6 +120,7 @@ impl MatineeRoot {
             park_focus: false,
             home: None,
             library: None,
+            search: None,
             root: RootDestination::Home,
             stale: StaleRoots::default(),
             review: review.is_some(),
@@ -136,6 +140,13 @@ impl MatineeRoot {
             let library = cx.new(|cx| LibraryScreen::preview(runtime, loader, scene, cx));
             root.root = RootDestination::Library(library.read(cx).kind());
             root.adopt_library(library, window, cx);
+        }
+        if let Some(scene) = review.and_then(ReviewScene::search_preview) {
+            let runtime = Arc::clone(&root.services.runtime);
+            let loader = root.artwork.clone();
+            let search = cx.new(|cx| SearchScreen::preview(runtime, loader, scene, cx));
+            root.root = RootDestination::Search;
+            root.adopt_search(search, window, cx);
         }
         if review.is_none() {
             root.start_restore(cx);
@@ -241,6 +252,9 @@ impl MatineeRoot {
         if let Some(library) = &self.library {
             library.update(cx, |library, cx| library.set_signing_out(true, cx));
         }
+        if let Some(search) = &self.search {
+            search.update(cx, |search, cx| search.set_signing_out(true, cx));
+        }
         let store = self.services.store.clone();
         let (task, rx) = self.services.runtime.spawn(async move {
             tokio::task::spawn_blocking(move || forget_session(&store))
@@ -265,6 +279,9 @@ impl MatineeRoot {
                     }
                     if let Some(library) = &this.library {
                         library.update(cx, |library, cx| library.set_signing_out(false, cx));
+                    }
+                    if let Some(search) = &this.search {
+                        search.update(cx, |search, cx| search.set_signing_out(false, cx));
                     }
                 }
                 cx.notify();
@@ -320,6 +337,10 @@ impl MatineeRoot {
         self.library.as_ref() == Some(library)
     }
 
+    fn is_current_search(&self, search: &Entity<SearchScreen>) -> bool {
+        self.search.as_ref() == Some(search)
+    }
+
     fn is_current_details(&self, details: &Entity<DetailsScreen>) -> bool {
         self.pages
             .any(|page| matches!(page, Page::Details(open) if open == details))
@@ -335,6 +356,7 @@ impl MatineeRoot {
     fn leave_home(&mut self) {
         self.home = None;
         self.library = None;
+        self.search = None;
         self.root = RootDestination::Home;
         self.stale.clear();
         self.client = None;
@@ -438,6 +460,57 @@ impl MatineeRoot {
         self.library.clone()
     }
 
+    fn adopt_search(
+        &mut self,
+        search: Entity<SearchScreen>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(
+            &search,
+            window,
+            |this, search, event: &SearchEvent, window, cx| match event {
+                // Reports from a Search that is no longer current are stale.
+                _ if !this.is_current_search(search) => {}
+                SearchEvent::Open(item_id) => this.open_details(item_id.clone(), window, cx),
+                SearchEvent::Navigate(destination) => this.navigate(*destination, None, window, cx),
+                SearchEvent::SignOut => this.start_sign_out(cx),
+                SearchEvent::SessionExpired => this.expire_session(cx),
+            },
+        )
+        .detach();
+        self.search = Some(search);
+        self.focus_page = true;
+    }
+
+    /// Search for a signed-in session, created the first time it is chosen.
+    /// Review scenes get the fixture Search, with no socket.
+    fn ensure_search(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<SearchScreen>> {
+        if self.search.is_none() && self.model.shows_home() {
+            let runtime = Arc::clone(&self.services.runtime);
+            let loader = self.artwork.clone();
+            let search = if self.review {
+                cx.new(|cx| {
+                    SearchScreen::preview(
+                        runtime,
+                        loader,
+                        crate::search::SearchPreview::Results,
+                        cx,
+                    )
+                })
+            } else {
+                let client = self.client()?;
+                cx.new(|cx| SearchScreen::open(runtime, client, loader, cx))
+            };
+            self.adopt_search(search, window, cx);
+        }
+        self.search.clone()
+    }
+
     /// Move between root destinations from the app bar or Home's "View
     /// all". Pages are not touched (the bar is only on roots). Each root
     /// keeps its state; a root that missed playback reloads what it changed.
@@ -471,6 +544,14 @@ impl MatineeRoot {
                     library.resume(playback, cx);
                 });
             }
+            RootDestination::Search => {
+                let Some(search) = self.ensure_search(window, cx) else {
+                    return;
+                };
+                self.root = destination;
+                let playback = self.stale.take(Root::Search);
+                search.update(cx, |search, cx| search.show(playback, cx));
+            }
         }
         self.focus_page = true;
         cx.notify();
@@ -493,6 +574,12 @@ impl MatineeRoot {
                 let playback = self.stale.take(Root::Library);
                 if let Some(library) = &self.library {
                     library.update(cx, |library, cx| library.resume(playback, cx));
+                }
+            }
+            Root::Search => {
+                let playback = self.stale.take(Root::Search);
+                if let Some(search) = &self.search {
+                    search.update(cx, |search, cx| search.resume(playback, cx));
                 }
             }
         }
@@ -786,6 +873,7 @@ impl MatineeRoot {
         match self.root.root() {
             Root::Home => self.home.clone().map(AnyView::from),
             Root::Library => self.library.clone().map(AnyView::from),
+            Root::Search => self.search.clone().map(AnyView::from),
         }
     }
 
@@ -1390,5 +1478,283 @@ mod tests {
         library.update(cx, |_, cx| cx.emit(LibraryEvent::SessionExpired));
         cx.run_until_parked();
         assert!(root.read_with(cx, |root, _| root.model.shows_login()));
+    }
+
+    fn search_of(root: &Entity<MatineeRoot>, cx: &mut VisualTestContext) -> Entity<SearchScreen> {
+        root.read_with(cx, |root, _| root.search.clone().expect("Search exists"))
+    }
+
+    /// Scroll Search's results, put the logical focus on a title, and return
+    /// both with the text and the number of titles held.
+    fn scroll_search(
+        search: &Entity<SearchScreen>,
+        cx: &mut VisualTestContext,
+    ) -> (f32, usize, String, usize) {
+        let grid = search.read_with(cx, |search, _| search.grid());
+        grid.scroll().set_offset(point(px(0.0), px(-500.0)));
+        grid.focus_index(Some(17));
+        search.update(cx, |search, cx| {
+            let id = search.model.items()[17].id().clone();
+            search.model.note_focused(id);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let offset = f32::from(grid.scroll().offset().y);
+        assert!(offset < -100.0, "the results scrolled: {offset}");
+        search.read_with(cx, |search, _| {
+            (
+                offset,
+                grid.focused().unwrap(),
+                search.model.input().to_string(),
+                search.model.items().len(),
+            )
+        })
+    }
+
+    fn assert_search_kept(
+        search: &Entity<SearchScreen>,
+        cx: &mut VisualTestContext,
+        before: &(f32, usize, String, usize),
+    ) {
+        let grid = search.read_with(cx, |search, _| search.grid());
+        assert_eq!(f32::from(grid.scroll().offset().y), before.0, "scroll kept");
+        assert_eq!(grid.focused(), Some(before.1), "focused title kept");
+        search.read_with(cx, |search, _| {
+            assert_eq!(search.model.input(), before.2, "the text kept");
+            assert_eq!(
+                search
+                    .model
+                    .effective()
+                    .map(matinee_core::SearchQuery::term),
+                Some(before.2.as_str()),
+                "the query kept"
+            );
+            assert_eq!(search.model.items().len(), before.3, "the pages kept");
+            assert_eq!(search.model.focused_index(), Some(before.1));
+        });
+    }
+
+    fn focused(handle: &FocusHandle, cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, _| handle.is_focused(window))
+    }
+
+    #[gpui::test]
+    fn search_is_a_retained_root_beside_home_and_library(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        // Home → Search, from Home's app bar.
+        let home = home_of(&root, cx);
+        home.update(cx, |_, cx| {
+            cx.emit(HomeEvent::Navigate(RootDestination::Search))
+        });
+        cx.run_until_parked();
+        let search = search_of(&root, cx);
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.root, RootDestination::Search);
+            assert!(root.pages.is_empty(), "a root, not a page");
+        });
+        let field = search.read_with(cx, |search, _| search.field_focus());
+        assert!(focused(&field, cx), "Search opens with the field focused");
+        let requests = search.update(cx, |search, _| search.record_requests());
+        let before = scroll_search(&search, cx);
+
+        // Search → Home → Search.
+        go(&root, RootDestination::Home, cx);
+        assert_eq!(home_of(&root, cx), home);
+        go(&root, RootDestination::Search, cx);
+        assert_eq!(search_of(&root, cx), search, "the same Search");
+        assert_search_kept(&search, cx, &before);
+        assert!(focused(&field, cx), "chosen from the bar: the field");
+
+        // Search → Library → Search.
+        go(&root, RootDestination::Library(LibraryKind::Movies), cx);
+        let library = library_of(&root, cx);
+        go(&root, RootDestination::Search, cx);
+        assert_eq!(search_of(&root, cx), search);
+        assert_search_kept(&search, cx, &before);
+        // Library → Search left Library as it was, too.
+        go(&root, RootDestination::Library(LibraryKind::Movies), cx);
+        assert_eq!(library_of(&root, cx), library);
+        go(&root, RootDestination::Search, cx);
+        assert!(
+            requests.borrow().is_empty(),
+            "switching roots asks Search for nothing"
+        );
+    }
+
+    #[gpui::test]
+    fn search_survives_details_and_the_player(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Search, cx);
+        let search = search_of(&root, cx);
+        let requests = search.update(cx, |search, _| search.record_requests());
+        let before = scroll_search(&search, cx);
+        let grid = search.read_with(cx, |search, _| search.grid());
+
+        // Search → Details → Search.
+        let opened = search.read_with(cx, |search, _| search.model.items()[before.1].id().clone());
+        search.update(cx, |search, _| search.model.note_opened(opened.clone()));
+        let details = push_details(&root, cx);
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+        assert_eq!(search_of(&root, cx), search);
+        assert_eq!(
+            root.read_with(cx, |root, _| root.root),
+            RootDestination::Search,
+            "Back returns to Search, not Home"
+        );
+        assert_search_kept(&search, cx, &before);
+        assert!(
+            focused(grid.focus_handle(), cx),
+            "back from Details: focus on the results, at the title"
+        );
+        assert!(requests.borrow().is_empty(), "Details → Back asks nothing");
+
+        // Search → Details → Player → Details → Search.
+        let details = push_details(&root, cx);
+        root.update_in(cx, |root, window, cx| {
+            let runtime = Arc::clone(&root.services.runtime);
+            let player =
+                cx.new(|cx| PlayerScreen::preview(runtime, PlayerPreview::Paused, window, cx));
+            root.pages.mark_root_stale();
+            root.push_player(player, cx);
+        });
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.release_player(cx));
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+        assert_eq!(search_of(&root, cx), search);
+        assert!(root.read_with(cx, |root, _| root.pages.is_empty()));
+        assert_search_kept(&search, cx, &before);
+        assert!(focused(grid.focus_handle(), cx));
+        // Playback reconciled exactly the opened title, and searched nothing.
+        let sent = requests.borrow().clone();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert!(
+            matches!(&sent[0], crate::search::model::Request::Item { id, .. } if *id == opened)
+        );
+        // Search took its playback mark; Home and Library keep theirs.
+        root.update(cx, |root, _| {
+            assert!(!root.stale.take(Root::Search));
+            assert!(root.stale.take(Root::Home));
+            assert!(root.stale.take(Root::Library));
+        });
+    }
+
+    #[gpui::test]
+    fn search_reconciles_after_playback_even_when_shown_later(cx: &mut TestAppContext) {
+        // Playback from Home while Search was hidden: Search reconciles the
+        // title it had opened when it next shows, once.
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Search, cx);
+        let search = search_of(&root, cx);
+        let opened = search.read_with(cx, |search, _| search.model.items()[3].id().clone());
+        search.update(cx, |search, _| search.model.note_opened(opened.clone()));
+        let requests = search.update(cx, |search, _| search.record_requests());
+        go(&root, RootDestination::Home, cx);
+        let details = push_details(&root, cx);
+        root.update_in(cx, |root, window, cx| {
+            let runtime = Arc::clone(&root.services.runtime);
+            let player =
+                cx.new(|cx| PlayerScreen::preview(runtime, PlayerPreview::Paused, window, cx));
+            root.pages.mark_root_stale();
+            root.push_player(player, cx);
+        });
+        cx.run_until_parked();
+        root.update(cx, |root, cx| root.release_player(cx));
+        root.update(cx, |root, cx| root.close_details(&details, cx));
+        cx.run_until_parked();
+        assert!(requests.borrow().is_empty(), "hidden: nothing yet");
+        go(&root, RootDestination::Search, cx);
+        assert_eq!(requests.borrow().len(), 1, "one title on showing");
+        go(&root, RootDestination::Home, cx);
+        go(&root, RootDestination::Search, cx);
+        assert_eq!(requests.borrow().len(), 1, "and only once");
+    }
+
+    #[gpui::test]
+    fn a_session_end_from_search_signs_out_once_and_drops_it(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Search, cx);
+        let search = search_of(&root, cx);
+        let weak = search.downgrade();
+        search.update(cx, |_, cx| {
+            cx.emit(SearchEvent::SessionExpired);
+            cx.emit(SearchEvent::SessionExpired);
+        });
+        cx.run_until_parked();
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login());
+            assert!(root.search.is_none());
+            assert!(root.home.is_none());
+            assert_eq!(root.root, RootDestination::Home);
+            assert_eq!(root.model.notice(), Some(crate::model::SESSION_ENDED));
+        });
+        // The old Search reporting again changes nothing.
+        search.update(cx, |_, cx| cx.emit(SearchEvent::SessionExpired));
+        cx.run_until_parked();
+        assert!(root.read_with(cx, |root, _| root.model.shows_login()));
+        drop(search);
+        cx.run_until_parked();
+        assert!(weak.upgrade().is_none(), "the old Search is released");
+    }
+
+    #[gpui::test]
+    fn search_escape_on_an_empty_field_goes_home(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Search, cx);
+        let search = search_of(&root, cx);
+        search.update(cx, |_, cx| {
+            cx.emit(SearchEvent::Navigate(RootDestination::Home))
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            root.read_with(cx, |root, _| root.root),
+            RootDestination::Home
+        );
+        assert!(root.read_with(cx, |root, _| root.search.is_some()), "kept");
+    }
+
+    #[gpui::test]
+    fn search_review_scenes_open_on_search(cx: &mut TestAppContext) {
+        let services = Services::memory().unwrap();
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            MatineeRoot::new(services, Some(ReviewScene::SearchStale), window, cx)
+        });
+        cx.run_until_parked();
+        root.read_with(cx, |root, cx| {
+            assert_eq!(root.root, RootDestination::Search);
+            assert!(root.home.is_none(), "no live Home in a Search scene");
+            let search = root.search.clone().expect("the fixture Search");
+            assert!(search.read(cx).model.is_stale());
+        });
+    }
+
+    #[gpui::test]
+    fn sign_out_from_search_drops_it(cx: &mut TestAppContext) {
+        let (root, cx) = open(cx);
+        go(&root, RootDestination::Search, cx);
+        let search = search_of(&root, cx);
+        let weak = search.downgrade();
+        search.update(cx, |_, cx| cx.emit(SearchEvent::SignOut));
+        drop(search);
+        // The vault work runs on the service runtime; wait for its answer.
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if root.read_with(cx, |root, _| root.model.shows_login()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        root.read_with(cx, |root, _| {
+            assert!(root.model.shows_login(), "signed out");
+            assert!(root.search.is_none());
+            assert_eq!(root.root, RootDestination::Home);
+        });
+        cx.run_until_parked();
+        assert!(
+            weak.upgrade().is_none(),
+            "Search is released with the session"
+        );
     }
 }

@@ -9,8 +9,9 @@ use atelier_ui::prelude::*;
 use matinee_core::LibraryKind;
 
 use super::preview::loaded_model;
-use super::screen::{LibraryScreen, poster_request};
+use super::screen::LibraryScreen;
 use crate::artwork::{ArtworkLoader, Client};
+use crate::media_grid::poster_request;
 use crate::runtime::ServiceRuntime;
 
 const POSTER: &[u8] = include_bytes!("../../assets/review/poster.jpg");
